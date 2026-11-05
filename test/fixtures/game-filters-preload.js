@@ -37,6 +37,7 @@ const games = [
 }));
 games.push({ name: 'No 3D executable', dir: 'C:\\FixtureGames\\no-3d', launcher: 'My folders', cached: { ok: false, reason: 'no-graphics-exe' } });
 contextBridge.exposeInMainWorld('lab', {
+  communityNoticeSettings: async () => ({ on: false }),
   boot: async () => ({ lang: 'en', theme: 'light', version: 'test', groupGamesByStore }),
   artStatus: async () => ({ available: false }),
   library: async () => { libraryReads++; return games; },

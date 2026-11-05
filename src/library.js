@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const standaloneGames = require('./library-standalone');
 
 // Entries that are tooling rather than games.
 const NOT_A_GAME = /redistributabl|steamworks common|directx|vcredist|proton|steam linux runtime|soundtrack/i;
@@ -299,6 +300,8 @@ function autoRoots() {
 function folder(root, label = 'My folders', onlyGames = false) {
   let entries = [];
   try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return []; }
+  const standalone = standaloneGames.recognize(root, label);
+  if (standalone) return [standalone];
   // Somebody who points this at one game's folder means that game. Listing its
   // insides gave them "Engine" and "Binaries" and no way to reach the game at
   // all, which is what #253 reported.
@@ -482,8 +485,28 @@ function filterExcluded(games, excludedRoots = []) {
   return games.filter((game) => !excluded.some((root) => isInside(game.dir, root)));
 }
 
+function standalone(options = {}) {
+  if ((options.platform || process.platform) !== 'win32') return [];
+  const roots = options.roots || (options.drives || drives()).flatMap(d =>
+    ['Program Files','Program Files (x86)','Games'].map(name => path.join(d,name)));
+  const candidates = [...roots];
+  for (const hive of ['HKCU','HKLM']) for (const view of ['','WOW6432Node\\']) {
+    const base = `${hive}\\SOFTWARE\\${view}Microsoft\\Windows\\CurrentVersion\\Uninstall`;
+    for (const key of regKeys(base)) {
+      if (!/Wuthering|Star.?Rail|Honkai|hkrpg|HoYoPlay|Starward|鸣潮|星穹/i.test(key)) continue;
+      const location=reg(key,'InstallLocation');
+      if (location && path.isAbsolute(location)) candidates.push(location);
+      for (const value of ['DisplayIcon','UninstallString']) {
+        const directory=standaloneGames.commandDirectory(reg(key,value));
+        if (directory) candidates.push(directory);
+      }
+    }
+  }
+  return standaloneGames.fromRoots(candidates);
+}
+
 function discover(extraFolders = [], scanDrives = false, excludedRoots = [], findAutoRoots = autoRoots) {
-  const found = [...steam(), ...epic(), ...gog(), ...ubisoft(), ...xbox()];
+  const found = [...steam(), ...epic(), ...gog(), ...ubisoft(), ...xbox(), ...standalone()];
   const roots = (scanDrives ? findAutoRoots() : [])
     .filter((root) => !excludedRoots.some((excluded) => isInside(root, excluded)));
   for (const dir of roots) found.push(...folder(dir, 'My folders', true));
@@ -496,5 +519,5 @@ function discover(extraFolders = [], scanDrives = false, excludedRoots = [], fin
 
 module.exports = {
   discover, folder, dedupe, autoRoots, drives, isInside, filterExcluded,
-  steam, linuxSteamRoots, gog, ubisoft, xbox, gamingRootFolder, setRegistryRunner
+  steam, linuxSteamRoots, gog, ubisoft, xbox, standalone, gamingRootFolder, setRegistryRunner
 };

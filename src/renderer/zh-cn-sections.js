@@ -1,0 +1,58 @@
+'use strict';
+window.zhCNSections = {
+  community: {
+    title:'社区测试过的游戏', subtitle:'来自 DLSS 5 Swapper 用户的实际测试结果。', refresh:'刷新', search:'搜索游戏', route:'安装方案', api:'图形接口', result:'结果',
+    showAllReports:'显示全部报告', scopeAll:'全部用户', scopeMine:'我的游戏', scopeReports:'我的报告', mineHint:'只显示此电脑上安装的游戏', reportsHint:'你提交过报告的游戏',
+    reportsTotal:n=>`你已报告 ${n} 款游戏`, reportsEmpty:'你还没有提交过游戏报告。', showingMine:n=>`你的 ${n} 份报告`, sortLabel:'排序', sortRecent:'最近更新', sortReports:'报告最多', sortTitle:'按名称',
+    noReportsYet:n=>`本机已安装，尚无报告 · ${n}`, noReportsHint:'打开游戏进行安装和测试后，可以分享你的结果。', installedBadge:'已安装 DLSS 5', onPc:'本机已安装',
+    gpuLabel:'显卡', allGpus:'所有显卡', myGpu:model=>`我的显卡 · ${model}`, mineEmpty:'本机游戏暂无社区报告。', mineTotal:n=>`你的 ${n} 款游戏已有报告`, showingGpu:(model,n)=>`${model} · ${n} 份报告`,
+    allRoutes:'所有方案', allApis:'所有接口', allResults:'所有结果', working:'运行正常', issues:'可运行但存在问题', broken:'无法运行', mixed:'结果不一致', clear:'清除筛选',
+    loading:'正在加载社区结果…', empty:'暂无匹配的社区报告。', offline:'社区服务暂不可用，请检查网络后重试。',
+    reports:n=>`${n} 份报告`, comments:n=>`${n} 条评论`, noComments:'暂无评论。', updated:'打开此卡片时会实时更新。',
+    share:'分享测试结果', shareHint:'分享你的结果，供其他用户参考。', why:'你的报告有助于完善兼容性信息。', routeUsed:'实际使用的方案', choose:'请选择…', unknown:'暂无结果',
+    yourResult:'你的测试结果', optionalComment:'补充说明（可选）', sent:'将发送的数据', cancel:'取消', submit:'提交报告', submitting:'正在提交…', chooseRoute:'请选择实际使用的方案。', chooseVerdict:'请选择测试结果。', sentOk:'报告已添加到社区。',
+    profile:'社区资料', profileHint:'头像和昵称会显示在评论旁。昵称每周可修改一次。', displayName:'昵称', chooseIcon:'选择头像', save:'保存资料', saved:'资料已保存。',
+    adminMode:'管理员模式', adminModeHint:'回复会使用你的管理员名称、头像及管理员标记。', adminLogout:'退出管理员模式', adminLoggedOut:'已退出管理员模式。', unnamed:'匿名用户',
+    addGame:'添加到社区测试列表', reactionFailed:'无法保存该回应。', liveCount:'服务仅在内存中统计当前连接数量，不存储连接标识。', removeMine:'移除我的社区活动',
+    removeConfirm:'隐藏你的所有报告和回复，并重置公开社区资料？此操作无法在软件中撤销。', removing:'正在移除…', removedMine:(reports,replies)=>`已从公开页面移除 ${reports} 份报告和 ${replies} 条回复。`,
+    reply:'回复', back:'返回全部结果', noReplies:'暂无回复。', edit:'编辑', remove:'删除', mine:'你', saveEdit:'保存', cancelEdit:'取消',
+    removeReport:'删除我的报告', editReport:'编辑我的报告', shareAgain:'编辑测试结果', removeReportTitle:'删除报告？', removeReplyTitle:'删除回复？', removeMineTitle:'移除你发布的全部内容？',
+    removeReportAsk:'删除你对此游戏的报告？若没有其他人的报告，此游戏将从社区列表移除。', removeReplyAsk:'删除这条回复？', removed:'已删除。',
+    follow:'接收此游戏的通知', unfollow:'停止接收通知', following:'已开启通知', mention:'提及用户',
+    noticeReplied:(who,game)=>`${who} 在 ${game} 下回复了你`, noticeMentioned:(who,game)=>`${who} 在 ${game} 下提及了你`, noticeOnGame:(who,game)=>`${who} 评论了 ${game}`,
+    noticeReacted:(who,emoji,game)=>`${who} 对你在 ${game} 下的报告回应了 ${emoji}`, noticeChatMention:who=>`${who} 在聊天中提及了你`, noticeChatReply:who=>`${who} 在聊天中回复了你`,
+    noticeChatReaction:(who,emoji)=>`${who} 对你的聊天消息回应了 ${emoji}`, noticeMany:n=>`${n} 条新的社区消息`, noticeSomeone:'有人',
+    sentTitle:'报告已发送', sentNote:'你的结果已显示在此游戏的社区页面。', sentGo:'查看我的评论', sentStay:'完成', failTitle:'未发送',
+    failNote:'内容未保存，输入的文字仍在表单中，可以重试。', failGo:'重试', failStay:'关闭', silentReport:'未填写评论，仅发送了测试结果。', replyingTo:'正在回复',
+    showing:(route,n)=>`${route} · ${n} 条结果`, showAll:'显示全部方案', replyPlaceholder:'回复此结果…', send:'发送', pinnedAnnouncement:'置顶公告', copyMessage:'复制消息',
+    replyMention:'回复并提及', hideMessage:'隐藏消息', blockAuthor:'屏蔽作者', copied:'消息已复制。', moderationDone:'管理操作已完成。', gameTotal:n=>`${n.toLocaleString('zh-CN')} 款游戏`,
+    facts:{title:'游戏',route:'方案',api:'图形接口',gpu:'显卡',driver:'驱动',cpu:'处理器',os:'系统',app:'软件版本'}
+  },
+  chat: {
+    nav:'聊天', title:'社区聊天', subtitle:'分享测试结果、截图和发现的游戏。', retention:'图片将在 24 小时后过期', refresh:'刷新', older:'加载更早的消息',
+    emptyTitle:'开始聊天', emptyBody:'分享技巧、截图或游戏卡片。', placeholder:'发送社区消息…', hint:'Enter 发送 · Shift+Enter 换行 · 支持粘贴或拖入图片',
+    newMessages:'新消息 ↓', addTo:'添加到消息', share:'分享内容', photos:'图片', photosSub:'最多 4 张图片', game:'游戏卡片', gameSub:'搜索社区测试结果', findGame:'查找游戏', findPlaceholder:'输入游戏名称…',
+    reports:n=>`${n} 份报告`, comments:n=>`${n} 条评论`, working:'运行正常', broken:'无法运行', mixed:'结果不一致', unknown:'暂无结果', replying:'正在回复', editing:'正在编辑消息',
+    imageExpired:'此图片已在 24 小时后过期。', edited:'已编辑', reply:'回复并提及', copy:'复制消息', edit:'编辑消息', remove:'删除消息', saveImage:'保存图片', hide:'隐藏消息', block:'屏蔽作者', adminDelete:'永久删除',
+    deleteTitle:'删除这条消息？', deleteBody:'所有人都将无法在聊天中看到它。', moderateTitle:'执行管理操作？', cancel:'取消', confirm:'确认', compression:'正在优化图片…',
+    sending:'正在发送…', uploadFailed:'消息未发送，草稿仍然保留。', tooMany:'最多可附加 4 张图片。', tooLarge:'每张原图最大为 15 MB。', badImage:'无法读取此图片。',
+    profile:'请先在设置中填写社区昵称，再使用提及功能。', noGames:'没有匹配的社区游戏。', label:'添加标签', chooseLabel:'选择标签', clearLabel:'不使用标签',
+    dlssOn:'DLSS 5 已开启', dlssOff:'DLSS 5 已关闭', fit:'适应窗口', copied:'已复制。', saved:'图片已保存。', online:'已连接实时更新'
+  },
+  overlay: {
+    'Emerald':'翡翠绿', 'Azure':'蔚蓝', 'Amethyst':'紫晶',
+    'Interactive demo · no game changes':'交互演示 · 不修改游戏设置', 'Saved.':'已保存。',
+    'Choose your style. Preview it, then make it yours.':'选择面板风格，可先预览再应用。',
+    'Install overlay with DLSS':'安装 DLSS 时同时安装面板', '＋ Add Overlay':'＋ 添加面板', 'Developer files':'开发文件',
+    '✓ Selected':'✓ 已选择', 'Select':'选择', '◉ Preview':'◉ 预览', 'Delete this theme':'删除此主题',
+    'Custom native overlay: browser preview unavailable. Only test trusted files.':'自定义原生面板不支持浏览器预览，请仅测试可信文件。',
+    'Install separately':'单独安装', 'Remove':'移除', 'Existing installations':'现有安装', 'Remove overlay only':'仅移除面板',
+    'Overlay service is not running. Restart DLSS 5 Swapper, then press the hotkey in game.':'面板服务未运行。请重启 DLSS 5 Swapper，再在游戏中按面板快捷键。',
+    'Overlay service connected to a running game.':'面板服务已连接到运行中的游戏。',
+    'Overlay service ready, waiting for a game. Keep DLSS 5 Swapper open and press the hotkey in game.':'面板服务已就绪，正在等待游戏连接。请保持 DLSS 5 Swapper 开启，并在游戏中按面板快捷键。',
+    'Done.':'已完成。', 'My theme':'我的主题', 'Create a theme':'创建主题',
+    "Pick an accent colour. The panel's other shades are derived from it.":'选择强调色，面板的其他配色将据此自动生成。',
+    'Colour':'颜色', 'Name':'名称', 'Cancel':'取消', 'Save':'保存', 'Give the theme a name.':'请为主题命名。',
+    'Reserved / unsupported key. Try F9 or Ctrl + Shift + O.':'此按键已保留或不受支持，请尝试 F9 或 Ctrl + Shift + O。'
+  }
+};

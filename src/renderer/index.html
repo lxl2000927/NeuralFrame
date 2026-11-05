@@ -8,9 +8,14 @@
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="overlay-lab.css" />
   <link rel="stylesheet" href="overlay-controls.css" />
+  <link rel="stylesheet" href="overlay-compact.css" />
   <link rel="stylesheet" href="chat.css" />
   <link rel="stylesheet" href="theme2.css" />
   <link rel="stylesheet" href="enhanced-ui.css" />
+  <link rel="stylesheet" href="ui-polish.css" />
+  <link rel="stylesheet" href="library-polish.css" />
+  <link rel="stylesheet" href="component-review.css" />
+  <link rel="stylesheet" href="component-library.css" />
 </head>
 <body>
   <div class="shell">
@@ -65,7 +70,7 @@
         <div class="status-line"><i class="live"></i><b id="statusText" data-i18n="ready">Ready</b></div>
         <p class="status-sub">DLSS 5 Swapper Enhanced</p>
         <p class="status-sub" id="statusVersion"></p>
-        <a class="status-update hidden" id="statusUpdate" href="https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/releases/latest" data-project="releases"></a>
+        <a class="status-update hidden" id="statusUpdate" href="https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/latest" data-project="releases"></a>
         <div class="bar"><i id="statusBar" style="width:22%"></i></div>
       </div>
     </aside>
@@ -73,7 +78,7 @@
     <!-- ---------------- main ---------------- -->
     <div class="main">
       <div class="toolbar">
-        <button id="themeBtn" class="round" title="Theme">
+        <button id="themeBtn" class="round" title="Theme" data-i18n-title="windowTheme">
           <svg viewBox="0 0 24 24" id="themeIcon"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></svg>
         </button>
         <div class="lang-wrap">
@@ -83,10 +88,10 @@
           </button>
           <div class="lang-menu hidden" id="langMenu"></div>
         </div>
-        <button class="win" id="winMin" title="Minimize" aria-label="Minimize">
+        <button class="win" id="winMin" title="Minimize" data-i18n-title="windowMinimize" aria-label="Minimize" data-i18n-aria-label="windowMinimize">
           <svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg>
         </button>
-        <button class="win close" id="winClose" title="Close" aria-label="Close">
+        <button class="win close" id="winClose" title="Close" data-i18n-title="windowClose" aria-label="Close" data-i18n-aria-label="windowClose">
           <svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>
         </button>
       </div>
@@ -123,7 +128,7 @@
         <div class="chat-shell">
           <header class="chat-head">
             <div>
-              <div class="chat-title-line"><h3 id="chatTitle">Community chat</h3><span class="chat-live"><i></i> LIVE</span></div>
+              <div class="chat-title-line"><h3 id="chatTitle">Community chat</h3><span class="chat-live"><i></i> <span data-i18n="liveLabel">Live</span></span></div>
               <p id="chatSubtitle">Share results, screenshots and game discoveries with everyone.</p>
             </div>
             <div class="chat-head-actions">
@@ -141,13 +146,13 @@
             <div class="chat-reply-preview hidden" id="chatReplyPreview"></div>
             <div class="chat-attachment-strip hidden" id="chatAttachments"></div>
             <div class="chat-composer">
-              <button class="chat-plus" id="chatPlus" type="button" aria-label="Attach">+</button>
+              <button class="chat-plus" id="chatPlus" type="button" aria-label="Attach" data-i18n-aria-label="attachLabel">+</button>
               <div class="chat-input-wrap">
                 <textarea id="chatInput" rows="1" maxlength="2000" placeholder="Message the community…"></textarea>
                 <div class="mention-menu hidden" id="chatMentions"></div>
                 <span class="chat-limit" id="chatLimit">0/2000</span>
               </div>
-              <button class="chat-send" id="chatSend" type="button" aria-label="Send">
+              <button class="chat-send" id="chatSend" type="button" aria-label="Send" data-i18n-aria-label="sendLabel">
                 <svg viewBox="0 0 24 24"><path d="m3 11 17-8-7 18-2-7zM11 14l9-11"/></svg>
               </button>
             </div>
@@ -162,7 +167,7 @@
         <div class="section-head community-heading">
           <!-- The badge is a sibling of the title, not inside it: the title's
                text is replaced wholesale when the language changes. -->
-          <div><div class="community-title-row"><h3 id="communityTitle">Community-tested games</h3><span class="beta-tag" title="This feature is new and still being tested">BETA</span></div><p class="hint" id="communitySubtitle">Real results from DLSS 5 Swapper users.</p></div>
+          <div><div class="community-title-row"><h3 id="communityTitle">Community-tested games</h3><span class="beta-tag" title="This feature is new and still being tested" data-i18n-title="betaHint"><span data-i18n="betaLabel">Beta</span></span></div><p class="hint" id="communitySubtitle">Real results from DLSS 5 Swapper users.</p></div>
           <div class="community-heading-actions">
             <button class="glass-btn sm" id="communityRefresh">Refresh</button>
             <span class="community-game-total" id="communityGameTotal" role="status" aria-live="polite">— games</span>
@@ -212,6 +217,8 @@
 
       <!-- HISTORY -->
       <section class="view" id="view-addons">
+        <div id="componentLibrary"></div>
+        <p class="hint">额外插件沿用下方的全局选择。为游戏在组件库中指定的版本优先；选择“沿用安装路线”可恢复路线和档位页的版本设置。</p>
         <div class="section-head">
           <h3 data-i18n="navAddons">Add-ons</h3>
           <button class="ghost sm" id="addonAdd" data-i18n="setAdd">Add</button>
@@ -230,10 +237,10 @@
       </section>
 
       <!-- SETTINGS -->
-      <section class="view" id="view-overlays" aria-label="Overlay">
+      <section class="view" id="view-overlays" aria-label="Overlay" data-i18n-aria-label="overlayTitle">
         <div class="section-head">
-          <div><h3>Overlay <span class="ol-badge">BETA</span></h3><p class="hint" id="olSubtitle"></p></div>
-          <div class="row ol-toolbar"><label class="ol-install-switch"><input type="checkbox" role="switch" id="olEnabled"><span id="olEnabledLabel">Install with DLSS</span></label><button class="ghost sm" id="olSource">Developer files</button><button class="ghost sm" id="olHotkey">Hotkey · F8</button><button class="ghost sm" id="olCustom">Create theme</button><button class="glass-btn sm" id="olAdd">＋ Add</button></div>
+          <div><h3><span data-i18n="overlayTitle">Overlay</span> <span class="ol-badge"><span data-i18n="betaLabel">Beta</span></span></h3><p class="hint" id="olSubtitle"></p></div>
+          <div class="row ol-toolbar"><label class="ol-install-switch"><input type="checkbox" role="switch" id="olEnabled"><span id="olEnabledLabel">Install with DLSS</span></label><button class="ghost sm" id="olSource">Developer files</button><button class="ghost sm" id="olHotkey">Hotkey · F8</button><button class="ghost sm" id="olCustom" data-i18n="overlayCreateTheme">Create theme</button><button class="glass-btn sm" id="olAdd">＋ Add</button></div>
         </div>
         <p id="olStatus" role="status" aria-live="polite"></p>
         <p id="olBridge" class="ol-bridge"></p><div id="olThemeGallery"></div><div id="olLibrary"></div><div id="olInstalls"></div>
@@ -251,11 +258,11 @@
           <p id="olCustomError" role="status"></p>
           <div class="row"><button id="olCustomCancel" class="ghost">Cancel</button><button id="olCustomSave" class="glass-btn">Save</button></div>
         </dialog>
-        <dialog id="olHotkeyDialog" class="ol-dialog ol-hotkey-dialog"><h3>Overlay hotkey</h3><p id="olKeyHelp">Click the field, then press your shortcut. Ctrl, Alt and Shift are supported. Home / Escape stay reserved for ReShade.</p><button id="olKeyCapture" class="ghost">F8</button><p id="olKeyError" role="status"></p><div class="row"><button id="olKeyCancel" class="ghost">Cancel</button><button id="olKeySave" class="glass-btn">Save</button></div></dialog>
+        <dialog id="olHotkeyDialog" class="ol-dialog ol-hotkey-dialog"><h3 data-i18n="overlayKeyTitle">Overlay hotkey</h3><p id="olKeyHelp" data-i18n="overlayKeyHelp">Click the field, then press your shortcut. Ctrl, Alt and Shift are supported. Home / Escape stay reserved for ReShade.</p><button id="olKeyCapture" class="ghost">F8</button><p id="olKeyError" role="status"></p><div class="row"><button id="olKeyCancel" data-i18n="cancel" class="ghost">Cancel</button><button id="olKeySave" data-i18n="save" class="glass-btn">Save</button></div></dialog>
       </section>
 
       <!-- ENHANCED CONTROL CENTER -->
-      <section class="view" id="view-enhanced" aria-label="DLSS 5 + MFG Enhanced Control Center"></section>
+      <section class="view" id="view-enhanced" aria-label="DLSS 5 + MFG Enhanced Control Center" data-i18n-aria-label="enhancedAria"></section>
 
       <section class="view" id="view-settings">
         <div class="section-head"><h3 data-i18n="navSettings">Settings</h3></div>
@@ -267,16 +274,17 @@
         <div class="section-head"><h3 data-i18n="navAbout">About</h3></div>
         <div class="glass pad about">
           <p><b data-i18n="aboutTitle">DLSS 5 Swapper Enhanced</b></p>
+          <p class="dim" id="aboutBuild"></p>
           <p data-i18n="aboutBody"></p>
           <div class="about-links">
-            <a class="glass-btn" href="https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced" data-project="github">GitHub ↗</a>
-            <a class="glass-btn" href="https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/releases/latest" data-project="releases"><span data-i18n="latestReleases">查看 GitHub 最新版本与更新说明</span> ↗</a>
+            <a class="glass-btn" href="https://github.com/lxl2000927/DLSS5-Swapper-Enhanced" data-project="github">GitHub ↗</a>
+            <a class="glass-btn" href="https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/latest" data-project="releases"><span data-i18n="latestReleases">查看 GitHub 最新版本与更新说明</span> ↗</a>
           </div>
           <p class="hint hidden" id="projectLinkError" role="status" data-i18n="errProjectLink"></p>
           <div class="support" style="display:none !important">
             <p class="support-line" data-i18n="supportBody"></p>
             <div class="support-row">
-              <a href="https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced" data-project="coffee" class="support-button">
+              <a href="https://github.com/lxl2000927/DLSS5-Swapper-Enhanced" data-project="coffee" class="support-button">
                 <img src="support-coffee.png" alt="Support" height="40">
               </a>
               <img class="support-qr" src="support-qr.png" alt="QR code" width="112" height="112">
@@ -317,12 +325,12 @@
     <button class="community-follow" id="communityFollow" type="button" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
     </button>
-    <button class="community-close" id="communityCardClose" aria-label="Close">✕</button>
+    <button class="community-close" id="communityCardClose" aria-label="Close" data-i18n-aria-label="windowClose">✕</button>
     <div id="communityCardBody"></div>
   </dialog>
   <dialog id="communityReportDialog" class="community-dialog community-report-dialog">
     <div class="community-card-head" id="communityReportHead"></div>
-    <button class="community-close" id="communityReportClose" aria-label="Close">✕</button>
+    <button class="community-close" id="communityReportClose" aria-label="Close" data-i18n-aria-label="windowClose">✕</button>
     <form id="communityReportForm" class="community-report-body">
       <div class="community-report-grid">
         <label><span id="communityReportRouteLabel" data-icon="route">Route used</span><select id="communityReportRoute" required><option value="">Choose…</option><option value="feeder">Feeder</option><option value="renodx">RenoDX</option><option value="optiscaler">OptiScaler</option></select></label>
@@ -364,12 +372,15 @@
   <div id="gameMenu" class="ctx-menu hidden" role="menu" aria-hidden="true"></div>
   <div id="copyFeedback" class="copy-feedback hidden" role="status" aria-live="polite"></div>
 
+  <script src="../shared/overlay-zh.js"></script>
   <script src="overlay-panel.js"></script>
   <script src="overlay-live.js"></script>
   <script src="overlay-gallery.js"></script>
   <script src="i18n.js"></script>
   <script src="i18n-extra.js"></script>
   <script src="../shared/feature-i18n.js"></script>
+  <script src="i18n-zh-complete.js"></script>
+  <script src="zh-cn-sections.js"></script>
   <script src="game-filters.js"></script>
   <script src="mentions.js"></script>
   <script src="ask.js"></script>
@@ -379,7 +390,10 @@
   <script src="community.js"></script>
   <script src="chat.js"></script>
   <script src="renderer.js"></script>
+  <script src="runtime-view.js"></script>
+<script src="component-review.js"></script>
   <script src="theme2.js"></script>
   <script src="enhanced-ui.js"></script>
+  <script src="component-library.js"></script>
 </body>
 </html>

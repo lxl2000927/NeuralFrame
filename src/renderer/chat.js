@@ -53,7 +53,7 @@
       fit: 'ملاءمة', copied: 'تم النسخ.', saved: 'تم حفظ الصورة.', online: 'التحديث المباشر متصل'
     }
   };
-  const words = () => L[(window.i18n?.getLang?.() || 'en').startsWith('ar') ? 'ar' : 'en'];
+  const words = () => window.i18n?.getLang?.() === 'zh' ? window.zhCNSections.chat : L[(window.i18n?.getLang?.() || 'en').startsWith('ar') ? 'ar' : 'en'];
   const readJson = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; } };
   const state = {
     messages: [], etag: null, version: 0, hasMore: false, timer: null, busy: false, initial: true,

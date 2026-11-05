@@ -11,8 +11,11 @@ const gameFilters = window.gameFilters;
 const ORDER = ['Steam', 'Epic Games', 'GOG', 'Xbox', 'Ubisoft', 'Added by hand', 'My folders'];
 const rank = (l) => (ORDER.indexOf(l) === -1 ? ORDER.length : ORDER.indexOf(l));
 const short = (v) => (v ? String(v).replace(/\.0$/, '') : null);
-const initials = (name) =>
-  name.replace(/[^A-Za-z0-9 ]/g, '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
+const initials = (name) => {
+  const title = String(name).replace(/[^\p{L}\p{N} ]/gu, '').trim();
+  if (/\p{Script=Han}/u.test(title)) return Array.from(title).slice(0, 2).join('');
+  return title.split(/\s+/).filter(Boolean).slice(0, 2).map(w => Array.from(w)[0].toUpperCase()).join('') || '◇';
+};
 
 const ICON = {
   exe: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
@@ -56,8 +59,25 @@ async function copyText(text) {
 }
 
 function setStatus(text, percent) {
-  $('statusText').textContent = text;
-  if (percent !== undefined) $('statusBar').style.width = Math.round(percent) + '%';
+  if ($('statusText').textContent !== text) $('statusText').textContent = text;
+  if (percent !== undefined) {
+    const width = Math.round(percent) + '%';
+    if ($('statusBar').style.width !== width) $('statusBar').style.width = width;
+  }
+}
+
+// Scans and artwork arrive independently. Coalesce them and defer hidden
+// pages instead of rebuilding the entire library once for every game result.
+let libraryRenderTimer = null;
+let gamesDirty = false, recentsDirty = false;
+function flushLibraryRender() {
+  if (gamesDirty && $('view-games').classList.contains('active')) { gamesDirty = false; renderGames(); }
+  if (recentsDirty && $('view-home').classList.contains('active')) { recentsDirty = false; renderRecent(); }
+}
+function scheduleLibraryRender() {
+  gamesDirty = recentsDirty = true;
+  if (libraryRenderTimer) return;
+  libraryRenderTimer = setTimeout(() => { libraryRenderTimer = null; flushLibraryRender(); }, 120);
 }
 
 // ---------------- views ----------------
@@ -77,9 +97,10 @@ function show(view) {
   if (sheetGame && !jobRunning && document.documentElement.dataset.skin === 'two') closeSheet();
   for (const s of document.querySelectorAll('.view')) s.classList.toggle('active', s.id === 'view-' + view);
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
+  flushLibraryRender();
   if (view === 'history') renderHistory();
   if (view === 'settings') renderSettings();
-  if (view === 'addons') renderAddons();
+  if (view === 'addons') { renderAddons(); window.componentLibrary?.render(); }
   if (view === 'overlays') window.overlayLab.render();
   if (view === 'community') window.communityUi.render();
   if (view === 'chat') window.chatUi?.render?.();
@@ -119,6 +140,7 @@ function isReady(g) {
 }
 
 function renderRecent() {
+  recentsDirty = false;
   const rows = state.recents
     .map((r) => ({ at: r.at, game: state.games.find((g) => g.dir === r.dir) }))
     .filter((r) => r.game)
@@ -131,7 +153,7 @@ function renderRecent() {
 
   $('recents').innerHTML = rows.map(({ at, game }) => `
     <article class="rcard" data-dir="${esc(game.dir)}" tabindex="0" aria-label="${esc(game.name)}" aria-haspopup="menu">
-      ${game.poster ? `<img src="${game.poster.url}" alt="">` : `<div class="initials">${esc(initials(game.name))}</div>`}
+      ${game.poster ? `<img src="${esc(game.poster.url)}" alt="">` : `<div class="initials">${esc(initials(game.name))}</div>`}
       <div class="meta">
         <div class="title">${esc(game.name)}</div>
         <div class="when"><span class="ago">${ago(at)}</span><i class="pip${isReady(game) ? ' on' : ''}"></i></div>
@@ -160,14 +182,13 @@ function cardMarkup(g) {
   const dx12 = Boolean(s && s.dx12);
   const hasDlss = gameFilters.hasDlss(g);
   const status = s && s.ok
-    ? `<span class="dot-s ${hasDlss ? 'on' : ''}"></span>${s.dlss ? esc(short(s.dlss)) : t(hasDlss ? 'hasDlss' : 'noDlss')}
-       <span class="dot-s ${s.addon || s.optiscaler ? 'on' : ''}" style="margin-inline-start:8px"></span>${s.optiscaler ? 'OptiScaler' : t('addonShort')}`
+    ? `<span class="card-status-item"><span class="dot-s ${hasDlss ? 'on' : ''}"></span>${s.dlss ? esc(short(s.dlss)) : t(hasDlss ? 'hasDlss' : 'noDlss')}</span>
+       <span class="card-status-item"><span class="dot-s ${s.addon || s.optiscaler ? 'on' : ''}"></span>${s.optiscaler ? 'OptiScaler' : t('addonShort')}</span>`
     : '';
   const strip = status ? `<div class="status">${status}</div>` : '';
-  const poster = g.poster
-    ? `<div class="poster${g.poster.tall ? '' : ' wide'}"${g.poster.tall ? '' : ` style="--bgimg:url('${g.poster.url}')"`}>
-         <img src="${g.poster.url}" alt="">${strip}</div>`
-    : `<div class="poster"><div class="placeholder">${initials(g.name)}</div>${strip}</div>`;
+  const placeholder = `<div class="placeholder" aria-hidden="true"><span>${esc(initials(g.name))}</span><small>${esc(g.name)}</small></div>`;
+  const poster = `<div class="poster${g.poster ? ' has-art' : ''}${g.poster && !g.poster.tall ? ' wide' : ''}">
+    ${placeholder}${g.poster ? `<img class="poster-image" src="${esc(g.poster.url)}" alt="" loading="lazy" decoding="async">` : ''}${strip}</div>`;
 
   return `
     <article class="card${dx12 ? ' dx12' : ''}${s && !s.ok ? ' unsupported' : ''}" data-dir="${esc(g.dir)}" tabindex="0" aria-label="${esc(g.name)}" aria-haspopup="menu">
@@ -178,9 +199,26 @@ function cardMarkup(g) {
       </div>
       <span class="badge${dx12 ? ' dx12' : ''}">${esc(api)}</span>
       ${poster}
-      <div class="name">${esc(g.name)}</div>
+      <div class="name" title="${esc(g.name)}">${esc(g.name)}</div>
     </article>`;
 }
+
+// A removed or corrupt local picture must leave a readable card, not a broken
+// image icon. Capture image errors because they do not bubble.
+document.addEventListener('error', event => {
+  const img = event.target;
+  if (!(img instanceof HTMLImageElement)) return;
+  if (img.classList.contains('poster-image')) {
+    const poster = img.closest('.poster');
+    poster?.classList.remove('has-art', 'wide');
+    poster?.querySelectorAll('img').forEach(image => image.remove());
+  } else if (img.parentElement?.classList.contains('rcard')) {
+    const label = document.createElement('div');
+    label.className = 'initials';
+    label.textContent = initials(img.parentElement.getAttribute('aria-label') || '');
+    img.replaceWith(label);
+  }
+}, true);
 
 function fillFilter(id, options, selected) {
   const element = $(id);
@@ -238,6 +276,7 @@ function renderGameFilters() {
 }
 
 function renderGames() {
+  gamesDirty = false;
   const focusedGroup = document.activeElement?.dataset.readyFilter;
   renderGameFilters();
   const visible = state.games.filter((g) => gameFilters.matches(g, filters, state.newDlss));
@@ -346,50 +385,91 @@ function historyText() {
 
 // ---------------- add-on builds ----------------
 
-async function renderAddons() {
-  const rows = await window.lab.addons();
-  $('addonList').innerHTML = rows.length ? rows.map((a) => `
-    <div class="addon${a.active ? ' on' : ''}">
-      <div class="mark">${a.active ? TICK : ''}</div>
-      <div class="body">
-        <div class="t">${esc(a.label)}${a.replaces ? `<span class="tag">${t('addonReplaces')}</span>` : ''}${
-          a.warn ? `<span class="tag warn">${esc(a.warn)}</span>` : ''}${
-          a.caution ? `<span class="tag warn">${t(a.caution)}</span>` : ''}</div>
-        <div class="d">${esc(a.file)}${a.version ? ' · ' + esc(a.version) : ''} · ${MB(a.size)}</div>
-        ${a.notes ? `<ul class="notes">${a.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-      </div>
-      <button class="toggle" role="switch" aria-checked="${a.active}" data-path="${esc(a.path)}"
-              title="${a.active ? t('addonDeactivate') : t('addonActivate')}">
-        <span class="knob"></span>
-      </button>
-      ${a.custom
-        ? `<button class="drop" data-remove="${esc(a.path)}" title="${t('addonRemove')}">
-             <svg viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
-           </button>`
-        : ''}
-    </div>`).join('') : `<p class="hint">${t('logEmpty')}</p>`;
-
-  const set = async (b, file, on) => {
-    b.disabled = true;
-    const res = await window.lab.addonToggle(file, on);
-    if (!res.ok) { log(res.message); b.disabled = false; return; }
-    // Only reported when one build had to step aside for another's file name.
-    if (res.replaced) log(t('addonNameClash', res.replaced));
-    renderAddons();
+const addonUi = { rows: [], query: '', filter: 'all', open: new Set(), busy: false, request: 0 };
+function addonFeedback(message, error = false) {
+  $('addonFeedback').textContent = message;
+  $('addonFeedback').dataset.error = String(error);
+}
+function prepareAddonControls() {
+  $('addonHint').textContent = t('addonScopeHint');
+  $('addonHint').classList.add('addon-intro');
+  if (!$('addonSearch')) {
+    const controls = document.createElement('div');
+    controls.id = 'addonControls';
+    controls.innerHTML = `<div class="addon-toolbar"><label class="addon-search"><span id="addonSearchLabel"></span><input id="addonSearch" type="search"></label><div class="addon-filters" id="addonFilters" role="group"></div></div><div class="addon-listbar"><div class="addon-overview" id="addonOverview"></div><button id="addonRefresh" type="button" class="ghost sm"></button></div><p id="addonFeedback" role="status" aria-live="polite"></p>`;
+    $('addonList').before(controls);
+    $('addonSearch').oninput = event => { addonUi.query = event.target.value; paintAddons(); };
+    $('addonRefresh').onclick = () => renderAddons();
+  }
+  $('addonSearchLabel').textContent = t('addonSearch');
+  $('addonSearch').placeholder = t('addonSearchHint');
+  $('addonRefresh').textContent = t('addonRefresh');
+  $('addonFilters').setAttribute('aria-label', t('addonFilterLabel'));
+}
+function paintAddons() {
+  const { rows, query, filter, busy } = addonUi;
+  const text = query.trim().toLocaleLowerCase();
+  const shown = rows.filter(a => (!text || [a.label, a.file, a.version, ...(a.notes || [])].join(' ').toLocaleLowerCase().includes(text)) &&
+    (filter === 'all' || (filter === 'selected' ? a.active : filter === 'custom' ? a.custom : a.replaces)));
+  $('addonFilters').innerHTML = [['all','addonFilterAll'],['selected','addonSelected'],['custom','addonCustom'],['replacement','addonReplacement']]
+    .map(([value,label]) => `<button class="filter-chip" type="button" data-addon-filter="${value}" aria-pressed="${filter === value}">${esc(t(label))}</button>`).join('');
+  for (const b of $('addonFilters').children) b.onclick = () => { addonUi.filter = b.dataset.addonFilter; paintAddons(); };
+  $('addonOverview').textContent = t('addonCounts', shown.length, rows.length, rows.filter(a => a.active).length);
+  $('addonRefresh').disabled = busy;
+  $('addonAdd').disabled = busy;
+  $('addonList').innerHTML = shown.length ? shown.map(a => {
+    const name = a.label || a.file;
+    const clash = !a.active && rows.find(other => other.active && other.path !== a.path && other.file.toLowerCase() === a.file.toLowerCase());
+    return `<article class="addon${a.active ? ' on' : ''}" data-addon-path="${esc(a.path)}">
+      <div class="mark" aria-hidden="true">${a.active ? TICK : ICON.addon}</div>
+      <div class="body"><div class="t">${esc(name)}<span class="tag">${esc(t(a.custom ? 'addonCustom' : 'addonDetected'))}</span><span class="tag${a.replaces ? ' warn' : ''}">${esc(t(a.replaces ? 'addonReplacement' : 'addonCompanion'))}</span></div>
+      <div class="d">${esc(a.file)} · ${esc(a.version || t('addonVersionUnknown'))} · ${MB(a.size)}</div>
+      ${a.warn ? `<div class="addon-conflict">${esc(a.warn)}</div>` : ''}${a.caution ? `<div class="addon-conflict">${esc(t(a.caution))}</div>` : ''}
+      ${clash ? `<p class="addon-conflict">${esc(t('addonWillReplace', clash.label || clash.file))}</p>` : ''}
+      <details class="addon-info"${addonUi.open.has(a.path) ? ' open' : ''}><summary>${esc(t('addonDetails'))}</summary>
+        ${a.notes?.length ? `<ul class="notes">${a.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : `<p class="hint">${esc(t('addonNoNotes'))}</p>`}
+        <div class="addon-path"><code>${esc(a.path)}</code><button type="button" class="ghost sm" data-copy-addon="${esc(a.path)}">${esc(t('addonCopyPath'))}</button></div>
+      </details></div>
+      <div class="addon-actions"><span class="addon-selection">${esc(t(a.active ? 'addonSelected' : 'addonNotSelected'))}</span>
+        <button type="button" class="toggle" role="switch" aria-checked="${Boolean(a.active)}" data-path="${esc(a.path)}" aria-label="${esc(t('addonSelectForInstall',name))}" title="${esc(t('addonNextInstall'))}" ${busy ? 'disabled' : ''}><span class="knob"></span></button>
+        ${a.custom ? `<button type="button" class="ghost sm" data-remove="${esc(a.path)}" title="${esc(t('addonRemoveHint'))}" ${busy ? 'disabled' : ''}>${esc(t('addonRemoveRecord'))}</button>` : ''}
+      </div></article>`;
+  }).join('') : `<div class="addon-empty"><b>${esc(t(rows.length ? 'addonNoMatches' : 'addonEmpty'))}</b><p>${esc(t(rows.length ? 'addonSearchHint' : 'addonEmptyHint'))}</p></div>`;
+  for (const details of $('addonList').querySelectorAll('details')) details.ontoggle = () => {
+    const key = details.closest('[data-addon-path]').dataset.addonPath;
+    if (details.open) addonUi.open.add(key); else addonUi.open.delete(key);
   };
-  // Each switch stands on its own: turning one on leaves the others as they are.
-  for (const b of $('addonList').querySelectorAll('.toggle')) {
-    b.onclick = () => set(b, b.dataset.path, b.getAttribute('aria-checked') !== 'true');
-  }
-  // Only builds added by hand can be dropped; the ones found in folders and the
-  // one shipped with the app are not the list's to delete.
-  for (const b of $('addonList').querySelectorAll('[data-remove]')) {
-    b.onclick = async () => {
-      b.disabled = true;
-      await window.lab.addonRemove(b.dataset.remove);
-      renderAddons();
-    };
-  }
+  for (const b of $('addonList').querySelectorAll('[data-copy-addon]')) b.onclick = async () => {
+    try { addonFeedback(t(await window.lab.copyText(b.dataset.copyAddon) ? 'copied' : 'copyFailed')); }
+    catch { addonFeedback(t('copyFailed'), true); }
+  };
+  for (const b of $('addonList').querySelectorAll('.toggle, [data-remove]')) b.onclick = async () => {
+    if (addonUi.busy) return;
+    const file = b.dataset.path || b.dataset.remove;
+    const remove = Boolean(b.dataset.remove), on = b.getAttribute('aria-checked') !== 'true';
+    addonUi.busy = true; paintAddons(); addonFeedback('');
+    try {
+      const result = remove ? await window.lab.addonRemove(file) : await window.lab.addonToggle(file, on);
+      if (remove ? result === false : !result?.ok) throw new Error(result?.message || t('addonActionFailed'));
+      if (await renderAddons() === false) throw new Error(t('addonActionFailed'));
+      addonFeedback(result?.replaced ? t('addonNameClash',result.replaced) : t(remove ? 'addonRecordRemoved' : 'addonSelectionSaved'));
+    } catch (error) { addonFeedback(error.message || t('addonActionFailed'), true); }
+    finally {
+      addonUi.busy = false; paintAddons();
+      [...$('addonList').querySelectorAll('.toggle')].find(button => button.dataset.path === file)?.focus({preventScroll:true});
+    }
+  };
+}
+async function renderAddons() {
+  prepareAddonControls();
+  const request = ++addonUi.request;
+  $('addonList').setAttribute('aria-busy', 'true');
+  try {
+    const rows = await window.lab.addons();
+    if (request !== addonUi.request) return;
+    addonUi.rows = rows; paintAddons(); return true;
+  } catch (error) { addonFeedback(error.message || t('addonActionFailed'), true); return false; }
+  finally { if (request === addonUi.request) $('addonList').removeAttribute('aria-busy'); }
 }
 
 // Picking a file only opens the dialog; nothing is saved until it is confirmed,
@@ -627,9 +707,9 @@ async function scanAll() {
   for (const game of pending) {
     game.cached = await window.lab.scan(game.dir);
     setStatus(t('scanning'), (++scanned / state.games.length) * 100);
-    renderGames();
-    renderRecent();
+    scheduleLibraryRender();
   }
+  flushLibraryRender();
   setStatus(t('ready'), 100);
   log(t('libReady', state.games.length, state.games.filter((g) => g.cached && g.cached.dx12).length));
   fetchArt();
@@ -646,16 +726,20 @@ async function fetchArt() {
   let done = 0;
   setStatus(t('fetchingArt'), 0);
   for (const game of missing) {
-    const art = await window.lab.artFetch(game.dir, game.name, game.appid);
-    if (art && art.cover) {
-      game.poster = { url: art.cover, tall: true, custom: false };
-      renderGames();
-      renderRecent();
+    let art;
+    try { art = await window.lab.artFetch(game.dir, game.name, game.appid); } catch { /* allow other games to load */ }
+    if (!game.poster?.custom && (art?.cover || art?.hero)) {
+      const url = art.cover || art.hero, tall = Boolean(art.cover);
+      if (game.poster?.url !== url || game.poster?.tall !== tall) {
+        game.poster = { url, tall, custom: false };
+        scheduleLibraryRender();
+      }
     }
     setStatus(t('fetchingArt'), (++done / missing.length) * 100);
   }
   setStatus(t('ready'), 100);
-  log(t('artFound', missing.filter((g) => g.poster && g.poster.tall).length, missing.length));
+  flushLibraryRender();
+  log(t('artFound', missing.filter((g) => g.poster).length, missing.length));
 }
 
 async function load() {
@@ -665,7 +749,7 @@ async function load() {
   state.newDlss = (await window.lab.details(state.games[0] ? state.games[0].dir : '')).newDlss;
   renderGames();
   renderRecent();
-  log(`Found ${state.games.length} games across ${new Set(state.games.map((g) => g.launcher)).size} sources`);
+  log(t('foundLibrary', state.games.length, new Set(state.games.map((g) => g.launcher)).size));
   await scanAll();
 }
 
@@ -867,6 +951,7 @@ async function showUpdateNotice() {
   let answer = null;
   try { answer = await window.lab.checkUpdate(); } catch { return; }
   if (!answer) return;
+  if (answer.channel === 'independent' && answer.status === 'unconfigured') return;
   // A failed lookup used to look exactly like "nothing new", so someone on an
   // old build whose check never completed was told nothing at all and had no
   // reason to go and look. Say which of the two it was.
@@ -1148,13 +1233,13 @@ async function runJob(kind, dir) {
 
   let res;
   try { res = kind === 'install'
-    ? await window.lab.install(
+    ? await window.componentReview.run(token => window.lab.install(
       dir,
       exeChoice.get(dir) || null,
       pick ? selectedRoute(sheetDetails, pick, dir) : null,
-      pick?.apiOverride || 'auto'
-    )
-    : await window.lab.restoreGame(dir);
+      pick?.apiOverride || 'auto', token
+    ))
+    : await window.componentReview.run(token => window.lab.restoreGame(dir, token));
   } catch (error) { res = { ok: false, message: error.message }; }
   jobRunning = false;
   install.textContent = t('install');
@@ -1214,6 +1299,11 @@ function applyLang(code) {
 
   for (const node of document.querySelectorAll('[data-i18n]')) {
     node.textContent = t(node.dataset.i18n);
+  }
+  for (const attribute of ['title', 'aria-label']) {
+    for (const node of document.querySelectorAll(`[data-i18n-${attribute}]`)) {
+      node.setAttribute(attribute, t(node.getAttribute(`data-i18n-${attribute}`)));
+    }
   }
   // Anything drawn from data has to be rebuilt, not just relabelled.
   renderLog();
@@ -1502,7 +1592,13 @@ async function openGameMenu(card, position) {
   const view = $('view-games');
   const head = view && view.querySelector('.games-heading');
   if (view && head) {
-    const mark = () => head.classList.toggle('stuck', view.scrollTop > 4);
+    // Hysteresis avoids class churn on fractional scroll offsets; the class
+    // changes only paint properties, never the header's dimensions.
+    const mark = () => {
+      const stuck = head.classList.contains('stuck');
+      if (!stuck && view.scrollTop > 8) head.classList.add('stuck');
+      else if (stuck && view.scrollTop < 2) head.classList.remove('stuck');
+    };
     view.addEventListener('scroll', mark, { passive: true });
     mark();
   }
@@ -1578,6 +1674,8 @@ document.addEventListener('drop', (e) => e.preventDefault());
 
 (async () => {
   const boot = await window.lab.boot();
+  window.appRelease = Object.freeze({version:boot.version, ...(boot.distribution || {})});
+  document.title = `DLSS 5 Swapper Enhanced ${boot.version}`;
   state.theme = boot.theme || 'light';
   state.skin = boot.skin === 'two' ? 'two' : 'one';
   state.groupGamesByStore = boot.groupGamesByStore !== false;
@@ -1587,6 +1685,8 @@ document.addEventListener('drop', (e) => e.preventDefault());
   syncSkinChrome();
   applyLang(boot.lang || 'en');
   $('statusVersion').textContent = `v${boot.version}`;
+  if ($('aboutBuild')) $('aboutBuild').textContent = boot.distribution?.channel === 'independent'
+    ? `独立分支 v${boot.version} · 上游基线 v${boot.distribution.upstreamVersion}` : `v${boot.version}`;
   // Nothing this app installs is on disk. Saying so now beats letting somebody
   // pick a game, choose a route and press Install before finding out (#220).
   if (boot.payloadMissing) log(boot.payloadMissing);

@@ -4,13 +4,17 @@
 // therefore registered as an implicit layer for the current Windows user.
 // This follows the same HKCU layout used by ReShade and DLSS5-Autopilot and
 // keeps a reference list so restoring one emulator cannot break another.
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const path = require('path');
 const { execFile } = require('child_process');
 
 const KEY = 'HKCU\\Software\\Khronos\\Vulkan\\ImplicitLayers';
 
 function defaultRunner(file, args) {
+  if (require('./preview-fs').active() && args[0] !== 'query') {
+    require('./preview-fs').active().externalSteps?.push({ file, args });
+    return Promise.resolve({ code: 0, stdout: '', stderr: '' });
+  }
   return new Promise((resolve) => {
     execFile(file, args, { windowsHide: true, encoding: 'utf8' }, (error, stdout, stderr) => {
       resolve({ code: error && typeof error.code === 'number' ? error.code : (error ? 1 : 0), stdout: stdout || '', stderr: stderr || '' });

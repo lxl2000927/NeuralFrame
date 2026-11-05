@@ -34,7 +34,8 @@ module.exports = async function startOverlayBridge({ BrowserWindow, userData, id
   };
   ipcMain.on('lab-overlay-control', control);
   const resize = (event, height) => {
-    if (closed || event.sender !== win.webContents || !Number.isInteger(height) || height < 200 || height > protocol.MAX_HEIGHT) return;
+    // The compact panel can collapse to its 52px title bar plus two borders.
+    if (closed || event.sender !== win.webContents || !Number.isInteger(height) || height < 54 || height > protocol.MAX_HEIGHT) return;
     panelHeight = height;
     win.setContentSize(protocol.WIDTH, height);
     win.webContents.enableDeviceEmulation({ screenPosition: 'desktop', screenSize: { width: protocol.WIDTH, height }, deviceScaleFactor: 1, viewSize: { width: protocol.WIDTH, height }, viewPosition: { x: 0, y: 0 }, scale: 1 });

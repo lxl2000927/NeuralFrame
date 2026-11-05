@@ -1,0 +1,113 @@
+'use strict';
+const test = require('node:test'), assert = require('node:assert/strict');
+const fs = require('fs'), path = require('path'), os = require('os');
+const { writePe } = require('./fixtures/pe');
+const { ComponentReview } = require('../src/core/component-review');
+const preview = require('../src/core/preview-fs');
+const core = require('../src/core/apply');
+const backends = require('../src/core/backend-manager');
+const journal = require('../src/core/file-journal');
+function fixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'component-review-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const game = path.join(root, 'game'), payload = path.join(root, 'payload');
+  fs.mkdirSync(game); fs.mkdirSync(payload);
+  writePe(path.join(game, 'Game.exe'), { bitness: 64, text: 'D3D12CreateDevice' });
+  writePe(path.join(game, 'nvngx_dlss.dll'), { bitness: 64, version: [2, 0, 0, 0] });
+  writePe(path.join(payload, 'nvngx_dlss.dll'), { bitness: 64, version: [3, 0, 0, 0] });
+  writePe(path.join(payload, 'nvngx_dlssnr.dll'), { bitness: 64, version: [310, 8, 0, 0] });
+  const review = new ComponentReview(path.join(root, 'profile'));
+  const config = { gameDir: game, exePath: path.join(game, 'Game.exe'), api: 'dxgi', apiLabel: 'DirectX 12', bitness: 64, route: 'native', addMissingDlss: true, installReShade: false,
+    source: { hasNeuralRendering: true, payload: ['nvngx_dlss.dll','nvngx_dlssnr.dll'].map(name => ({ name, path: path.join(payload, name), version: name.includes('nr') ? '310.8.0.0' : '3.0.0.0' })) } };
+  const install = async () => { await backends.install(config); return { ok: true }; };
+  return { root, game, payload, review, config, install, request: { kind: 'install' } };
+}
+test('preview uses real installer, never writes game/profile; confirm matches, inventory and original restore', async t => {
+  const f = fixture(t), old = fs.readFileSync(path.join(f.game, 'nvngx_dlss.dll'));
+  writePe(path.join(f.game,'sl.interposer.dll'),{bitness:64,version:[2,14,0,0]});
+  const plan = (await f.review.run(f.game, f.request, f.install)).preview;
+  assert.equal(plan.rows.find(r => r.rel === 'nvngx_dlss.dll').action, 'replace');
+  assert.equal(plan.rows.find(r => r.rel === 'nvngx_dlssnr.dll').action, 'add');
+  assert.deepEqual(fs.readFileSync(path.join(f.game, 'nvngx_dlss.dll')), old);
+  assert.equal(fs.existsSync(path.join(f.game, '_DLSS5_Backup')), false);
+  assert.equal(fs.existsSync(path.join(f.root, 'profile')), false);
+  assert.equal((await f.review.run(f.game, f.request, f.install, plan.token)).ok, true);
+  assert.deepEqual(fs.readFileSync(path.join(f.game, 'nvngx_dlss.dll')), fs.readFileSync(path.join(f.payload, 'nvngx_dlss.dll')));
+  const rows = (await f.review.inventory(f.game)).rows;
+  assert.equal(rows.find(r => r.rel === 'nvngx_dlss.dll').version, '3.0.0.0');
+  assert.equal(rows.find(r => r.rel === 'nvngx_dlss.dll').backup.version, '2.0.0.0');
+  assert.ok(rows.every(r => r.loaded === 'unknown'));
+  assert.equal(rows.find(r=>r.rel==='sl.interposer.dll').writtenAt,null,'preserved files are not newly written');
+  const restore = async () => ({ ok: await backends.restore(f.game) });
+  const undo = (await f.review.run(f.game, {kind:'restore'}, restore)).preview;
+  assert.equal(undo.rows.find(r => r.rel === 'nvngx_dlssnr.dll').action, 'remove');
+  await f.review.run(f.game, {kind:'restore'}, restore, undo.token);
+  assert.deepEqual(fs.readFileSync(path.join(f.game, 'nvngx_dlss.dll')), old);
+  assert.equal(fs.existsSync(path.join(f.game, 'nvngx_dlssnr.dll')), false);
+});
+test('changed source or destination invalidates preview; tokens cannot be replayed or reused for another game', async t => {
+  const f = fixture(t);
+  let plan = (await f.review.run(f.game, f.request, f.install)).preview;
+  fs.appendFileSync(path.join(f.payload, 'nvngx_dlssnr.dll'), 'new bytes');
+  await assert.rejects(f.review.run(f.game, f.request, f.install, plan.token), {code:'errPreviewChanged'});
+  assert.equal(fs.existsSync(path.join(f.game, '_DLSS5_Backup')), false);
+  plan = (await f.review.run(f.game, f.request, f.install)).preview;
+  fs.appendFileSync(path.join(f.game, 'nvngx_dlss.dll'), 'game update');
+  await assert.rejects(f.review.run(f.game, f.request, f.install, plan.token), {code:'errPreviewChanged'});
+  await assert.rejects(f.review.run(f.game, f.request, f.install, plan.token), {code:'errPreviewExpired'});
+  plan = (await f.review.run(f.game, f.request, f.install)).preview;
+  await assert.rejects(f.review.run(f.game, {kind:'restore'}, f.install, plan.token), {code:'errPreviewExpired'});
+});
+test('per-game persisted version lock blocks changes/additions/drift, allows tuning and explicit restore', async t => {
+  const f = fixture(t);
+  let p = (await f.review.run(f.game, f.request, f.install)).preview;
+  await f.review.run(f.game, f.request, f.install, p.token);
+  await f.review.setLock(f.game, true);
+  const reloaded = new ComponentReview(path.join(f.root, 'profile'));
+  assert.ok((await reloaded.inventory(f.game)).lock);
+  const tune = async () => {
+    await journal.transaction(f.game, async () => { const m = core.beginManifest(f.game, f.config.exePath, 'dxgi'); await core.writeTracked(m, f.game, path.join(f.game,'ReShade.ini'), '[RenoDX.MFGUnlock]\nMultiplier=3\n'); });
+    return {ok:true};
+  };
+  p = (await reloaded.run(f.game, {kind:'enhanced'}, tune)).preview;
+  assert.deepEqual(p.conflicts, []);
+  assert.equal((await reloaded.run(f.game, {kind:'enhanced'}, tune, p.token)).ok, true);
+  const change = async () => { await preview.fs.promises.copyFile(path.join(f.payload,'nvngx_dlssnr.dll'), path.join(f.game,'extra.addon64')); return {ok:true}; };
+  p = (await reloaded.run(f.game, {kind:'enhanced'}, change)).preview;
+  assert.ok(p.conflicts.length);
+  await assert.rejects(reloaded.run(f.game, {kind:'enhanced'}, change, p.token), {code:'errVersionLocked'});
+  assert.equal(fs.existsSync(path.join(f.game,'extra.addon64')), false);
+  fs.appendFileSync(path.join(f.game,'nvngx_dlss.dll'), 'external change');
+  assert.equal((await reloaded.inventory(f.game)).rows.find(r => r.rel === 'nvngx_dlss.dll').lockState, 'drift');
+  p = (await reloaded.run(f.game, {kind:'enhanced'}, tune)).preview;
+  assert.ok(p.conflicts.some(x => x.includes('偏离')));
+  await reloaded.setLock(f.game, false);
+  assert.equal((await reloaded.inventory(f.game)).lock, null);
+});
+test('failed preview and unsupported external work never leave real backup/files', async t => {
+  const f = fixture(t);
+  const fail = async () => { await core.writeTracked(core.beginManifest(f.game,f.config.exePath,'dxgi'),f.game,path.join(f.game,'new.ini'),'x'); throw Error('fixture error'); };
+  await assert.rejects(f.review.run(f.game, f.request, fail), /fixture error/);
+  assert.equal(fs.existsSync(path.join(f.game,'new.ini')), false);
+  assert.equal(fs.existsSync(path.join(f.game,'_DLSS5_Backup')), false);
+  const swallowed = async () => { try { preview.external('dependency', 'lumenite'); } catch {} return {ok:true}; };
+  await assert.rejects(f.review.run(f.game, f.request, swallowed), error => error.dependencies[0] === 'lumenite');
+});
+test('another game cannot replace a shared Vulkan component pinned by this game',async t=>{
+  const f=fixture(t),shared=path.join(f.root,'profile','reshade-vulkan');fs.mkdirSync(shared,{recursive:true});
+  const dll=path.join(shared,'ReShade64.dll');writePe(dll,{bitness:64,version:[6,7,0,0]});
+  const manifest=core.beginManifest(f.game,f.config.exePath,'vulkan');manifest.vulkanLayer={owned:true,dir:shared};await core.saveActiveManifest(f.game,manifest);
+  await f.review.setLock(f.game,true);
+  assert.equal((await f.review.inventory(f.game)).rows.find(r=>r.scope==='shared').lockState,'match');
+  const other=path.join(f.root,'OtherGame');fs.mkdirSync(other);writePe(path.join(other,'Other.exe'),{bitness:64,text:'D3D12CreateDevice'});
+  const work=async()=>{await preview.fs.promises.copyFile(path.join(f.payload,'nvngx_dlss.dll'),dll);return {ok:true};};
+  const plan=(await f.review.run(other,{kind:'enhanced'},work)).preview;
+  assert.ok(plan.conflicts.some(c=>c.includes('共享组件锁')));
+  await assert.rejects(f.review.run(other,{kind:'enhanced'},work,plan.token),{code:'errVersionLocked'});
+});
+test('prepared dependency proof detects edited files and additional loose files',t=>{
+  const f=fixture(t),proof=require('../src/core/cache-proof');
+  proof.save(f.payload,'verified-archive');assert.equal(proof.valid(f.payload,'verified-archive'),true);
+  fs.appendFileSync(path.join(f.payload,'nvngx_dlss.dll'),'tamper');assert.equal(proof.valid(f.payload,'verified-archive'),false);
+  proof.save(f.payload,'verified-archive');fs.writeFileSync(path.join(f.payload,'new.dll'),'unplanned');assert.equal(proof.valid(f.payload,'verified-archive'),false);
+});

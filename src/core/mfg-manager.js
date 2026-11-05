@@ -4,7 +4,7 @@
 // 在不篡改磁盘签名、不绕过反作弊、不冒充 FSR/第三方插帧的前提下，为 RTX 40 系列 (Ada Lovelace 0x190) 提供进程内原生
 // NVIDIA DLSS-G x2/x3/x4 多帧生成配置、注入器冲突检测、自动备份、一键恢复与真实运行时状态验证。
 
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');

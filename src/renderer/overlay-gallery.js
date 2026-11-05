@@ -1,7 +1,8 @@
 'use strict';
 (()=>{
-const $=id=>document.getElementById(id),text=(en,ar)=>document.documentElement.lang==='ar'?ar:en;
+const $=id=>document.getElementById(id),text=(en,ar)=>document.documentElement.lang==='ar'?ar:document.documentElement.lang==='zh'?(window.zhCNSections.overlay[en]||en):en;
 const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const errorText=value=>document.documentElement.lang==='zh'?window.overlayZh.text(value):value;
 const builtInThemes=[['green','Emerald','الأخضر'],['blue','Azure','الأزرق'],['purple','Amethyst','البنفسجي']];
 // The saved custom theme sits alongside the built-in three; its label is
 // whatever the person typed, in either language.
@@ -14,12 +15,12 @@ const keyLabel=h=>[h.mods&1?'Ctrl':'',h.mods&2?'Alt':'',h.mods&4?'Shift':'',keyN
 const button=(action,id,label)=>`<button class="ghost sm" data-ol-action="${action}" data-id="${esc(id)}">${esc(label)}</button>`;
 function dispose(){observer?.disconnect();document.querySelectorAll('.ol-static-panel').forEach(e=>e._overlayDispose?.());}
 function preview(id){const root=$('olPreview');root._overlayDispose?.();window.applyOverlayTheme(root,{theme:id,custom:prefs&&prefs.custom});window.mountOverlayLive(root,{designOnly:true});$('olPreviewLabel').textContent=text('Interactive demo · no game changes','معاينة تفاعلية · لا تغيّر اللعبة');$('olPreviewDialog').showModal();}
-async function save(patch){if(busy)return false;busy=true;try{const r=await window.lab.saveOverlayPreferences(patch);if(!r.ok)throw Error(r.error);prefs=r.value;$('olStatus').textContent=text('Saved.','تم الحفظ.');return true;}catch(e){$('olStatus').textContent=e.message;return false;}finally{busy=false;await render();}}
+async function save(patch){if(busy)return false;busy=true;try{const r=await window.lab.saveOverlayPreferences(patch);if(!r.ok)throw Error(r.error);prefs=r.value;$('olStatus').textContent=text('Saved.','تم الحفظ.');return true;}catch(e){$('olStatus').textContent=errorText(e.message);return false;}finally{busy=false;await render();}}
 async function render(){
  const run=++generation,[r,s]=await Promise.all([window.lab.overlays(),window.lab.overlayPreferences()]);if(run!==generation)return;
- if(!r.ok||!s.ok){$('olStatus').textContent=r.error||s.error;return;}prefs=s.value;
+ if(!r.ok||!s.ok){$('olStatus').textContent=errorText(r.error||s.error);return;}prefs=s.value;
  $('olSubtitle').textContent=text('Choose your style. Preview it, then make it yours.','اختر ثيمك، جرّبه في المعاينة، ثم حدده.');
- $('olEnabled').checked=prefs.enabled;$('olEnabledLabel').textContent=text('Install overlay with DLSS','تثبيت الأوفرلاي مع DLSS');$('olHotkey').textContent=`Hotkey · ${keyLabel(prefs.hotkey)}`;
+ $('olEnabled').checked=prefs.enabled;$('olEnabledLabel').textContent=text('Install overlay with DLSS','تثبيت الأوفرلاي مع DLSS');$('olHotkey').textContent=`${document.documentElement.lang==='zh'?'快捷键':'Hotkey'} · ${keyLabel(prefs.hotkey)}`;
  $('olAdd').textContent=text('＋ Add Overlay','＋ إضافة أوفرلاي');$('olSource').textContent=text('Developer files','ملفات المطورين');dispose();
  $('olThemeGallery').innerHTML=themeList().map(([id,en,ar])=>`<article class="ol-theme-card ${prefs.theme===id?'selected':''}" data-overlay-theme="${id}"><div class="ol-card-stage"><div class="ol-static-panel" inert aria-hidden="true"></div></div><div class="ol-theme-bottom"><h3>${text(en,ar)}</h3><div class="ol-actions"><button class="ol-select" data-ol-action="select" data-id="${id}" aria-pressed="${prefs.theme===id}">${prefs.theme===id?text('✓ Selected','✓ محدد'):text('Select','اختيار')}</button>${button('preview',id,text('◉ Preview','◉ معاينة'))}${id==='custom'?`<button class="drop" data-ol-action="delete-theme" data-id="custom" title="${text('Delete this theme','حذف هذا الثيم')}" aria-label="${text('Delete this theme','حذف هذا الثيم')}"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>`:''}</div></div></article>`).join('');
  for(const root of document.querySelectorAll('.ol-static-panel')){window.mountOverlayLive(root,{designOnly:true});root.querySelectorAll('.ol-live-modes,.ol-preview-backend').forEach(e=>e.remove());root.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));root.querySelectorAll('[for]').forEach(e=>e.removeAttribute('for'));}
@@ -27,9 +28,9 @@ async function render(){
  for(const card of $('olThemeGallery').querySelectorAll('[data-overlay-theme=custom]'))
    window.applyOverlayTheme(card,{theme:'custom',custom:prefs.custom});
  $('olLibrary').innerHTML=r.value.overlays.filter(e=>!e.builtin).map(e=>`<article class="ol-card"><h3>${esc(e.name)}</h3><p>${text('Custom native overlay: browser preview unavailable. Only test trusted files.','أوفرلاي خارجي لا يدعم معاينة المتصفح. اختبر الملفات الموثوقة فقط.')}</p><div class="ol-actions">${button('install',e.id,text('Install separately','تثبيت منفصل'))}${button('remove',e.id,text('Remove','إزالة'))}</div></article>`).join('');
- const builtinName=(r.value.overlays.find(o=>o.id==='builtin')||{}).name;
+ const builtinName=errorText((r.value.overlays.find(o=>o.id==='builtin')||{}).name);
  $('olInstalls').innerHTML=r.value.installations.length?`<details><summary>${text('Existing installations','التثبيتات الحالية')} (${r.value.installations.length})</summary>${r.value.installations.map(e=>`<article class="ol-card"><b>${esc(e.overlayId==='builtin'&&builtinName?builtinName:e.name)}</b><p>${esc(e.directory)}</p>${button('uninstall',e.id,text('Remove overlay only','إزالة الأوفرلاي فقط'))}</article>`).join('')}</details>`:'';
- if(r.value.errors.length)$('olStatus').textContent=r.value.errors.join('\n');
+ if(r.value.errors.length)$('olStatus').textContent=r.value.errors.map(errorText).join('\n');
  await showBridge();
 }
 // The panel in the game says it is waiting; this says what for. Without it
@@ -43,7 +44,7 @@ async function showBridge(){
  // game will ever attach, and it used to leave the page saying "ready".
  if(state&&state.addon===false){
   box.dataset.state='off';
-  box.textContent=text(
+  box.textContent=document.documentElement.lang==='zh'?`此软件缺少面板插件，游戏无法加载它：${state.addonFile||''}。请检查安全软件的隔离记录或重新安装软件。`:text(
    `The overlay add-on is missing from this app, so no game can load it: ${state.addonFile||''}. Antivirus software removes this file - restore it from your antivirus quarantine and add an exclusion, or reinstall DLSS 5 Swapper.`,
    `ملف الأوفرلاي مفقود من البرنامج، فلا تستطيع أي لعبة تحميله: ${state.addonFile||''}. برامج الحماية تحذف هذا الملف - استعده من الحجر الصحي وأضف استثناءً، أو أعد تثبيت البرنامج.`);
   return;
@@ -63,7 +64,7 @@ async function showBridge(){
  box.textContent=text('Overlay service ready, waiting for a game. Keep DLSS 5 Swapper open and press the hotkey in game.',
   'خدمة الأوفرلاي جاهزة وتنتظر لعبة. أبقِ البرنامج مفتوحاً واضغط زر الاختصار داخل اللعبة.');
 }
-async function action(name,id){if(busy)return;if(name==='preview'){preview(id);return;}if(name==='select'){await save({theme:id});return;}if(name==='delete-theme'){await save({custom:null,theme:prefs.theme==='custom'?'green':prefs.theme});return;}busy=true;try{const r=await({add:window.lab.overlayAdd,remove:window.lab.overlayRemove,install:window.lab.overlayInstall,uninstall:window.lab.overlayUninstall,source:window.lab.overlaySource})[name](id);$('olStatus').textContent=r.ok?text('Done.','تم.'):r.error;}catch(e){$('olStatus').textContent=e.message;}finally{busy=false;await render();}}
+async function action(name,id){if(busy)return;if(name==='preview'){preview(id);return;}if(name==='select'){await save({theme:id});return;}if(name==='delete-theme'){await save({custom:null,theme:prefs.theme==='custom'?'green':prefs.theme});return;}busy=true;try{const r=await({add:window.lab.overlayAdd,remove:window.lab.overlayRemove,install:window.lab.overlayInstall,uninstall:window.lab.overlayUninstall,source:window.lab.overlaySource})[name](id);$('olStatus').textContent=r.ok?text('Done.','تم.'):errorText(r.error);}catch(e){$('olStatus').textContent=errorText(e.message);}finally{busy=false;await render();}}
 $('olAdd').onclick=()=>action('add');$('olSource').onclick=()=>action('source');$('olEnabled').onchange=()=>save({enabled:$('olEnabled').checked});
 $('olPreviewClose').onclick=()=>$('olPreviewDialog').close();$('olPreviewDialog').addEventListener('close',()=>{$('olPreview')._overlayDispose?.();$('olPreview').replaceChildren();});
 // Create-a-theme dialog. The preview repaints on every colour change so the

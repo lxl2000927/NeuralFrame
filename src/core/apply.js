@@ -4,7 +4,7 @@
 //
 // Nothing here writes user-facing prose. Every step reports a code plus its
 // values, and the renderer turns that into whichever language is selected.
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -151,6 +151,7 @@ async function copyOver(src, dest) {
 }
 
 function runSetup(setupExe, args, log) {
+  require('./preview-fs').external('此安装需要外部 ReShade 安装器，无法生成完整文件预览。请使用包含离线 ReShade DLL 的完整便携包。');
   return new Promise((resolve) => {
     log('runningSetup', { setup: path.basename(setupExe), args: args.slice(1).join(' ') });
     const child = spawn(setupExe, args, { windowsHide: true });
@@ -242,6 +243,8 @@ async function trackBeforeWrite(manifest, gameDir, target, meta = {}) {
 }
 
 async function copyTracked(manifest, gameDir, src, dest, meta = {}) {
+  src = require('./component-deploy').resolveSource(gameDir, src, dest);
+  if (meta.newVersion) meta = { ...meta, newVersion: pe.getFileVersion(src) };
   const rel = await trackBeforeWrite(manifest, gameDir, dest, meta);
   await saveActiveManifest(gameDir, manifest);
   await copyOver(src, dest);
@@ -545,9 +548,24 @@ async function applyFeeder(config, log) {
       : feederConfig.readText(dgConf);
     const configuredDg = feederConfig.configureDgVoodoo(baseConf);
     await writeTracked(manifest, gameDir, confPath, configuredDg, { kind: 'config' });
-    const e2driverDir = path.join(exeDir, 'e2driver');
-    if (fs.existsSync(e2driverDir) && fs.statSync(e2driverDir).isDirectory()) {
-      await writeTracked(manifest, gameDir, path.join(e2driverDir, 'dgVoodoo.conf'), configuredDg, { kind: 'config' });
+    for (const subDirName of ['e2driver', 'drivers', 'driver', 'renderers']) {
+      const subDir = path.join(exeDir, subDirName);
+      if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
+        await writeTracked(manifest, gameDir, path.join(subDir, 'dgVoodoo.conf'), configuredDg, { kind: 'config' });
+      }
+    }
+    if (bitness === 32) {
+      // Use the selected payload, including during a dry-run. The location of
+      // the game (e.g. a temporary test directory) must not change the plan.
+      // Existing third-party winmm proxies remain owned by the user.
+      const winmmSrc = source.feeder.preloader32;
+      const winmmDest = path.join(exeDir, 'winmm.dll');
+      if (winmmSrc && fs.existsSync(winmmSrc) &&
+          (!fs.existsSync(winmmDest) || wasAdded(manifest, path.relative(gameDir, winmmDest)))) {
+        if (pe.getBitness(winmmSrc) !== 32) throw fail('errReShadeArchitecture');
+        const rel = await copyTracked(manifest, gameDir, winmmSrc, winmmDest, { kind: 'dgvoodoo' });
+        log('added', { rel, version: pe.getFileVersion(winmmSrc) });
+      }
     }
     reshadeApi = 'dxgi';
   }

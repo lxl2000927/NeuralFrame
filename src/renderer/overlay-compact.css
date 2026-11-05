@@ -1,0 +1,60 @@
+/* Compact shared surface. The native drag hitbox occupies the first 52 CSS px. */
+[data-overlay-theme] .ol-panel.ol-compact {
+  padding:0; border:1px solid #63738770; border-radius:6px;
+  background:rgba(16,19,24,.96); color:#e3e8ef;
+  font-family:'Segoe UI','Microsoft YaHei',sans-serif; box-shadow:0 12px 36px #0005;
+  overflow:hidden; color-scheme:dark;
+}
+.ol-compact [hidden] { display:none !important }
+.ol-compact header {
+  box-sizing:border-box; height:52px; min-height:52px; display:grid;
+  grid-template-columns:minmax(0,1fr) auto 30px; gap:12px; padding:0 14px;
+  background:color-mix(in srgb,var(--ol-accent) 38%,#162437);
+  border-bottom:1px solid #ffffff15; align-items:center;
+}
+.ol-compact-title {font-size:15px;font-weight:500;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ol-compact .ol-prototype {font-size:11px;letter-spacing:0;border:0;padding:3px 8px;background:#ffffff12;color:#eff6ff;border-radius:3px}
+.ol-compact .ol-fold {width:30px;height:30px;padding:0;border:0;border-radius:3px;background:transparent;color:#fff;font:21px 'Segoe UI',sans-serif;cursor:pointer}
+.ol-compact .ol-fold:hover {background:#ffffff20}
+.ol-tabs {display:flex;height:40px;gap:2px;padding:0 14px;border-bottom:1px solid #ffffff22;align-items:stretch}
+.ol-tab {border:0;border-bottom:2px solid transparent;background:transparent;color:#a1a8b3;padding:0 16px;font:13px 'Segoe UI','Microsoft YaHei',sans-serif;cursor:pointer}
+.ol-tab[aria-selected=true] {color:#fff;border-bottom-color:var(--ol-accent)}
+.ol-tab:hover {background:#ffffff08;color:#fff}
+.ol-tab:focus-visible,.ol-fold:focus-visible {outline:1px solid var(--ol-bright);outline-offset:-3px}
+.ol-panes {height:426px;overflow:auto;padding:0 16px;scrollbar-width:thin;scrollbar-color:#4c5b6e #161c25}
+.ol-compact section {padding:10px 0;border-top:0}
+.ol-compact h4 {display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500;letter-spacing:0;color:#ecf1f8;margin:0 0 10px;line-height:1.6}
+.ol-compact h4::after {content:'';height:1px;background:#ffffff25;flex:1}
+.ol-compact .ol-check {font-size:12px;letter-spacing:0;line-height:1.5;min-height:30px;gap:10px;font-weight:400}
+.ol-compact .ol-master {padding:13px 0 6px;letter-spacing:0}
+.ol-compact .ol-badge {display:flex;margin:0 0 6px;padding:0;border:0;border-radius:0;color:inherit;font-size:12px;letter-spacing:0}
+.ol-compact small {font-size:10px;color:#8894a5}
+.ol-compact .ol-check input {width:16px;height:16px;flex-shrink:0}
+.ol-compact.ol-connected .ol-slider {grid-template-columns:minmax(130px,1.05fr) minmax(80px,1fr) 54px;gap:10px;margin:8px 0;font-size:12px;line-height:1.5;min-height:30px}
+.ol-compact.ol-connected .ol-number {font-size:12px;background:#1c2e44;border:1px solid #4b627b77;color:#e6edf7;height:29px;border-radius:3px}
+.ol-compact .ol-choice {grid-template-columns:minmax(130px,1.05fr) minmax(0,1.45fr);gap:10px;margin:10px 0;font-size:12px;min-height:32px}
+.ol-compact .ol-dropdown-trigger {min-height:32px;padding:6px 28px 6px 10px;font-size:12px;border-radius:3px;background:#1c2e44;border-color:#4b627b77;color:#edf4ff}
+.ol-compact .ol-dropdown-trigger::after {color:#d2e3fa}
+.ol-compact .ol-models {gap:6px}
+.ol-compact .ol-model {padding:7px 5px;min-height:32px;border-radius:3px;font-size:12px;line-height:1.5;background:#1a2533;border-color:#3a495d;color:#bac5d4}
+.ol-compact .ol-model.selected {background:color-mix(in srgb,var(--ol-accent) 20%,#18283b);border-color:var(--ol-accent);color:var(--ol-bright)}
+.ol-compact .ol-additional {max-height:none;overflow:visible;padding:0}
+.ol-advanced {border-top:1px solid #ffffff22;margin:4px 0 12px}
+.ol-advanced summary {list-style:none;padding:10px 0;font-size:12px;color:#b6c6d9;cursor:pointer}
+.ol-advanced summary::before {content:'▸';display:inline-block;width:18px;color:var(--ol-bright)}
+.ol-advanced[open] summary::before {content:'▾'}
+.ol-compact .ol-live-note {font-size:11px;line-height:1.7;color:#97a6b9;margin:12px 0}
+.ol-compact > .ol-nr-status {margin:0;padding:8px 16px;border-top:1px solid #ffffff15;color:#d5b77a}
+.ol-status-list {display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:13px 10px;margin:18px 0;font-size:12px;line-height:1.7}
+.ol-status-list dt {color:#8897aa}.ol-status-list dd {margin:0;overflow-wrap:anywhere;color:#dce7f6}
+.ol-status-strip {display:flex;gap:12px;align-items:center;justify-content:space-between;padding:9px 16px;border-top:1px solid #ffffff22;background:#131b25;font-size:11px;line-height:1.6;color:#9dacbf}
+.ol-connection::before {content:'';display:inline-block;vertical-align:1px;width:6px;height:6px;border-radius:50%;background:#8090a6;margin-right:7px}
+.ol-status-strip[data-connected=true] .ol-connection::before {background:#80cb7f}
+.ol-compact footer {padding:9px 16px;border-top:1px solid #ffffff10;font-size:10px;line-height:1.6;color:#778ba4}
+.ol-compact .ol-live-effect {margin:20px 0 10px !important;overflow-wrap:anywhere}
+.ol-static-panel .ol-panes {overflow:hidden}
+@media(max-width:450px){
+ .ol-tab{padding:0 11px}.ol-panes{padding:0 12px}
+ .ol-compact.ol-connected .ol-slider{grid-template-columns:120px minmax(50px,1fr) 48px;gap:7px}
+ .ol-compact .ol-choice{grid-template-columns:120px minmax(0,1fr);gap:7px}
+}

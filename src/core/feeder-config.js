@@ -1,6 +1,6 @@
 'use strict';
 
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const path = require('path');
 
 function sectionBounds(lines, section) {

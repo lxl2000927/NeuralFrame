@@ -3,7 +3,7 @@
 // A write-ahead, file-level journal. Never snapshot or recursively delete a
 // whole game. A failed/interrupted backend switch can restore the exact files
 // that were present immediately before it, including user-tuned settings.
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const path = require('path');
 const crypto = require('crypto');
 const active = new Map();

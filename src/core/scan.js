@@ -2,7 +2,7 @@
 // Works out everything the swap needs to know about a game folder:
 // which executable is the game, which rendering API it uses, where the
 // existing DLSS/Streamline files live, and whether ReShade is already there.
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const os = require('os');
 const path = require('path');
 const pe = require('./pe');
@@ -862,6 +862,7 @@ function scanSource(sourceDir) {
     // Optional: a payload built without it simply does not offer the route.
     multipassAddon: path.join(feederDir, 'host64', 'renodx-dlss.addon64'),
     dgVoodooDir: path.join(feederDir, 'dgvoodoo'),
+    preloader32: path.join(sourceDir, 'enhanced', 'zh-cn', 'winmm.dll'),
     vulkanLayerDir: path.join(sourceDir, 'reshade-vulkan'),
     // Feeder's interop layer, one folder per architecture, copied beside a
     // Vulkan game so it can be launched with the layer when needed.

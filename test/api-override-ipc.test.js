@@ -11,6 +11,7 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'swapper-api-ipc-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const game = path.join(root, 'Game');
+  fs.mkdirSync(game);
   const exes = ['Game.exe', 'Other.exe'].map(rel => ({ rel, path: path.join(game, rel), bitness: 64,
     api: 'opengl', apiLabel: 'OpenGL', apiChoices: [{ api: 'opengl', label: 'OpenGL' }] }));
   const scan = { chosen: exes[0], exeCandidates: exes, dlssFiles: [], streamlineFiles: [],
@@ -22,6 +23,9 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   function load() {
     const handlers = new Map();
     const stubs = {
+      // This unit isolates route choice; preview/token behavior has its own
+      // real-installer coverage in component-review.test.js.
+      './src/core/component-review': { ComponentReview: class { run(_dir, _request, work) { return work(); } } },
       electron: { app: { setAppUserModelId() {}, whenReady: () => ({ then() {} }), on() {}, getPath: () => root },
         ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
         shell: { openExternal: async url => { if (failOpen) throw new Error('browser unavailable'); opened.push(url); } } },
@@ -77,7 +81,7 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   old = null;
   assert.equal((await install('auto')).ok, true);
   assert.equal(installs.at(-1).api, 'opengl');
-  assert.equal(fs.existsSync(game), false, 'mock install never creates game files');
+  assert.deepEqual(fs.readdirSync(game), [], 'mock install never creates game files');
   for (const destination of ['github', 'releases']) assert.equal(await handlers.get('open-project')(event, destination), true);
   assert.equal(opened.length, 2);
   assert.equal(await handlers.get('open-project')(event, 'https://example.com'), false);

@@ -1,0 +1,64 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('fs'),path=require('path'),os=require('os');
+const {writePe}=require('./fixtures/pe');
+const {ComponentLibrary,digest,hash,safe}=require('../src/core/component-library');
+const {ComponentUpdates,candidates,allowedAsset,unpack,mapFiles}=require('../src/core/component-updates');
+const {ComponentReview}=require('../src/core/component-review');
+const journal=require('../src/core/file-journal'),apply=require('../src/core/apply'),backends=require('../src/core/backend-manager');
+const deploy=require('../src/core/component-deploy');
+function fixture(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'unified-library-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const game=path.join(root,'game'),source=path.join(root,'source'),userData=path.join(root,'profile');fs.mkdirSync(game);fs.mkdirSync(source);
+  const exe=path.join(game,'Game.exe');writePe(exe,{bitness:64,text:'D3D12CreateDevice'});
+  const dll=(name,v)=>{const f=path.join(source,name);writePe(f,{bitness:64,version:[v,0,0,0],text:'nvngx_dlss.pdb'});return f;};
+  const a=dll('a.dll',2),b=dll('b.dll',3);fs.copyFileSync(a,path.join(game,'nvngx_dlss.dll'));
+  const library=new ComponentLibrary(userData),review=new ComponentReview(userData);
+  const add=file=>library.importPackage({component:'dlss-sr',files:{'nvngx_dlss.dll':file}});
+  return{root,game,exe,source,userData,library,review,a,b,add};
+}
+test('content-addressed versions persist, deduplicate, isolate per-game selection and reject wrong roles',async t=>{const f=fixture(t),p=await f.add(f.a),q=await f.add(f.b);assert.notEqual(p.id,q.id);assert.equal((await f.add(f.a)).id,p.id);assert.equal(f.library.catalog().packages.length,2);
+  await f.library.select(f.game,{'dlss-sr':q.id});const reload=new ComponentLibrary(f.userData);assert.equal(reload.profile(f.game).selected['dlss-sr'],q.id);
+  const another=path.join(f.root,'game2');fs.mkdirSync(another);assert.deepEqual(reload.profile(another).selected,{});
+  await assert.rejects(f.library.select(f.game,{'mfg-universal':q.id}));
+  await assert.rejects(f.library.importPackage({component:'dlss-nr',files:{'nvngx_dlssnr.dll':f.a}}),/神经/);
+  assert.throws(()=>safe(f.root,'../escape'),/路径/);
+});
+test('future plugin can enter library but cannot displace Chinese adapter',async t=>{const f=fixture(t),p=await f.library.importPackage({component:'mfg-renodx',version:'1.8.2',files:{'renodx-mfgunlock.addon64':f.b}});assert.equal(f.library.compatibility(p).ready,false);await assert.rejects(f.library.select(f.game,{'mfg-renodx':p.id}),/尚未适配/);});
+test('preview is read-only, confirmed updates can roll back exactly and original restore survives',async t=>{const f=fixture(t),p=await f.add(f.b),selection={'dlss-sr':p.id},work=()=>f.library.apply(f.game,selection,{strict:true}),request={kind:'component-update',selection};
+  const before=fs.readFileSync(path.join(f.game,'nvngx_dlss.dll'));const plan=(await f.review.run(f.game,request,work)).preview;
+  assert.equal(plan.rows.find(r=>r.rel==='nvngx_dlss.dll').action,'replace');assert.deepEqual(fs.readFileSync(path.join(f.game,'nvngx_dlss.dll')),before);assert.equal(fs.existsSync(path.join(f.game,'_DLSS5_Backup')),false);
+  await f.review.run(f.game,request,work,plan.token);assert.equal(await digest(path.join(f.game,'nvngx_dlss.dll')),p.files[0].sha256);
+  const revision=backends.readManifest(f.game).componentHistory.at(-1),undo=()=>f.library.rollback(f.game,revision.id),req={kind:'component-rollback',id:revision.id};
+  const preview=(await f.review.run(f.game,req,undo)).preview;await f.review.run(f.game,req,undo,preview.token);assert.deepEqual(fs.readFileSync(path.join(f.game,'nvngx_dlss.dll')),before);
+  const next=(await f.review.run(f.game,request,work)).preview;await f.review.run(f.game,request,work,next.token);await backends.restore(f.game);assert.deepEqual(fs.readFileSync(path.join(f.game,'nvngx_dlss.dll')),before);
+});
+test('locks and library corruption block writes; preview detects game drift',async t=>{const f=fixture(t),p=await f.add(f.b),selection={'dlss-sr':p.id},work=()=>f.library.apply(f.game,selection,{strict:true}),req={kind:'component-update',selection};
+  await f.review.setLock(f.game,true);const plan=(await f.review.run(f.game,req,work)).preview;assert.ok(plan.conflicts.length);await assert.rejects(f.review.run(f.game,req,work,plan.token),{code:'errVersionLocked'});
+  await f.review.setLock(f.game,false);const next=(await f.review.run(f.game,req,work)).preview;fs.appendFileSync(path.join(f.game,'nvngx_dlss.dll'),'changed');await assert.rejects(f.review.run(f.game,req,work,next.token),{code:'errPreviewChanged'});
+  fs.appendFileSync(path.join(f.library.directory(p),'nvngx_dlss.dll'),'tampered');await assert.rejects(work(),/文件已变化/);
+  assert.equal((await f.add(f.b)).id,p.id);await f.library.verify(p);assert.equal(f.library.catalog().packages.length,1,'redownload repairs without duplicating the version');
+});
+test('normal installer tracked writes retain selected version and leave unrelated files alone',async t=>{const f=fixture(t),p=await f.add(f.b),selection={'dlss-sr':p.id};
+  await deploy.managed(f.library,f.game,selection,()=>journal.transaction(f.game,async()=>{const m=apply.beginManifest(f.game,f.exe,'dxgi');await apply.copyTracked(m,f.game,f.a,path.join(f.game,'nvngx_dlss.dll'));await apply.copyTracked(m,f.game,f.a,path.join(f.game,'other.dll'));}));
+  assert.equal(await digest(path.join(f.game,'nvngx_dlss.dll')),p.files[0].sha256);assert.equal(await digest(path.join(f.game,'other.dll')),await digest(f.a));assert.equal(deploy.resolveSource(f.game,f.a,path.join(f.game,'nvngx_dlss.dll')),f.a);
+});
+test('missing feature does not silently install a disabled plugin',async t=>{const f=fixture(t),p=await f.library.importPackage({component:'mfg-renodx',files:{'renodx-mfgunlock.addon64':f.b},trustedAdapter:true});await assert.rejects(f.library.apply(f.game,{'mfg-renodx':p.id},{strict:true}),/先通过安装路线/);});
+test('saved selection is applied even when normal installer skips an equal or newer runtime',async t=>{const f=fixture(t),p=await f.add(f.a);fs.copyFileSync(f.b,path.join(f.game,'nvngx_dlss.dll'));const result=await deploy.managed(f.library,f.game,{'dlss-sr':p.id},async()=>({ok:true,skipped:true}));assert.equal(result.componentUpdate.changed,1);assert.equal(await digest(path.join(f.game,'nvngx_dlss.dll')),p.files[0].sha256);});
+test('release parsing requires fixed upstream HTTPS URL, stable version and SHA-256',()=>{const release={id:1,tag_name:'1.8.2',assets:[{id:2,name:'renodx-mfgunlock.addon64',digest:'sha256:'+'a'.repeat(64),size:100,url:'x',browser_download_url:'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.8.2/renodx-mfgunlock.addon64'}]};
+  assert.equal(candidates([release],'mfg')[0].downloadable,true);assert.equal(candidates([{...release,tag_name:'1.9.0-beta.1'}],'mfg').length,0);assert.equal(candidates([{...release,assets:[{...release.assets[0],digest:null}]}],'mfg')[0].downloadable,false);assert.equal(allowedAsset('https://evil.test/a','a/b'),false);
+});
+test('online download verifies bytes, stays separate from game, and cleans failed downloads',async t=>{const f=fixture(t),bytes=fs.readFileSync(f.b),url='https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.8.2/renodx-mfgunlock.addon64',item={id:'one',provider:'mfg',component:'mfg-renodx',name:'renodx-mfgunlock.addon64',tag:'1.8.2',url,size:bytes.length,sha256:hash(bytes),downloadable:true};
+  const updater=new ComponentUpdates(f.library,{fetcher:async()=>new Response(bytes)});await journal.atomicJson(updater.cache,{candidates:[item],errors:[]});const result=await updater.download('one');assert.equal(result.compatibility.ready,false);assert.equal(fs.existsSync(path.join(f.game,'renodx-mfgunlock.addon64')),false);
+  await journal.atomicJson(updater.cache,{candidates:[{...item,sha256:'0'.repeat(64)}],errors:[]});await assert.rejects(updater.download('one'),/SHA-256/);assert.deepEqual(fs.readdirSync(path.join(f.library.root,'downloads')),[]);
+});
+test('offline check preserves old candidate with stale indicator, never claims success per source',async t=>{const f=fixture(t),updater=new ComponentUpdates(f.library,{fetcher:async()=>{throw Error('offline');}});await journal.atomicJson(updater.cache,{candidates:[{id:'old',provider:'mfg'}],errors:[]});const result=await updater.check();assert.ok(result.errors.length);assert.equal(result.candidates[0].stale,true);});
+function zip(entries){const locals=[],central=[];let offset=0;for(const [name,bytes,mode=0]of entries){const n=Buffer.from(name),b=Buffer.from(bytes);let crc=0xffffffff;for(const byte of b){crc^=byte;for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}crc=(crc^0xffffffff)>>>0;
+ const h=Buffer.alloc(30);h.writeUInt32LE(0x04034b50);h.writeUInt16LE(20,4);h.writeUInt32LE(crc,14);h.writeUInt32LE(b.length,18);h.writeUInt32LE(b.length,22);h.writeUInt16LE(n.length,26);locals.push(h,n,b);
+ const c=Buffer.alloc(46);c.writeUInt32LE(0x02014b50);c.writeUInt16LE(0x0314,4);c.writeUInt16LE(20,6);c.writeUInt32LE(crc,16);c.writeUInt32LE(b.length,20);c.writeUInt32LE(b.length,24);c.writeUInt16LE(n.length,28);c.writeUInt32LE((mode*65536)>>>0,38);c.writeUInt32LE(offset,42);central.push(c,n);offset+=h.length+n.length+b.length;}
+ const body=Buffer.concat(central),end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(entries.length,8);end.writeUInt16LE(entries.length,10);end.writeUInt32LE(body.length,12);end.writeUInt32LE(offset,16);return Buffer.concat([...locals,body,end]);}
+test('archives reject traversal, symlinks, case collisions and conflicting component binaries',async t=>{const f=fixture(t);for(const [i,entries]of [[[['../escape.dll','x']]],[[['link.dll','x',0xa000]]],[[['A.dll','x'],['a.dll','x']]]].map((x,i)=>[i,x[0]])){
+ const file=path.join(f.root,`bad${i}.zip`),dest=path.join(f.root,`out${i}`);fs.writeFileSync(file,zip(entries));fs.mkdirSync(dest);await assert.rejects(unpack(file,dest));}
+ const file=path.join(f.root,'versions.zip'),dest=path.join(f.root,'unpack');fs.writeFileSync(file,zip([['one/MFGUnlocker.dll',fs.readFileSync(f.a)],['two/MFGUnlocker.dll',fs.readFileSync(f.b)]]));fs.mkdirSync(dest);await unpack(file,dest);await assert.rejects(mapFiles(dest,'mfg-universal'),/多个不同版本/);assert.equal(fs.existsSync(path.join(f.root,'escape.dll')),false);
+});
+test('cancel aborts a transfer without publishing a package or leaving partial files',async t=>{const f=fixture(t),updater=new ComponentUpdates(f.library,{fetcher:async(_url,{signal})=>new Promise((_resolve,reject)=>{signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true});setTimeout(()=>updater.cancel(),10);})});
+ await journal.atomicJson(updater.cache,{candidates:[{id:'x',provider:'mfg',component:'mfg-renodx',name:'renodx-mfgunlock.addon64',url:'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1/file',size:100,sha256:'a'.repeat(64),downloadable:true}],errors:[]});await assert.rejects(updater.download('x'),/已取消/);assert.equal(updater.busy,false);assert.equal(f.library.catalog().packages.length,0);assert.deepEqual(fs.readdirSync(path.join(f.library.root,'downloads')),[]);
+});

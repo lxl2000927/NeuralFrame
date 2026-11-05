@@ -1,5 +1,5 @@
 'use strict';
-const fs=require('node:fs'),path=require('node:path');
+const fs=require('./core/preview-fs').fs,path=require('node:path');
 const {readNative}=require('./overlays');
 // Refuse unsupported routes BEFORE the game installer changes files. OptiScaler
 // and the x86 helper architecture are deliberately not advertised as supported.

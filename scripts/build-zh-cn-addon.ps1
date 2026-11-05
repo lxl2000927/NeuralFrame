@@ -19,6 +19,10 @@ $targets = @(
 
 foreach ($t in $targets) {
     $outFile = Join-Path $outputDir $t.OutName
+    $abiFile = Join-Path $outputDir ($t.OutName + '.abi.obj')
+    $msvcTarget = $t.Arch.Replace('-gnu', '-msvc')
+    & $zig cc -target $msvcTarget -x c++ -std=c++17 -O2 -fno-exceptions -fno-rtti -nostdinc -nostdlib -c (Join-Path $appRoot 'overlay/zh-cn-abi.cpp') -o $abiFile
+    if ($LASTEXITCODE -ne 0) { throw 'Chinese text-measurement ABI thunk compilation failed.' }
     $args = @(
         'c++',
         '-target', $t.Arch,
@@ -31,6 +35,7 @@ foreach ($t in $targets) {
         '-DNOMINMAX',
         '-I', $sdk,
         (Join-Path $appRoot 'overlay/zh-cn-overlay.cpp'),
+        $abiFile,
         '-o', $outFile
     )
     & $zig @args

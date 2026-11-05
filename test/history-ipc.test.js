@@ -16,6 +16,7 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
   const realRequire = createRequire(main);
   const handlers = new Map();
   const game = path.join(root, 'game');
+  fs.mkdirSync(game);
   const target = { path: path.join(game, 'Game.exe'), rel: 'Game.exe', bitness: 64, api: 'dxgi', apiLabel: 'DirectX 12' };
   let old = null, failInstall = false, failRestore = false, cancel = false, copied = null;
   let protectedTarget = false, scanFails = false;
@@ -23,6 +24,9 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
   const riskDialogs = [], installedConfigs = [];
   let menuItems;
   const stubs = {
+    // Fake installers here mutate test counters rather than files; isolate
+    // them from filesystem simulation. The real review flow is tested separately.
+    './src/core/component-review': { ComponentReview: class { run(_dir, _request, work) { return work(); } } },
     electron: { app: { setAppUserModelId() {}, whenReady: () => ({ then() {} }), on() {}, getPath: () => root },
       BrowserWindow: { fromWebContents: () => ({ isDestroyed: () => false, getContentSize: () => [1280, 860] }) },
       Menu: { buildFromTemplate: items => {

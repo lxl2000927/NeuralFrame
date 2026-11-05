@@ -3,7 +3,7 @@
 // 支持独立控制 Neural Rendering (Off / Legacy Model / Latest Compatible Model) 与
 // Multi Frame Generation (Off / x2 / x3 / x4)，并全面执行 7 项联合兼容性、显存预算、Reflex 延迟与备份完整性检查。
 
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -114,7 +114,7 @@ function estimateVramBudget({
     const baseGame1080pMB = 6800;
     let neuralOverheadMB = 0;
     if (neuralMode !== 'off') {
-      neuralOverheadMB = neuralModelId === '310.9.16-oct2026' ? 760 : 920;
+      neuralOverheadMB = 920;
     }
     let mfgOverheadMB = 0;
     if (mfgMode === 'x2') mfgOverheadMB = 420;
@@ -154,7 +154,7 @@ function estimateVramBudget({
   const baseGame1080pMB = 5400; // 1080p 现代 DX12 游戏典型显存基准
   let neuralOverheadMB = 0;
   if (neuralMode !== 'off') {
-    neuralOverheadMB = neuralModelId === '310.9.16-oct2026' ? 540 : 680;
+    neuralOverheadMB = 680;
   }
 
   let mfgOverheadMB = 0;

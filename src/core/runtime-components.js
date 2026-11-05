@@ -3,7 +3,7 @@
 // LumeniteFX's licence requires redistribution through the author's official
 // links. It is therefore fetched directly from the upstream GitHub repository
 // on first use, verified, cached locally, and never bundled in our release.
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const path = require('path');
 const crypto = require('crypto');
 const extractZip = require('extract-zip');
@@ -51,6 +51,10 @@ function findBundledComponent(fileName, expectedSha256) {
 async function ensureDgVoodoo(cacheRoot) {
   const base = path.join(path.resolve(cacheRoot), 'components', `dgVoodoo2-${DGVOODOO.version}`);
   const archive = base + '.zip';
+  if (require('./preview-fs').active()) {
+    if (cached(archive, DGVOODOO.sha256) && require('./cache-proof').valid(base, DGVOODOO.sha256)) return base;
+    require('./preview-fs').external('需要先准备 dgVoodoo 缓存（不会修改游戏）', 'dgvoodoo');
+  }
   if (!cached(archive, DGVOODOO.sha256)) {
     const bundled = findBundledComponent(`dgVoodoo2-${DGVOODOO.version}.zip`, DGVOODOO.sha256);
     if (bundled) {
@@ -62,6 +66,7 @@ async function ensureDgVoodoo(cacheRoot) {
   }
   // Re-extract the verified archive, never trust previously cached loose DLLs.
   await extractZip(archive, { dir: base });
+  require('./cache-proof').save(base, DGVOODOO.sha256);
   return base;
 }
 
@@ -156,9 +161,10 @@ async function ensureLumenite(cacheRoot) {
   if (fs.existsSync(marker)) {
     const folders = fs.readdirSync(base).filter((name) => name !== '.verified');
     const root = folders.map((name) => path.join(base, name)).find((item) => fs.existsSync(path.join(item, 'Shaders')));
-    if (root) return root;
+    if (root && require('./cache-proof').valid(base, LUMENITE.sha256)) return root;
   }
 
+  require('./preview-fs').external('需要先准备 LumeniteFX 缓存（不会修改游戏）', 'lumenite');
   if (!cached(archive, LUMENITE.sha256)) {
     try { await fs.promises.unlink(archive); } catch {}
     const bundled = findBundledComponent(`LumeniteFX-${LUMENITE.commit.slice(0, 8)}.zip`, LUMENITE.sha256);
@@ -176,6 +182,7 @@ async function ensureLumenite(cacheRoot) {
   const root = folders.map((name) => path.join(base, name)).find((item) => fs.existsSync(path.join(item, 'Shaders')));
   if (!root) throw new Error('LumeniteFX archive layout is invalid');
   await fs.promises.writeFile(marker, LUMENITE.sha256, 'utf8');
+  require('./cache-proof').save(base, LUMENITE.sha256);
   return root;
 }
 

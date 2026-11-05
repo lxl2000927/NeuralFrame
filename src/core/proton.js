@@ -2,7 +2,7 @@
 // Runs Windows-only helper programs (currently ReShade Setup) in the exact
 // Steam Play prefix used by a game.  Copying DLLs itself is ordinary Linux IO;
 // only the setup executable needs Proton.
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -29,6 +29,7 @@ function contextForSteamGame(game) {
 function createSetupRunner(context) {
   return (setupExe, args, log) => new Promise((resolve) => {
     log('runningSetup', { setup: path.basename(setupExe), args: args.slice(1).join(' ') });
+    require('./preview-fs').external('外部 Proton 安装器无法生成完整文件预览。');
     const child = spawn(context.proton, ['run', setupExe, ...args], {
       cwd: path.dirname(args[0]),
       env: {

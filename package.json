@@ -1,6 +1,12 @@
 {
   "name": "dlss5-swapper-enhanced",
-  "version": "2.3.0",
+  "version": "0.1.0",
+  "distribution": {
+    "channel": "independent",
+    "releaseRepository": "lxl2000927/DLSS5-Swapper-Enhanced",
+    "upstreamVersion": "2.3.0",
+    "upstreamRepository": "skyi7943-cmd/DLSS5-Swapper-Enhanced"
+  },
   "description": "DLSS 5 Neural Rendering & RTX 40 MFG x3/x4 Manager (Enhanced Edition with 8GB VRAM Optimization & Full Chinese In-Game Overlay)",
   "main": "main.js",
   "scripts": {
@@ -18,7 +24,10 @@
     "overlay:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-overlay.ps1",
     "overlay:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-overlay.ps1"
   },
-  "author": "skyi7943-cmd (Independent MIT Fork)",
+  "author": { "name": "lxl2000927", "url": "https://github.com/lxl2000927" },
+  "repository": { "type": "git", "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced.git" },
+  "homepage": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced",
+  "bugs": { "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/issues" },
   "license": "MIT",
   "dependencies": {
     "extract-zip": "^2.0.1"
@@ -28,7 +37,7 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.skyi7943.dlss5swapper.enhanced",
+    "appId": "io.github.lxl2000927.dlss5swapper.enhanced",
     "productName": "DLSS 5 Swapper Enhanced",
     "files": [
       "main.js",
@@ -55,7 +64,7 @@
         ]
       },
       {
-        "from": "overlay-bin",
+        "from": "dist/overlay",
         "to": "overlay",
         "filter": [
           "**/*"
@@ -67,7 +76,7 @@
         "nsis",
         "portable"
       ],
-      "icon": "build/icon.ico"
+      "icon": "assets/app.ico"
     },
     "linux": {
       "target": [
@@ -80,8 +89,9 @@
       "artifactName": "DLSS5-Swapper-Enhanced-${version}-${arch}.${ext}"
     },
     "compression": "maximum",
+    "publish": { "provider": "github", "owner": "lxl2000927", "repo": "DLSS5-Swapper-Enhanced", "releaseType": "draft" },
     "portable": {
-      "artifactName": "DLSS5-Swapper-Enhanced-${version}-portable.exe"
+      "artifactName": "DLSS5-Swapper-Enhanced-${version}-Portable-x64.exe"
     },
     "nsis": {
       "oneClick": false,
@@ -90,11 +100,13 @@
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "DLSS 5 Swapper Enhanced",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico",
-      "deleteAppDataOnUninstall": true,
-      "artifactName": "DLSS5-Swapper-Enhanced-Setup-${version}.exe",
+      "installerIcon": "assets/app.ico",
+      "uninstallerIcon": "assets/app.ico",
+      "installerHeaderIcon": "assets/app.ico",
+      "deleteAppDataOnUninstall": false,
+      "language": "2052",
+      "installerLanguages": ["zh_CN", "en_US"],
+      "artifactName": "DLSS5-Swapper-Enhanced-${version}-Setup-x64.exe",
       "include": "build/installer.nsh"
     }
   }

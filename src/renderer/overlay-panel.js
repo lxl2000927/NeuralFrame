@@ -63,8 +63,8 @@ window.mountOverlayPanel = (root, footer = '按 F8 显示/隐藏游戏内控制�
     <header><span class="ol-eyebrow">DLSS 5 神经渲染控制中心</span><span class="ol-prototype">预览</span></header>
     <label class="ol-check ol-master"><input type="checkbox" checked/> 开启 DLSS 5 神经渲染 <small>预览模式</small></label>
     <label class="ol-check ol-badge"><input type="checkbox"/> 屏幕状态角标 <small>在游戏画面左上角显示 DLSS 5 开关状态</small></label>
-    <section><h4>全局画质调节</h4>${slider('olStructure', '结构细节强度 (Structure)', .38)}${slider('olTone', '全局色调强度 (Global Tone)', .28)}</section>
-    <section class="ol-muted"><label class="ol-check"><input type="checkbox" disabled/> MODEL AUTOMASK <small>需要运行时支持</small></label>${slider('olMaskStructure', '人物/皮肤结构强度 (Skin Structure)', 1)}</section>
+    <section><h4>全局画质调节</h4>${slider('olStructure', '结构细节强度', .38)}${slider('olTone', '全局色调强度', .28)}</section>
+    <section class="ol-muted"><label class="ol-check"><input type="checkbox" disabled/> 模型自动遮罩 <small>需要运行时支持</small></label>${slider('olMaskStructure', '人物/皮肤结构强度', 1)}</section>
     <section><label class="ol-check"><input type="checkbox" checked/> 分组遮罩控制 <small>演示分组</small></label>
       ${[['前景主体', .45, .35], ['植被与材质', 1, 1], ['高光与反射', 1, 1]].map(([label, structure, tone], i) => `<div class="ol-group"><label class="ol-check"><input type="checkbox" checked/> ${label}</label>${slider(`olGroup${i}s`, '结构细节强度', structure)}${slider(`olGroup${i}t`, '色调强度', tone)}</div>`).join('')}
     </section><section><h4>预设风格 <small>预览选择</small></h4><div class="ol-models">${['A', 'B', 'C'].map((m, i) => `<button class="ol-model ${i ? '' : 'selected'}" aria-pressed="${!i}">风格 ${m}</button>`).join('')}</div></section>

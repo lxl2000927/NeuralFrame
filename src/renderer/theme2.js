@@ -98,7 +98,7 @@
     dock = document.createElement('nav');
     dock.className = 't2-dock';
     dock.id = 't2Dock';
-    const items = [...document.querySelectorAll('.nav-item')].map((nav) => {
+    const items = [...document.querySelectorAll('.nav-item')].filter(nav => nav.style.display !== 'none' && !nav.hidden).map((nav) => {
       const view = nav.dataset.view;
       const svg = nav.querySelector('svg')?.outerHTML || '';
       const label = nav.querySelector('span')?.textContent || view;
@@ -128,7 +128,10 @@
     // The app's own status line is the source of truth; the dock mirrors it.
     const statusText = q('#statusText');
     if (statusText) {
-      statusWatch = new MutationObserver(() => { const b = q('#t2Status'); if (b) b.textContent = statusText.textContent; });
+      statusWatch = new MutationObserver(() => {
+        const b = q('#t2Status');
+        if (b && b.textContent !== statusText.textContent) { b.textContent = statusText.textContent; b.title = statusText.textContent; }
+      });
       statusWatch.observe(statusText, { childList: true, characterData: true, subtree: true });
     }
     // Language changes rewrite the classic nav; the dock follows it.
@@ -255,24 +258,6 @@
   }
   function closePalette() { palette?.remove(); palette = null; }
 
-  /* ------------------------------------------------ pointer-driven light */
-  function pointerMove(event) {
-    if (!on()) return;
-    const card = event.target.closest?.('.card, .t2-card');
-    if (!card) return;
-    const box = card.getBoundingClientRect();
-    const x = event.clientX - box.left, y = event.clientY - box.top;
-    card.style.setProperty('--mx', `${(x / box.width) * 100}%`);
-    card.style.setProperty('--my', `${(y / box.height) * 100}%`);
-    // Lighting follows the pointer, but surfaces stay on their grid. The old
-    // 3D tilt looked playful and made dense libraries harder to scan.
-  }
-  function pointerOut(event) {
-    const card = event.target.closest?.('.card');
-    if (!card) return;
-    card.style.removeProperty('--mx');
-    card.style.removeProperty('--my');
-  }
   function ripple(event) {
     if (!on() || calm()) return;
     const button = event.target.closest?.('.t2-btn, .btn-install, .glass-btn');
@@ -286,8 +271,6 @@
     setTimeout(() => mark.remove(), 600);
   }
 
-  // Cards arrive one after another rather than all at once; the index is what
-  // the stylesheet multiplies into each card's delay.
   // The app draws the status pips inside the poster. That is right for a
   // portrait tile and wrong for a row, so in this skin they are lifted out to
   // sit beside the name; the card is their positioning box either way.
@@ -301,9 +284,6 @@
   function stagger() {
     if (!on()) return;
     liftStatus();
-    document.querySelectorAll('#groups .card, #recents .card').forEach((card, index) => {
-      card.style.setProperty('--i', String(index % 24));
-    });
   }
 
   /* ------------------------------------------------------ view transitions */
@@ -569,13 +549,13 @@
     built = true;
     buildBar();
     buildDock();
-    document.addEventListener('pointermove', pointerMove, { passive: true });
-    document.addEventListener('pointerout', pointerOut, { passive: true });
+    // Static card lighting avoids a layout read and two style writes for every
+    // pointer event, particularly while scrolling a large library.
     document.addEventListener('keydown', paletteKey);
     cardWatch = new MutationObserver(() => stagger());
     for (const id of ['groups', 'recents']) {
       const box = document.getElementById(id);
-      if (box) cardWatch.observe(box, { childList: true, subtree: true });
+      if (box) cardWatch.observe(box, { childList: true });
     }
     buildLibraryToggle();
     syncDock();
@@ -591,12 +571,17 @@
     bar?.remove(); dock?.remove(); closePalette();
     q('#t2Avatar')?.remove(); q('.t2-globe')?.remove();
     q('#t2View')?.remove();
+    const rail = q('#view-games .game-filters');
+    const head = q('.games-heading');
+    if (rail && head?.contains(rail)) head.insertAdjacentElement('afterend', rail);
+    for (const card of document.querySelectorAll('#groups .card')) {
+      const status = card.querySelector(':scope > .status');
+      if (status) card.querySelector('.poster')?.appendChild(status);
+    }
     delete document.documentElement.dataset.library;
     bar = dock = glow = null;
     navWatch?.disconnect(); cardWatch?.disconnect(); statusWatch?.disconnect();
     navWatch = cardWatch = statusWatch = null;
-    document.removeEventListener('pointermove', pointerMove);
-    document.removeEventListener('pointerout', pointerOut);
     document.removeEventListener('keydown', paletteKey);
     delete document.documentElement.dataset.rail;
   }
@@ -613,9 +598,9 @@
      rest of the app knowing there are two skins. */
   const originalShow = root.show;
   root.show = function (view) {
-    if (!canTransition()) { originalShow(view); syncDock(); return; }
-    const change = () => { originalShow(view); syncDock(); };
-    document.startViewTransition(change);
+    // Page navigation does not need a full-window snapshot/crossfade. It also
+    // keeps the sticky chrome out of transient view-transition layers.
+    originalShow(view); syncDock();
   };
 
   const originalOpenSheet = root.openSheet;

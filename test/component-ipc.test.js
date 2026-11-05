@@ -1,0 +1,33 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('fs'),path=require('path'),os=require('os'),vm=require('vm');
+const {createRequire}=require('module');
+const {writePe}=require('./fixtures/pe');
+test('real main IPC previews before install, records only committed work, enforces tokens and persisted lock',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'component-ipc-')),game=path.join(root,'Game');fs.mkdirSync(game);
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const exe=path.join(game,'Game.exe');writePe(exe,{bitness:64,text:'D3D12CreateDevice',size:131072});
+ writePe(path.join(game,'nvngx_dlss.dll'),{bitness:64,version:[2,3,0,0]});
+ const main=path.resolve(__dirname,'../main.js'),realRequire=createRequire(main),handlers=new Map(),jobs=[];
+ const stubs={electron:{app:{setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>path.join(root,'Profile')},ipcMain:{handle:(n,f)=>handlers.set(n,f)},dialog:{showMessageBox:async()=>({response:0})}},
+ './src/core/install-guards':{assertGameClosed:async()=>{},gpuInfo:async()=>[],driverNeuralFault:()=>false}};
+ const context=vm.createContext({require:name=>stubs[name]||realRequire(name),__dirname:path.dirname(main),process,Buffer,console});
+ vm.runInContext(fs.readFileSync(main,'utf8'),context,{filename:main});
+ const event={sender:{send:(_n,e)=>jobs.push(e)}};
+ const operation=token=>handlers.get('install')(event,game,exe,'native','d3d12',token);
+ const before=fs.readFileSync(path.join(game,'nvngx_dlss.dll'));
+ const first=await operation();assert.equal(first.ok,true,JSON.stringify(first));assert.ok(first.preview);
+ assert.equal(fs.existsSync(path.join(game,'_DLSS5_Backup')),false);
+ assert.deepEqual(fs.readFileSync(path.join(game,'nvngx_dlss.dll')),before);
+ assert.equal(jobs.length,0,'preview emits no installed events');
+ assert.equal(handlers.get('history')().rows.length,0);
+ const done=await operation(first.preview.token);assert.equal(done.ok,true,JSON.stringify(done));
+ assert.equal(handlers.get('history')().rows.length,1);
+ assert.equal((await operation(first.preview.token)).code,'errPreviewExpired');
+ const inventory=await handlers.get('component-inventory')(event,game);assert.equal(inventory.ok,true);assert.ok(inventory.rows.length);
+ assert.equal((await handlers.get('component-lock')(event,game,true)).ok,true);
+ assert.ok((await handlers.get('component-inventory')(event,game)).lock);
+ const restoration=await handlers.get('restore')(event,game);assert.ok(restoration.preview);
+ assert.equal((await handlers.get('restore')(event,game,restoration.preview.token)).ok,true);
+ assert.deepEqual(fs.readFileSync(path.join(game,'nvngx_dlss.dll')),before);
+ assert.equal((await handlers.get('component-inventory')(event,game)).lock,null);
+});

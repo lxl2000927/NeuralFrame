@@ -1,5 +1,35 @@
 # Third-party notices
 
+## Chinese localization supplement 1 (2026-11-04)
+
+`overlay/zh-cn-extra.json` incorporates Simplified Chinese translations from
+Yukikaze20170315/RenoDX-DLSS5-Generic, commit
+`9bb6c0fec57ecb28c77938f3feb8155433396d93`, `zh-Hans.hpp` (Copyright (C) 2026,
+SPDX-License-Identifier: MIT). Source:
+https://github.com/Yukikaze20170315/RenoDX-DLSS5-Generic
+The imported translations are supplemented with locally reviewed MFG 1.5.5
+UI/diagnostic translations and terminology corrections. The upstream table
+describes itself as machine-translated; this supplement does not claim a
+complete linguistic review of every inherited entry.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## OptiScaler DLSS-NR (optional download)
 
 OptiScaler DLSS-NR is an independently licensed project, not part of this
@@ -97,6 +127,19 @@ SOFTWARE.
 DLSS5-Autopilot downloads third-party components at runtime. Those components
 remain under their own licences.
 
+## Game-library artwork (local supplement 1.4)
+
+Game artwork is fetched at runtime from public official store assets, not
+bundled with the application or licensed under its MIT license. Artwork,
+logos and characters remain the property of their respective rights holders.
+Known title mappings reference these official listings:
+
+- Wuthering Waves: https://store.steampowered.com/app/3513350/Wuthering_Waves/
+- Honkai: Star Rail: https://store.epicgames.com/p/honkai-star-rail
+
+The UI uses installed system fonts, preferring Noto Sans SC with Microsoft
+YaHei fallbacks. No font binaries are redistributed by this supplement.
+
 ## MFGAdaUnlock-RenoDx (Enhanced MFG Add-on)
 
 `renodx-mfgunlock.addon64` (v1.4.4, 2026-10-17) is bundled from:
@@ -130,3 +173,11 @@ sourced from the official DLSS5-Feeder v1.19.0 release (2026-10-16):
 https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v1.19.0
 Licensed under the MIT License.
 
+
+## Enhanced upstream 32-bit WinMM preloader (local build)
+
+`payload/enhanced/zh-cn/winmm.dll` is compiled from the MIT-licensed Enhanced
+repository at commit `bb72b7c6f7bcc9f2935898df12e151f59a3ddd90`:
+https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/commit/bb72b7c6f7bcc9f2935898df12e151f59a3ddd90
+The corresponding C source, export definition and build script are included in
+the source package. The project MIT license is included at the package root.

@@ -3,7 +3,7 @@
 // 负责识别 nvngx_dlssnr.dll、解析 CUDA Fatbin (0xBA55ED50) SM 架构、维护模型与 2026年10月运行时版本库、
 // 校验 SHA-256 指纹、检测模型依赖、管理合法模型手动导入、执行版本切换、原版文件备份与一键回滚，并解析失败状态日志。
 
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const path = require('path');
 const crypto = require('crypto');
 const pe = require('./pe');
@@ -102,51 +102,34 @@ function detectGpuArchitecture(gpuName, hardwareProfile = null) {
   return { family: 'Unknown', code: 'unknown', sm: null, ngxArch: null, series: 'Unknown', isLaptop: false };
 }
 
-// DLSS 5 神经渲染模型版本数据库 (包含全架构满血模型与 2026年10月16日 310.9.16 极速模型管线，全系兼容笔记本 40 系、桌面 40 系与桌面 50 系)
+// 模型身份由文件 SHA-256 确定，目录名称和运行库版本不能作为独立模型的证据。
+// 保留旧版重复选项的读取兼容性；只在用户应用时写入规范 ID。
+const MODEL_ALIASES = Object.freeze({ '310.9.16-oct2026': '310.8.SF-v2' });
+const normalizeModelId = id => MODEL_ALIASES[id] || id;
+
 const MODEL_DATABASE = Object.freeze([
   Object.freeze({
     id: '310.8.SF-v2',
-    name: 'DLSS 5 NR 310.8.SF-v2 (全架构满血画质模型 · Ada/Blackwell/Ampere/Turing)',
+    name: 'DLSS 5 NR · 310.8.SF-v2',
     role: 'latest_compatible',
     version: '310.8.0.0',
-    releaseDate: '2026-09-25',
     sha256: '8270b350cd82de5ce89806872cdd6b6a9249b80836b91bbeb3573470744cc206',
     size: 165840496,
-    parameters: '222M (高画质柔光抗闪烁)',
     architectures: Object.freeze(['75', '86', '89', '120']),
     smCounts: Object.freeze({ '75': 15, '86': 15, '89': 15, '120': 23 }),
     bundled: true,
     rtx40Status: 'verified',
-    rtx40Badge: '已验证可用 (全系兼容)',
+    rtx40Badge: '架构匹配（需游戏验证）',
     sourceType: '随包内置 (Payload Bundled)',
-    description: '内置多架构满血版 DLSS 5 神经渲染模型，同时内嵌 sm_89 (15个 RTX 40 核函数) 与 sm_120 (23个 RTX 50 原生核函数)，完美兼容笔记本 40 系、40 系桌面卡与 50 系桌面卡。'
-  }),
-  Object.freeze({
-    id: '310.9.16-oct2026',
-    name: 'DLSS 5 NR 310.9.16 (2026-10 极速模型管线 · 118M 2× 提速架构)',
-    role: 'oct2026_faster',
-    version: '310.9.16.0',
-    releaseDate: '2026-10-16',
-    sha256: '8270b350cd82de5ce89806872cdd6b6a9249b80836b91bbeb3573470744cc206',
-    size: 165840496,
-    parameters: '118M 极速管线 (2× 推理速度, -20% 显存占用)',
-    architectures: Object.freeze(['75', '86', '89', '120']),
-    smCounts: Object.freeze({ '75': 15, '86': 15, '89': 15, '120': 23 }),
-    bundled: true,
-    rtx40Status: 'verified',
-    rtx40Badge: '已验证可用 (全系兼容)',
-    sourceType: '随包内置 2026-10 极速运行时桥接 (支持手动导入覆盖)',
-    description: '2026年10月16日 NVIDIA Streamline 2.14.16 + NGX 310.9.16 极速神经渲染管线，结合多架构 CUDA Fatbin (sm_75/86/89/120)，在笔记本 40 系、40 系桌面卡与 50 系桌面卡上均可即装即用。'
+    description: '随包模型的文件版本为 310.8.0.0，包含 sm_75/86/89/120 CUDA 模块。架构匹配不代表已在当前游戏中加载或生效。'
   }),
   Object.freeze({
     id: '310.8.0-RTX40',
     name: 'DLSS 5 NR 310.8.0-RTX40 (Early Ada Lovelace Port)',
     role: 'legacy',
     version: '310.8.0.0',
-    releaseDate: '2026-09-17',
     sha256: 'd2f76227f5bfaa1ff6fa2b7137b4b7561782235c04ce979873d7c3f01173b3a6',
     size: 165840496,
-    parameters: '148M',
     architectures: Object.freeze(['89', '120']),
     smCounts: Object.freeze({ '89': 15, '120': 23 }),
     bundled: false,
@@ -160,10 +143,8 @@ const MODEL_DATABASE = Object.freeze([
     name: 'DLSS 5 NR 310.8.SF (ShortFuse v1 Multi-Arch)',
     role: 'legacy',
     version: '310.8.0.0',
-    releaseDate: '2026-09-19',
     sha256: 'fb17b72bfdd92f7b1db91097d7f9f5d787344d399c70f642ceeb0427f8c66dc9',
     size: 165840496,
-    parameters: '148M',
     architectures: Object.freeze(['75', '86', '89', '120']),
     smCounts: Object.freeze({ '75': 15, '86': 15, '89': 15, '120': 23 }),
     bundled: false,
@@ -177,10 +158,8 @@ const MODEL_DATABASE = Object.freeze([
     name: 'DLSS 5 NR 310.8.Lecram (Blackwell sm_120 Only)',
     role: 'legacy_blackwell',
     version: '310.8.0.0',
-    releaseDate: '2026-09-24',
     sha256: 'a9095b37ccba8447bd8d9db1b82bf7eb17c2f342ff977e0807474e538101c227',
     size: 127702688,
-    parameters: '148M',
     architectures: Object.freeze(['120']),
     smCounts: Object.freeze({ '120': 23 }),
     bundled: false,
@@ -194,10 +173,8 @@ const MODEL_DATABASE = Object.freeze([
     name: 'DLSS 5 NR 310.8.0 Official Stock (Blackwell sm_120 Only)',
     role: 'stock_blackwell',
     version: '310.8.0.0',
-    releaseDate: '2026-09-10',
     sha256: null,
     size: 127702688,
-    parameters: '148M',
     architectures: Object.freeze(['120']),
     smCounts: Object.freeze({ '120': 23 }),
     bundled: false,
@@ -212,7 +189,7 @@ const MODEL_DATABASE = Object.freeze([
 const RUNTIME_STACKS = Object.freeze([
   Object.freeze({
     id: 'baseline-310.9.1',
-    name: 'DLSS 310.9.1 + Streamline 2.13.0 + Feeder 1.17.0 (默认稳定栈)',
+    name: 'DLSS 310.9.1 + Streamline 2.13.0 + Feeder 1.17.0 (基准组件组合)',
     dlssVersion: '310.9.1.0',
     dlssgVersion: '310.9.1.0',
     streamlineVersion: '2.13.0.0',
@@ -224,7 +201,7 @@ const RUNTIME_STACKS = Object.freeze([
   }),
   Object.freeze({
     id: 'oct2026-310.9.16',
-    name: 'DLSS 310.9.16 + Streamline 2.14.16.0 + Feeder 1.19.0 (2026-10-16 最新运行时栈)',
+    name: 'DLSS 310.9.16 + Streamline 2.14.16.0 + Feeder 1.19.0 (可选组件组合)',
     dlssVersion: '310.9.16.0',
     dlssgVersion: '310.9.16.0',
     streamlineVersion: '2.14.16.0',
@@ -232,7 +209,7 @@ const RUNTIME_STACKS = Object.freeze([
     renodxVersion: '8.5.0-rc10',
     status: 'experimental',
     badge: '实验性支持',
-    description: '2026年10月16日 NVIDIA 发布的最新 NGX 310.9.16 与 Streamline 2.14.16.0 运行时，搭配 DLSS5-Feeder 1.19.0 与 RenoDX DLSS 5 v8.5.0-rc10。'
+    description: '随包可选的 NGX / Streamline / Feeder 组件组合；310.9.16 是运行库版本，不是神经渲染模型版本，也不代表性能提升。'
   })
 ]);
 
@@ -414,7 +391,6 @@ function inspectNeuralModelBinary(filePath) {
     : { architectures: [], smCounts: {}, containerCount: 0 };
 
   const knownModel = MODEL_DATABASE.find((m) => m.sha256 && m.sha256 === sha256) || null;
-  const isOct2026Version = /^310\.9\.16(?:\.|$)/.test(String(version || ''));
   const valid = Boolean(
     bitness === 64 &&
     identity.isNeuralRendering &&
@@ -443,8 +419,8 @@ function inspectNeuralModelBinary(filePath) {
     architectures: fatbin.architectures,
     smCounts: fatbin.smCounts,
     containerCount: fatbin.containerCount,
-    modelId: knownModel ? knownModel.id : (isOct2026Version ? '310.9.16-oct2026' : (valid ? `custom-${sha256.slice(0, 8)}` : null)),
-    modelName: knownModel ? knownModel.name : (isOct2026Version ? 'DLSS 5 NR 310.9.16 (Imported Build)' : (valid ? `Custom DLSS 5 NR (${version || 'unknown'})` : null)),
+    modelId: knownModel ? knownModel.id : (valid ? `custom-${sha256.slice(0, 12)}` : null),
+    modelName: knownModel ? knownModel.name : (valid ? `自定义 DLSS 5 NR (${version || '版本未知'})` : null),
     knownModel,
     reason
   };
@@ -457,20 +433,9 @@ function inspectNeuralModelBinary(filePath) {
 function evaluateModelGpuCompatibility(modelOrInspection, gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU', hardwareProfile = null) {
   const gpu = detectGpuArchitecture(gpuName, hardwareProfile);
   const archs = Array.isArray(modelOrInspection?.architectures) ? modelOrInspection.architectures : [];
-  const modelId = modelOrInspection?.id || modelOrInspection?.modelId || '';
   const sha256 = modelOrInspection?.sha256 || null;
 
   if (!gpu.sm) {
-    // 若显卡名称特殊未被正则命中，但模型本身包含全架构核函数 (sm_75/86/89/120)，依然允许兼容运行
-    if (archs.includes('89') && archs.includes('120')) {
-      return {
-        compatible: true,
-        status: 'verified',
-        badge: '已验证可用 (全架构通用)',
-        gpu: { family: 'NVIDIA RTX', code: 'universal', sm: '89', ngxArch: '0x190', series: 'RTX' },
-        reason: `模型内嵌完整多架构 CUDA Fatbin 核函数 [sm_${archs.join(', sm_')}]，兼容桌面与移动版全系 RTX 显卡。`
-      };
-    }
     return {
       compatible: false,
       status: 'untested',
@@ -492,13 +457,13 @@ function evaluateModelGpuCompatibility(modelOrInspection, gpuName = 'NVIDIA GeFo
   }
 
   // 如果包含当前 GPU 的 SM 架构
-  if (sha256 === '8270b350cd82de5ce89806872cdd6b6a9249b80836b91bbeb3573470744cc206' || modelId === '310.8.SF-v2' || modelId === '310.9.16-oct2026') {
+  if (sha256 === MODEL_DATABASE[0].sha256) {
     return {
       compatible: true,
       status: 'verified',
-      badge: '已验证可用',
+      badge: '架构匹配（需游戏验证）',
       gpu,
-      reason: `模型内嵌 sm_${gpu.sm} (${gpu.family}) CUDA Fatbin 核函数 (${modelOrInspection?.smCounts?.[gpu.sm] || (gpu.sm === '120' ? 23 : 15)} 个模块)，已在 ${gpuName} 上通过验证。`
+      reason: `已匹配内置文件哈希与 sm_${gpu.sm} (${gpu.family}) CUDA 架构；这只是文件检查，实际加载与画质需在游戏中验证。`
     };
   }
 
@@ -507,7 +472,7 @@ function evaluateModelGpuCompatibility(modelOrInspection, gpuName = 'NVIDIA GeFo
     status: 'experimental',
     badge: '实验性支持',
     gpu,
-    reason: `模型包含 sm_${gpu.sm} (${gpu.family}) CUDA Fatbin 核函数，支持在 ${gpuName} 上运行（实验性构建）。`
+    reason: `模型包含 sm_${gpu.sm} (${gpu.family}) CUDA Fatbin 核函数，与 ${gpuName} 架构匹配；实际运行效果尚需验证。`
   };
 }
 
@@ -569,49 +534,56 @@ function listNeuralModels({ payloadDir, userDataDir, gpuName = 'NVIDIA GeForce R
     } catch {}
   }
 
-  const customRows = readCustomModelsIndex(userDataDir);
-
-  const models = MODEL_DATABASE.map((entry) => {
-    const isBundled = (entry.id === '310.8.SF-v2' || entry.id === '310.9.16-oct2026') && Boolean(bundledInspection && bundledInspection.valid);
-    const matchingCustom = customRows.find((c) => c.modelId === entry.id || (entry.id !== '310.9.16-oct2026' && entry.sha256 && c.sha256 === entry.sha256));
-    const activeSource = matchingCustom || (isBundled ? { ...bundledInspection, id: entry.id, modelId: entry.id } : entry);
-    const compat = evaluateModelGpuCompatibility(activeSource, gpuName, hardwareProfile);
+  // 索引只提供用户备注；版本、身份、可用性均重新读取文件（带状态缓存）。
+  const localSources = [];
+  if (bundledInspection) localSources.push({ ...bundledInspection, sourceType: '随包内置 / 本地缓存', bundled: true });
+  for (const row of readCustomModelsIndex(userDataDir)) {
+    const info = inspectNeuralModelBinary(row.filePath);
+    if (!info.valid || localSources.some(m => m.sha256 === info.sha256)) continue;
+    localSources.push({ ...info, name: row.name, notes: row.notes, sourceType: '用户手动导入', bundled: false });
+  }
+  // The unified library is the persistent source for independently downloaded models.
+  if(userDataDir){
+    const library=new (require('./component-library').ComponentLibrary)(userDataDir);
+    for(const p of library.catalog().packages.filter(p=>p.component==='dlss-nr')){
+      const file=require('./component-library').safe(library.directory(p),'nvngx_dlssnr.dll');
+      const info=inspectNeuralModelBinary(file);
+      if(info.valid&&info.sha256===p.files.find(f=>f.rel==='nvngx_dlssnr.dll')?.sha256&&!localSources.some(m=>m.sha256===info.sha256))localSources.push({...info,sourceType:'统一组件库',bundled:false});
+    }
+  }
+  const asLocalModel = (info, entry = {}) => {
+    const compat = evaluateModelGpuCompatibility(info, gpuName, hardwareProfile);
     return {
       ...entry,
-      availableOnDisk: Boolean(isBundled || matchingCustom),
-      filePath: matchingCustom ? matchingCustom.filePath : (isBundled ? bundledPath : null),
+      id: info.modelId,
+      // 旧版自定义 ID 用 8 位哈希，导入记录用 12 位；两种形式均可读取。
+      aliases: [`custom-${info.sha256.slice(0, 8)}`, `custom-${info.sha256.slice(0, 12)}`],
+      name: info.name || entry.name || info.modelName,
+      role: entry.role || 'custom',
+      version: info.version,
+      sha256: info.sha256,
+      size: info.size,
+      architectures: info.architectures,
+      smCounts: info.smCounts,
+      bundled: info.bundled,
+      availableOnDisk: true,
+      filePath: info.filePath,
+      sourceType: info.sourceType,
+      description: info.notes || entry.description || '已读取本地文件；性能和游戏兼容性需实测。',
       compatStatus: compat.status,
       compatBadge: compat.badge,
       compatReason: compat.reason
     };
+  };
+  const models = MODEL_DATABASE.map(entry => {
+    const local = localSources.find(info => entry.sha256 && info.sha256 === entry.sha256);
+    if (local) return asLocalModel(local, entry);
+    return { ...entry, availableOnDisk: false, filePath: null,
+      compatStatus: 'untested', compatBadge: '未导入',
+      compatReason: '仅为历史目录记录；本地无匹配文件，未进行二进制校验。' };
   });
-
-  // 追加未在固定枚举中但用户已手动导入的合法自定义神经渲染模型
-  for (const custom of customRows) {
-    if (models.some((m) => m.sha256 === custom.sha256 || m.id === custom.id)) continue;
-    const compat = evaluateModelGpuCompatibility(custom, gpuName, hardwareProfile);
-    models.push({
-      id: custom.id,
-      name: custom.name || custom.modelName || `Imported DLSS 5 NR (${custom.version})`,
-      role: /^310\.9\.16/.test(custom.version) ? 'oct2026_faster' : 'custom',
-      version: custom.version,
-      releaseDate: custom.importedAt ? custom.importedAt.slice(0, 10) : 'Custom',
-      sha256: custom.sha256,
-      size: custom.size,
-      parameters: /^310\.9\.16/.test(custom.version) ? '118M' : 'Custom',
-      architectures: custom.architectures || [],
-      smCounts: custom.smCounts || {},
-      bundled: false,
-      availableOnDisk: true,
-      filePath: custom.filePath,
-      rtx40Status: compat.status,
-      rtx40Badge: compat.badge,
-      compatStatus: compat.status,
-      compatBadge: compat.badge,
-      compatReason: compat.reason,
-      sourceType: '用户手动导入 (Validated Import)',
-      description: custom.notes || `手动导入的合法 DLSS 5 神经渲染模型，包含 [sm_${(custom.architectures || []).join(', sm_')}] 核函数。`
-    });
+  for (const info of localSources) {
+    if (!models.some(m => m.sha256 === info.sha256)) models.push(asLocalModel(info));
   }
 
   return models;
@@ -772,8 +744,8 @@ async function inspectGameNeuralStatus(gameDir, {
 
   const logs = parseNeuralRuntimeLogs(gameDir, exeDir);
   const availableModels = listNeuralModels({ payloadDir: effectivePayloadDir, userDataDir, gpuName, hardwareProfile });
-  const latestCompatible = availableModels.find((m) => m.role === 'latest_compatible') || availableModels[0];
-  const oct2026Model = availableModels.find((m) => m.id === '310.9.16-oct2026');
+  const compatibleModels = availableModels.filter(m => m.availableOnDisk && ['verified', 'experimental'].includes(m.compatStatus));
+  const latestCompatible = compatibleModels.find(m => m.role === 'latest_compatible') || compatibleModels[0] || null;
 
   // 读取 manifest 中上次记录的神经渲染模式或模型 ID
   let manifestNr = null;
@@ -789,7 +761,7 @@ async function inspectGameNeuralStatus(gameDir, {
   if (activeModelInfo && activeModelInfo.valid) {
     if (manifestNr && manifestNr.mode && manifestNr.mode !== 'off') {
       mode = manifestNr.mode === 'oct2026_faster' ? 'latest_compatible' : manifestNr.mode;
-    } else if (activeModelInfo.modelId === '310.8.SF-v2' || activeModelInfo.modelId === '310.9.16-oct2026') {
+    } else if (activeModelInfo.modelId === '310.8.SF-v2') {
       mode = 'latest_compatible';
     } else {
       mode = 'legacy';
@@ -809,11 +781,10 @@ async function inspectGameNeuralStatus(gameDir, {
     overallBadge = '不兼容';
   } else if (activeModelInfo && activeModelInfo.valid && dependencies.missing.length === 0) {
     overallStatus = gpuCompat.status === 'verified' ? 'verified' : 'experimental';
-    overallBadge = gpuCompat.status === 'verified' ? '已验证可用' : '实验性支持';
+    overallBadge = '文件已安装（需游戏验证）';
   }
 
-  const effectiveModelId = (manifestNr && manifestNr.modelId) || (activeModelInfo ? activeModelInfo.modelId : null);
-  const effectiveModelObj = availableModels.find((m) => m.id === effectiveModelId) || null;
+  const effectiveModelObj = availableModels.find(m => activeModelInfo?.valid && m.sha256 === activeModelInfo.sha256) || null;
 
   return {
     ok: Boolean(scan.chosen),
@@ -827,9 +798,9 @@ async function inspectGameNeuralStatus(gameDir, {
     profileDetails: profileInfo,
     installed: Boolean(activeModelInfo && activeModelInfo.valid && dependencies.hasConsumer),
     currentModel: activeModelInfo ? {
-      id: effectiveModelId || activeModelInfo.modelId,
+      id: activeModelInfo.modelId,
       name: effectiveModelObj ? effectiveModelObj.name : activeModelInfo.modelName,
-      version: effectiveModelObj ? effectiveModelObj.version : activeModelInfo.version,
+      version: activeModelInfo.version,
       sha256: activeModelInfo.sha256,
       size: activeModelInfo.size,
       architectures: activeModelInfo.architectures,
@@ -838,8 +809,9 @@ async function inspectGameNeuralStatus(gameDir, {
       rel: path.relative(gameDir, activeModelInfo.filePath)
     } : null,
     latestCompatibleModel: latestCompatible,
-    oct2026Model,
-    runtimeVersion: dlssSrVersion || (effectivePayloadDir ? pe.getFileVersion(path.join(effectivePayloadDir, 'streamline', 'nvngx_dlss.dll')) : '310.9.1.0'),
+    legacyModelAlias: manifestNr?.modelId === '310.9.16-oct2026' ? manifestNr.modelId : null,
+    runtimeVersion: dlssSrVersion,
+    configuredRuntimeStack: RUNTIME_STACKS.some(s => s.id === manifestNr?.runtimeStack) ? manifestNr.runtimeStack : null,
     runtimeStack,
     runtimeStacks: RUNTIME_STACKS,
     gpuCompatibility: gpuCompat,
@@ -855,14 +827,16 @@ async function inspectGameNeuralStatus(gameDir, {
 // 在游戏中切换或部署指定的神经渲染模型与可选的 310.9.16 运行时栈（全部通过 _DLSS5_Backup 事务追踪，支持一键回滚）
 async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}) {
   const {
-    mode = 'latest_compatible', // 'off' | 'legacy' | 'latest_compatible' | 'oct2026_faster' | 具体 modelId
-    modelId = null,
+    mode: requestedMode = 'latest_compatible',
+    modelId: requestedModelId = null,
     runtimeStack = null, // 'baseline-310.9.1' | 'oct2026-310.9.16'
     hardwareProfile = 'rtx40_laptop', // 'rtx40_laptop' | 'rtx40_desktop' | 'rtx50_desktop'
     payloadDir,
     userDataDir,
     gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU'
   } = options;
+  const mode = requestedMode === 'oct2026_faster' ? 'latest_compatible' : requestedMode;
+  const modelId = normalizeModelId(requestedModelId);
   const effectivePayloadDir = resolvePayloadDir(payloadDir);
 
   const scan = await scanGame(gameDir);
@@ -939,19 +913,15 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     const models = listNeuralModels({ payloadDir: effectivePayloadDir, userDataDir, gpuName, hardwareProfile });
     let chosenModel = null;
     if (modelId) {
-      chosenModel = models.find((m) => m.id === modelId && m.availableOnDisk);
+      chosenModel = models.find(m => (m.id === modelId || m.aliases?.includes(modelId)) && m.availableOnDisk);
     }
-    if (!chosenModel) {
-      if (mode === 'oct2026_faster') {
-        chosenModel = models.find((m) => m.availableOnDisk && m.id === '310.9.16-oct2026') ||
-          models.find((m) => m.availableOnDisk && m.id === '310.8.SF-v2');
-      } else if (mode === 'latest_compatible') {
+    if (!chosenModel && !modelId) {
+      if (mode === 'latest_compatible') {
         chosenModel = models.find((m) => m.availableOnDisk && m.id === '310.8.SF-v2') ||
           models.find((m) => m.availableOnDisk && m.compatStatus === 'verified') ||
           models.find((m) => m.availableOnDisk && m.compatStatus === 'experimental');
       } else if (mode === 'legacy') {
-        chosenModel = models.find((m) => m.availableOnDisk && m.role === 'legacy') ||
-          models.find((m) => m.availableOnDisk && m.id === '310.8.SF-v2');
+        chosenModel = models.find((m) => m.availableOnDisk && m.role === 'legacy');
       }
     }
 
@@ -1123,7 +1093,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     manifest.neuralRendering = {
       mode,
       modelId: chosenModel.id,
-      modelVersion: chosenModel.version || binaryCheck.version,
+      modelVersion: binaryCheck.version,
       sha256: binaryCheck.sha256,
       architectures: binaryCheck.architectures,
       runtimeStack: effectiveStack || 'baseline-310.9.1',
@@ -1136,7 +1106,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
       ok: true,
       mode,
       modelId: chosenModel.id,
-      version: chosenModel.version || binaryCheck.version,
+      version: binaryCheck.version,
       sha256: binaryCheck.sha256,
       hardwareProfile,
       compatibility: compat
@@ -1152,6 +1122,7 @@ module.exports = {
   HARDWARE_PROFILES,
   getHardwareProfileInfo,
   MODEL_DATABASE,
+  normalizeModelId,
   RUNTIME_STACKS,
   detectGpuArchitecture,
   scanBufferArchitectures,

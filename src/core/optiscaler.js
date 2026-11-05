@@ -1,6 +1,6 @@
 'use strict';
 
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const path = require('path');
 const extractZip = require('extract-zip');
 const pe = require('./pe');
@@ -94,6 +94,10 @@ async function ensureOptiScaler(cacheRoot, version) {
   const release = releaseFor(version);
   const base = path.join(path.resolve(cacheRoot), 'components', `OptiScaler-${release.version}`);
   const archive = base + '.zip';
+  if (require('./preview-fs').active()) {
+    try { if (cached(archive, release.sha256) && require('./cache-proof').valid(base, release.sha256)) { validatePayload(base, release); return base; } } catch {}
+    require('./preview-fs').external('需要先准备 OptiScaler 缓存（不会修改游戏）', 'optiscaler:' + release.version);
+  }
   if (!cached(archive, release.sha256)) await fetchVerified(release.url, release.sha256, archive);
   // Re-extract verified bytes on every install. The installer below copies an
   // explicit file list, not unknown files that may have appeared in the cache.
@@ -105,6 +109,7 @@ async function ensureOptiScaler(cacheRoot, version) {
     if (!cached(license, release.licenseHash)) await fetchVerified(release.licenseUrl, release.licenseHash, license);
   }
   validatePayload(base, release);
+  require('./cache-proof').save(base, release.sha256);
   return base;
 }
 function hookFor(api) { return api === 'vulkan' ? 'winmm.dll' : 'dxgi.dll'; }

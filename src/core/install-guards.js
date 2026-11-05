@@ -38,6 +38,7 @@ function executableLocked(exePath) {
 }
 
 async function assertGameClosed(gameDir, exePath, runner = run, locked = executableLocked) {
+  if (require('./preview-fs').active()) return; // Preview never opens or changes game files.
   const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
   let data;
   try {

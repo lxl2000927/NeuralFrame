@@ -3,7 +3,7 @@
 // 设计原则：
 // 1. 零磁盘篡改：绝不修改任何原版 .addon64 或 ReShade64.dll 磁盘文件，保持所有 SHA-256 签名与探针兼容。
 // 2. 零格式化崩溃：所有 printf/vsnprintf 格式化字符串在编译期与运行期双重校验占位符，向底层 ImGui 仅传递 "%s"。
-// 3. 控件 ID 100% 保持：所有交互式控件使用 "中文译文###原始英文标签" 语法，保证 ImGuiID 与原版英文完全一致。
+// 3. 沿用上游的稳定标签尾缀；原有 ###id 保持不变。普通标签转换后 ID 与英文版不同。
 
 #define ImTextureID ImU64
 #include <imgui.h>
@@ -15,7 +15,12 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
+#include <algorithm>
 #include "zh-cn-dict.hpp"
+#include "zh-cn-extra.hpp"
+
+extern "C" void *zh_measure_hook(void *original);
 
 extern "C" __declspec(dllexport) const char *NAME =
     "\xe7\x95\x8c\xe9\x9d\xa2\xe4\xb8\xad\xe6\x96\x87\xe5\x8c\x96\xe7\xbb\x84\xe4\xbb\xb6 (ZH-CN)";
@@ -55,10 +60,13 @@ struct ExactValue {
 const std::unordered_map<std::string_view, ExactValue> &exact_map() {
     static const auto *map = []() {
         auto *m = new std::unordered_map<std::string_view, ExactValue>();
-        m->reserve(zh_cn::kExactEntryCount * 2);
+        m->reserve((zh_cn::kExactEntryCount + std::size(zh_extra::entries)) * 2);
         for (size_t i = 0; i < zh_cn::kExactEntryCount; ++i) {
             const auto &e = zh_cn::kExactEntries[i];
             m->emplace(std::string_view(e.en), ExactValue{e.zh, e.has_printf_specs});
+        }
+        for (const auto &e : zh_extra::entries) {
+            (*m)[std::string_view(e.en)] = ExactValue{e.zh, e.has_printf_specs};
         }
         return m;
     }();
@@ -142,7 +150,7 @@ const char *translate_plain(const char *text, const char *text_end = nullptr) {
     return apply_substring_rules(sv);
 }
 
-// 翻译交互式控件标签，并通过 "中文译文###原始英文标签" 严格保持原有 ImGuiID
+// 翻译标签，使用固定英文尾缀保持中文界面内的 ID 稳定；保留已有 ###id。
 const char *translate_widget_label(const char *label) {
     if (!label || !label[0] || !can_render_chinese()) return label;
     // 以 ## 开头的隐藏标签直接原样返回
@@ -285,9 +293,105 @@ bool call_tree_node_ex_v(bool (*fn)(const char *, ImGuiTreeNodeFlags, const char
     return res;
 }
 
+// Translate assembled diagnostic reports separately. Only this known report
+// header is accepted; arbitrary copied paths, config text and user input pass
+// through unchanged. A dynamic buffer avoids the original 4096-byte limit.
+bool ascii_word(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+std::string translate_diagnostics(std::string_view input) {
+    static const auto sorted = [] {
+        std::vector<std::pair<std::string_view, const char *>> entries;
+        for (const auto &e : exact_map()) {
+            if (!e.second.has_printf_specs && e.first.size() > 1 &&
+                e.first.find("##") == std::string_view::npos)
+                entries.emplace_back(e.first, e.second.zh);
+        }
+        std::sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
+            return a.first.size() != b.first.size() ? a.first.size() > b.first.size() : a.first < b.first;
+        });
+        return entries;
+    }();
+    // Consume source text exactly once; translated text is never re-translated.
+    std::string output;
+    output.reserve(input.size() * 2);
+    for (size_t pos = 0; pos < input.size();) {
+        bool matched = false;
+        for (const auto &entry : sorted) {
+            auto key = entry.first;
+            if (input.size() - pos < key.size() || input.compare(pos, key.size(), key) != 0) continue;
+            if (pos && ascii_word(key.front()) && ascii_word(input[pos - 1])) continue;
+            const size_t after = pos + key.size();
+            if (after < input.size() && ascii_word(key.back()) && ascii_word(input[after])) continue;
+            output += entry.second;
+            pos = after;
+            matched = true;
+            break;
+        }
+        if (!matched) output += input[pos++];
+    }
+    return output;
+}
+
+void hook_SetClipboardText(const char *text) {
+    if (text && std::string_view(text).substr(0, 23) == "MFG Unlock Diagnostics\n") {
+        const auto translated = translate_diagnostics(text);
+        g_orig.SetClipboardText(translated.c_str());
+    } else {
+        g_orig.SetClipboardText(text);
+    }
+}
+
+bool hook_Begin(const char *name, bool *open, ImGuiWindowFlags flags) {
+    return g_orig.Begin(translate_widget_label(name), open, flags);
+}
+struct TranslatedGetter { const char *(*get)(void *, int); void *data; };
+const char *translated_getter(void *data, int index) {
+    auto &ctx = *static_cast<TranslatedGetter *>(data);
+    const char *raw = ctx.get(ctx.data, index);
+    const char *zh = translate_plain(raw);
+    return zh ? zh : raw;
+}
+bool hook_Combo3(const char *label, int *current, const char *(*getter)(void *, int), void *data, int count, int height) {
+    TranslatedGetter ctx{getter, data};
+    return g_orig.Combo3(translate_widget_label(label), current, getter ? translated_getter : nullptr, getter ? &ctx : data, count, height);
+}
+bool hook_ListBox2(const char *label, int *current, const char *(*getter)(void *, int), void *data, int count, int height) {
+    TranslatedGetter ctx{getter, data};
+    return g_orig.ListBox2(translate_widget_label(label), current, getter ? translated_getter : nullptr, getter ? &ctx : data, count, height);
+}
+bool hook_BeginListBox(const char *label, const ImVec2 &size) {
+    return g_orig.BeginListBox(translate_widget_label(label), size);
+}
+bool hook_BeginMenu(const char *label, bool enabled) {
+    return g_orig.BeginMenu(translate_widget_label(label), enabled);
+}
+bool hook_MenuItem(const char *label, const char *shortcut, bool selected, bool enabled) {
+    return g_orig.MenuItem(translate_widget_label(label), shortcut, selected, enabled);
+}
+bool hook_MenuItem2(const char *label, const char *shortcut, bool *selected, bool enabled) {
+    return g_orig.MenuItem2(translate_widget_label(label), shortcut, selected, enabled);
+}
+bool hook_InputText(const char *label, char *buf, size_t size, ImGuiInputTextFlags flags, ImGuiInputTextCallback cb, void *data) {
+    return g_orig.InputText(translate_widget_label(label), buf, size, flags, cb, data);
+}
+bool hook_InputTextWithHint(const char *label, const char *hint, char *buf, size_t size, ImGuiInputTextFlags flags, ImGuiInputTextCallback cb, void *data) {
+    const char *zh = translate_plain(hint);
+    return g_orig.InputTextWithHint(translate_widget_label(label), zh ? zh : hint, buf, size, flags, cb, data);
+}
+
 // === ImGui 函数表挂钩实现 ===
 
 void hook_TextUnformatted(const char *text, const char *text_end) {
+    if (text) {
+        const std::string_view view(text, text_end ? static_cast<size_t>(text_end - text) : strlen(text));
+        if (view.substr(0, 23) == "MFG Unlock Diagnostics\n") {
+            const auto translated = translate_diagnostics(view);
+            g_orig.TextUnformatted(translated.c_str(), translated.c_str() + translated.size());
+            return;
+        }
+    }
     if (const char *zh = translate_plain(text, text_end)) {
         g_orig.TextUnformatted(zh, zh + strlen(zh));
         return;
@@ -369,40 +473,37 @@ bool hook_BeginCombo(const char *label, const char *preview_value, ImGuiComboFla
 }
 
 bool hook_Combo(const char *label, int *current_item, const char *const items[], int items_count, int popup_max_height_in_items) {
-    const char *zh_label = translate_widget_label(label);
+    const std::string zh_label = translate_widget_label(label);
     if (!items || items_count <= 0 || items_count > 64 || !can_render_chinese()) {
-        return g_orig.Combo(zh_label, current_item, items, items_count, popup_max_height_in_items);
+        return g_orig.Combo(zh_label.c_str(), current_item, items, items_count, popup_max_height_in_items);
     }
+    std::string owned[64];
     const char *zh_items[64];
     for (int i = 0; i < items_count; ++i) {
         const char *zh = items[i] ? translate_plain(items[i]) : nullptr;
-        zh_items[i] = zh ? zh : items[i];
+        if (zh) { owned[i] = zh; zh_items[i] = owned[i].c_str(); }
+        else zh_items[i] = items[i];
     }
-    return g_orig.Combo(zh_label, current_item, zh_items, items_count, popup_max_height_in_items);
+    return g_orig.Combo(zh_label.c_str(), current_item, zh_items, items_count, popup_max_height_in_items);
 }
 
 bool hook_Combo2(const char *label, int *current_item, const char *items_separated_by_zeros, int popup_max_height_in_items) {
-    const char *zh_label = translate_widget_label(label);
+    const std::string zh_label = translate_widget_label(label);
     if (!items_separated_by_zeros || !can_render_chinese()) {
-        return g_orig.Combo2(zh_label, current_item, items_separated_by_zeros, popup_max_height_in_items);
+        return g_orig.Combo2(zh_label.c_str(), current_item, items_separated_by_zeros, popup_max_height_in_items);
     }
-    char *buf = next_tl_buf();
-    size_t out_pos = 0;
+    std::string buffer;
     const char *p = items_separated_by_zeros;
     while (*p) {
         const size_t len = strlen(p);
         const char *zh = translate_plain(p, p + len);
         const char *use = zh ? zh : p;
         const size_t use_len = strlen(use);
-        if (out_pos + use_len + 2 >= kRingBufSize) {
-            return g_orig.Combo2(zh_label, current_item, items_separated_by_zeros, popup_max_height_in_items);
-        }
-        memcpy(buf + out_pos, use, use_len + 1);
-        out_pos += use_len + 1;
+        buffer.append(use, use_len + 1);
         p += len + 1;
     }
-    buf[out_pos] = '\0';
-    return g_orig.Combo2(zh_label, current_item, buf, popup_max_height_in_items);
+    buffer += '\0';
+    return g_orig.Combo2(zh_label.c_str(), current_item, buffer.c_str(), popup_max_height_in_items);
 }
 
 bool hook_DragFloat(const char *label, float *v, float v_speed, float v_min, float v_max, const char *format, ImGuiSliderFlags flags) {
@@ -768,6 +869,17 @@ void install_imgui_hooks() {
     DWORD old_prot = 0;
     VirtualProtect(mut, sizeof(imgui_function_table), PAGE_READWRITE, &old_prot);
 
+    mut->Begin = hook_Begin;
+    mut->CalcTextSize = reinterpret_cast<decltype(mut->CalcTextSize)>(zh_measure_hook(reinterpret_cast<void *>(g_orig.CalcTextSize)));
+    mut->SetClipboardText = hook_SetClipboardText;
+    mut->Combo3 = hook_Combo3;
+    mut->ListBox2 = hook_ListBox2;
+    mut->BeginListBox = hook_BeginListBox;
+    mut->BeginMenu = hook_BeginMenu;
+    mut->MenuItem = hook_MenuItem;
+    mut->MenuItem2 = hook_MenuItem2;
+    mut->InputText = hook_InputText;
+    mut->InputTextWithHint = hook_InputTextWithHint;
     mut->TextUnformatted = hook_TextUnformatted;
     mut->TextV = hook_TextV;
     mut->TextColoredV = hook_TextColoredV;
@@ -866,6 +978,17 @@ void on_reshade_overlay(reshade::api::effect_runtime *runtime) {
 }
 
 } // namespace
+
+extern "C" const char *zh_translate_measure(const char *text, const char *end, bool hide) {
+    if (!text) return nullptr;
+    const size_t len = end ? static_cast<size_t>(end - text) : strlen(text);
+    std::string_view visible(text, len);
+    if (hide) {
+        const auto hash = visible.find("##");
+        if (hash != std::string_view::npos) visible = visible.substr(0, hash);
+    }
+    return translate_plain(visible.data(), visible.data() + visible.size());
+}
 
 extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_module) {
     if (!reshade::register_addon(addon, reshade_module)) return false;

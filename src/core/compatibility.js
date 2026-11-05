@@ -1,7 +1,7 @@
 'use strict';
 // Read-only preflight. Never remove/bypass anti-cheat or overwrite another
 // graphics injector to make installation appear successful.
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 const path = require('path');
 const pe = require('./pe');
 const guards = require('./install-guards');

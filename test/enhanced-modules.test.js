@@ -33,7 +33,7 @@ test('模块 A：真实 nvngx_dlssnr.dll CUDA Fatbin 架构扫描与 RTX 4070 La
   const compat4070 = neuralModels.evaluateModelGpuCompatibility(info, 'NVIDIA GeForce RTX 4070 Laptop GPU');
   assert.equal(compat4070.compatible, true);
   assert.equal(compat4070.status, 'verified');
-  assert.equal(compat4070.badge, '已验证可用');
+  assert.equal(compat4070.badge, '架构匹配（需游戏验证）');
 
   // 仅包含 sm_120 的模型 (310.8.Lecram / 310.9.16 原厂版) 在 RTX 4070 Laptop 上应明确标记为不兼容
   const lecram = neuralModels.MODEL_DATABASE.find((m) => m.id === '310.8.Lecram');
@@ -204,9 +204,9 @@ test('Phase 5 UI：前端包含三大功能区域与明确区分的四级状态�
   assert.match(html, /id="view-enhanced"/);
 
   // 三大核心功能区域标题与无障碍标签
-  assert.match(uiJs, /Neural Rendering Manager/);
-  assert.match(uiJs, /Multi Frame Generation Manager/);
-  assert.match(uiJs, /Compatibility & Diagnostics/);
+  assert.match(uiJs, /神经渲染管理/);
+  assert.match(uiJs, /多帧生成管理/);
+  assert.match(uiJs, /兼容性与诊断/);
 
   // 四级状态徽章样式与文案
   for (const cls of ['enh-badge-verified', 'enh-badge-experimental', 'enh-badge-incompatible', 'enh-badge-untested']) {
@@ -237,7 +237,7 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
     assert.equal(arch.isLaptop, false, `${desktop50} 应识别为桌面卡`);
   }
 
-  // 2. 验证 310.8.SF-v2 与 310.9.16-oct2026 在三档硬件下全部本地就绪且已验证兼容
+  // 同一模型文件只展示一次，运行库版本不得被当作模型版本。
   for (const profileId of ['rtx40_laptop', 'rtx40_desktop', 'rtx50_desktop']) {
     const models = neuralModels.listNeuralModels({
       payloadDir: PAYLOAD_DIR,
@@ -248,8 +248,10 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
     const oct16 = models.find((m) => m.id === '310.9.16-oct2026');
     assert.equal(sfV2.availableOnDisk, true, `${profileId} 下 310.8.SF-v2 必须本地就绪`);
     assert.equal(sfV2.compatStatus, 'verified', `${profileId} 下 310.8.SF-v2 必须验证兼容`);
-    assert.equal(oct16.availableOnDisk, true, `${profileId} 下 310.9.16-oct2026 必须本地就绪`);
-    assert.equal(oct16.compatStatus, 'verified', `${profileId} 下 310.9.16-oct2026 必须验证兼容`);
+    assert.equal(oct16, undefined);
+    assert.equal(sfV2.version, '310.8.0.0');
+    assert.equal(models.filter(m => m.sha256 === sfV2.sha256).length, 1);
+    assert.ok(models.filter(m => !m.availableOnDisk).every(m => m.compatStatus === 'untested'));
   }
 
   // 3. 模拟游戏目录并分别测试 40 系桌面卡 (rtx40_desktop) 与 50 系桌面卡 (rtx50_desktop) 的 DLSS 5 + MFG 联合配置
@@ -268,7 +270,7 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
   // 测试档位 2：40 系桌面卡 (rtx40_desktop) + 310.9.16-oct2026 模型 + MFG x3
   const resDesktop40 = await combinedManager.applyCombinedConfiguration(gameDir, {
     hardwareProfile: 'rtx40_desktop',
-    neuralMode: 'latest_compatible',
+    neuralMode: 'oct2026_faster',
     neuralModelId: '310.9.16-oct2026',
     mfgMode: 'x3',
     runtimeStack: 'oct2026-310.9.16',
@@ -277,7 +279,11 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
   });
   assert.equal(resDesktop40.ok, true);
   assert.equal(resDesktop40.hardwareProfile, 'rtx40_desktop');
-  assert.equal(resDesktop40.status.neural.currentModel.id, '310.9.16-oct2026');
+  assert.equal(resDesktop40.status.neural.currentModel.id, '310.8.SF-v2');
+  assert.equal(resDesktop40.status.neural.currentModel.version, '310.8.0.0');
+  assert.equal(resDesktop40.status.neural.mode, 'latest_compatible');
+  assert.equal(resDesktop40.status.neural.runtimeStack, 'oct2026-310.9.16');
+  assert.equal(resDesktop40.status.neural.configuredRuntimeStack, 'oct2026-310.9.16');
 
   const iniDesktop40 = fs.readFileSync(path.join(gameDir, 'ReShade.ini'), 'utf8');
   // 40 系桌面卡 DLSS 5 必须解锁 100% 满血分辨率 (NRResolutionScale=1) 与 8 工作集缓冲池

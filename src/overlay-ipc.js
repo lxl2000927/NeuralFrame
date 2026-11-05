@@ -2,7 +2,13 @@
 const path = require('node:path');
 const { createOverlayLibrary } = require('./overlays');
 
-module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, window, bridge = () => null }) {
+module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, window, bridge = () => null, language = () => 'en' }) {
+  const nativeDialog = dialog, zh = require('./shared/overlay-zh');
+  const localized = options => language().startsWith('zh') ? zh.dialog(options) : options;
+  dialog = {
+    showOpenDialog: (win, options) => nativeDialog.showOpenDialog(win, localized(options)),
+    showMessageBox: (win, options) => nativeDialog.showMessageBox(win, localized(options))
+  };
   const appRoot = path.resolve(__dirname, '..');
   // Installed, the built add-on rides along as an extra resource; from source it
   // is whatever scripts/build-overlay.ps1 last produced.
@@ -54,6 +60,7 @@ module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, wind
     if (!entry.ready) throw Error('Build the experimental add-on first (see Developer files).');
     const picked = await dialog.showOpenDialog(window(), { title: 'Select a CLOSED offline test game with ReShade add-on support', properties: ['openFile'], filters: [{ name: 'Windows game executable', extensions: ['exe'] }] });
     if (picked.canceled) return null;
+    new (require('./core/component-review').ComponentReview)(app.getPath('userData')).assertUnlockedWithin(path.dirname(picked.filePaths[0]));
     const confirm = await dialog.showMessageBox(window(), { type: 'warning', title: 'Overlay test — not a DLSS installation',
       message: 'Confirm the game is closed and already uses ReShade with add-on support. Keep DLSS 5 Swapper open while testing the built-in overlay.',
       detail: `${picked.filePaths[0]}\n\nOnly a uniquely named overlay add-on is copied next to this executable. No existing DLLs or configuration files are replaced by installation. No Vulkan registry changes. Avoid online / anti-cheat games.\n\nThis overlay automatically connects through an undocumented, exact-build v4.7 adapter that temporarily redirects its UI dispatch. This may be incompatible with other add-ons. RenoDX itself saves settings you change. This is not NVIDIA's official SDK or overlay.`,
@@ -61,6 +68,8 @@ module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, wind
     return confirm.response === 1 ? library().install(id, picked.filePaths[0]) : null;
   });
   handle('uninstall', async id => {
+    const installed = library().list().installations.find(record => record.id === id);
+    if (installed) new (require('./core/component-review').ComponentReview)(app.getPath('userData')).assertUnlockedWithin(installed.directory);
     const confirm = await dialog.showMessageBox(window(), { type: 'question', message: 'Is the test game closed?', detail: 'Remove only the unchanged overlay this app copied. Keep ReShade, DLSS, presets, and every original file.', buttons: ['Cancel', 'Remove test overlay'], defaultId: 0, cancelId: 0 });
     if (confirm.response === 1) library().uninstall(id);
   });

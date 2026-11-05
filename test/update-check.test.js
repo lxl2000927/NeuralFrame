@@ -9,7 +9,7 @@ const { createRequire } = require('module');
 
 // The update lookup runs in the main process against the real GitHub endpoint.
 // Here the network is a stub, so the test is about what the app concludes.
-function load(t, { version = '2.2.1', fetchImpl } = {}) {
+function load(t, { version = '2.2.1', fetchImpl, channel = 'upstream', releaseRepository } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'swapper-update-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const main = path.resolve(__dirname, '../main.js');
@@ -17,7 +17,9 @@ function load(t, { version = '2.2.1', fetchImpl } = {}) {
   const handlers = new Map();
   const calls = { count: 0 };
   const stubs = {
+    './package.json': {version, distribution:{channel,releaseRepository}},
     electron: {
+      net: { fetch: async (...args) => { calls.count++; return fetchImpl(...args); } },
       app: { setAppUserModelId() {}, whenReady: () => ({ then() {} }), on() {}, getPath: () => root, getVersion: () => version },
       BrowserWindow: { fromWebContents: () => null },
       Menu: { buildFromTemplate: () => ({ popup() {} }) },
@@ -38,6 +40,19 @@ function load(t, { version = '2.2.1', fetchImpl } = {}) {
 }
 
 const release = (tag) => ({ ok: true, json: async () => ({ tag_name: tag }) });
+
+test('independent version line never treats an upstream 2.x release as its update', async t => {
+  const {handlers,calls}=load(t,{version:'0.1.0',channel:'independent',fetchImpl:async()=>release('v2.3.1')});
+  const answer=await handlers.get('update-check')();
+  assert.equal(answer.current,'0.1.0');assert.equal(answer.newer,false);assert.equal(answer.status,'unconfigured');assert.equal(calls.count,0);
+});
+
+test('independent release check uses only its configured repository', async t => {
+  const {handlers,calls}=load(t,{version:'0.1.0',channel:'independent',releaseRepository:'lxl2000927/DLSS5-Swapper-Enhanced',fetchImpl:async url=>{
+    assert.equal(url,'https://api.github.com/repos/lxl2000927/DLSS5-Swapper-Enhanced/releases/latest');return release('v0.1.1');
+  }});
+  const result=await handlers.get('update-check')();assert.equal(result.newer,true);assert.equal(result.latest,'0.1.1');assert.equal(calls.count,1);
+});
 
 test('a newer release is reported, an older or equal one is not', async (t) => {
   for (const [tag, newer] of [['v2.2.2', true], ['v2.3.0', true], ['v3.0.0', true],

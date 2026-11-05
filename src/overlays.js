@@ -1,7 +1,7 @@
 'use strict';
 // App-owned add-ons only. Never load imported native code in Electron, replace
 // ReShade, change its global configuration, or edit the main app's payload.
-const fs = require('node:fs');
+const fs = require('./core/preview-fs').fs;
 const path = require('node:path');
 const crypto = require('node:crypto');
 const digest = data => crypto.createHash('sha256').update(data).digest('hex');

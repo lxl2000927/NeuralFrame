@@ -2,7 +2,7 @@
 // Minimal PE reader: import table + version resource.
 // Used to tell a game executable apart from a launcher, to pick the right
 // ReShade API, and to show which DLSS version a file actually is.
-const fs = require('fs');
+const fs = require('./preview-fs').fs;
 
 function readAt(fd, size, pos) {
   const buf = Buffer.alloc(size);

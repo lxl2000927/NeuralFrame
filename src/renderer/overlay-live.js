@@ -16,37 +16,49 @@ window.mountOverlayLive = (root, { designOnly = false } = {}) => {
     ['NR Style',4,0,0,2,['Default','Natural','Cinematic']],
     ['Depth Convention',4,0,0,2,['Use game NGX flag','Force normal depth','Force inverted depth']]
   ].map(([name,kind,value,min,max,options],i)=>({id:101+i,name,kind,value,min,max,options,step:kind===0?.01:1,available:true,effect:'RenoDX 6.5.3'})) };
-  let status = sample, epoch = 0, preview = true, connectedOnce = false, autoEpoch = 0;
+  let status = designOnly ? sample : null, epoch = 0, connectedOnce = false, autoEpoch = 0;
+  let activeTab = 'nr', advancedOpen = false, collapsed = false;
   const ZH_TOOL_NAMES = {
-    'Structure Intensity': '结构细节强度 (Structure)',
-    'Global Tone Intensity': '全局色调强度 (Global Tone)',
+    'Structure Intensity': '结构细节强度',
+    'Global Tone Intensity': '全局色调强度',
     'Enable DLSS Neural Rendering': '开启 DLSS 5 神经渲染',
     'Automatic / Character Mask': '角色与皮肤自动遮罩',
     'Character/Skin Structure': '角色/皮肤结构强度',
-    'Overall Intensity': '神经渲染总强度 (Overall Intensity)',
-    'Local Tone Intensity': '局部对比度与色调 (Local Tone)',
+    'Overall Intensity': '神经渲染总强度',
+    'Local Tone Intensity': '局部对比度与色调',
     'Diffuse White (nits)': '漫反射参考白点 (尼特)',
     'Motion Scale X Multiplier': '运动矢量 X 轴缩放',
     'Motion Scale Y Multiplier': '运动矢量 Y 轴缩放',
     'NR UI Correction': 'HUD / UI 界面保护校正',
     'Enable Upscaling (WIP)': '启用超分辅助管线',
-    'NR Preset': '神经渲染预设 (NR Preset)',
-    'NR Style': '神经渲染风格 (NR Style)',
+    'NR Preset': '神经渲染预设',
+    'NR Style': '神经渲染风格',
     'Depth Convention': '深度缓冲方向约定',
     'ReShade shader effects': '启用 ReShade 着色器效果',
     'On-screen status card': '屏幕左上角状态角标'
   };
+  Object.assign(ZH_TOOL_NAMES, {
+    'Feeder enabled':'启用 Feeder', 'Feeder enabled (original panel)':'启用 Feeder（在原始面板中设置）', 'Enable Feeder':'启用 Feeder', 'Work resolution (%)':'工作分辨率（%）',
+    'Work sharpness':'工作锐度', 'Motion scale X':'运动矢量 X 轴缩放', 'Motion scale Y':'运动矢量 Y 轴缩放',
+    'HDR contract':'HDR 色彩约定', 'Depth convention (-1 auto, 0 normal, 1 inverted)':'深度方向约定',
+    'Upscale (0 bilinear, 1 FSR1, 2 DLSS SR)':'工作分辨率上采样', 'HDR10 bridge (-1 auto, 0 off, 1 on)':'HDR10 桥接',
+    'HDR paper white (nits)':'HDR 参考白点（尼特）', 'Output stabiliser hold':'输出稳定器保持强度', 'Stabiliser change tolerance':'稳定器变化容差'
+  });
+  const zhStatus = value => window.overlayZh?.text(value) || value;
   const zhName = (n) => ZH_TOOL_NAMES[n] || n;
+  const zhChoice = value => ({Default:'默认',Natural:'自然',Cinematic:'电影感',Unavailable:'不可用',
+    'Preset #1':'预设 1','Preset #2':'预设 2','Preset #3':'预设 3',
+    'Use game NGX flag':'使用游戏 NGX 标志','Force normal depth':'强制常规深度','Force inverted depth':'强制反向深度'})[value] || value;
   // Only reasons worth reading. While the bridge works the badge in the
   // header already says CONNECTED, so the line below it stays out of sight.
   const nrNote = () => !status ? '等待连接游戏进程…'
-    : status.nrAvailable ? '' : status.nrReason || '暂未连接到 RenoDX DLSS 5 神经渲染运行时。';
+    : status.nrAvailable ? '' : zhStatus(status.nrReason) || '暂未连接到 RenoDX DLSS 5 神经渲染运行时。';
   const observer = new ResizeObserver(() => runtime?.resize(Math.ceil(root.getBoundingClientRect().height)));
   observer.observe(root);
   root._overlayDispose = () => { lifetime.abort(); observer.disconnect(); };
   const el = (tag, cls, text) => { const e = document.createElement(tag); e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   const send = (id, kind, value) => {
-    if (status === sample) { const t=[...sample.nrTools,...(sample.feedTools||[])].find(t=>t.id===id);if(t&&value>=t.min&&value<=t.max){t.value=value;update();}return; }
+    if (status === sample) { if(id===0)sample.effects=!!value;else if(id===50)sample.badge=!!value;const t=[...sample.nrTools,...(sample.feedTools||[])].find(t=>t.id===id);if(t&&value>=t.min&&value<=t.max)t.value=value;update();return; }
     if (status) runtime?.setControl({ epoch: status.epoch, id, kind, value });
   };
   const closeChoices = except => root.querySelectorAll('.ol-dropdown').forEach(d => { if(d!==except) {d.querySelector('.ol-dropdown-menu').hidden=true;d.querySelector('.ol-dropdown-trigger').setAttribute('aria-expanded','false');} });
@@ -54,16 +66,16 @@ window.mountOverlayLive = (root, { designOnly = false } = {}) => {
   root.addEventListener('scroll',e=>{if(!e.target.classList?.contains('ol-dropdown-menu'))closeChoices();},{capture:true,signal:lifetime.signal});
   function choice(t) {
     const box=el('div','ol-dropdown'), trigger=el('button','ol-dropdown-trigger'), menu=el('div','ol-dropdown-menu');
-    trigger.type='button';trigger.dataset.liveId=t.id;trigger.setAttribute('aria-haspopup','listbox');trigger.setAttribute('aria-expanded','false');trigger.setAttribute('aria-label',t.name);
-    menu.hidden=true;menu.setAttribute('role','listbox');menu.setAttribute('aria-label',t.name);
+    trigger.type='button';trigger.dataset.liveId=t.id;trigger.setAttribute('aria-haspopup','listbox');trigger.setAttribute('aria-expanded','false');trigger.setAttribute('aria-label',zhName(t.name));
+    menu.hidden=true;menu.setAttribute('role','listbox');menu.setAttribute('aria-label',zhName(t.name));
     box.append(trigger,menu);
     const close=()=>{menu.hidden=true;trigger.setAttribute('aria-expanded','false');};
     trigger.updateChoice = tool => {
       const options=tool.options||t.options||[];
-      trigger.textContent=options[tool.value-t.min]||'Unavailable';
+      trigger.textContent=zhChoice(options[tool.value-t.min]||'Unavailable');
       if(JSON.stringify(options)!==menu.dataset.options) {
         menu.dataset.options=JSON.stringify(options);menu.replaceChildren(...options.map((text,i)=>{
-          const option=el('button','ol-dropdown-option',text);option.type='button';option.dataset.value=i+t.min;option.setAttribute('role','option');
+          const option=el('button','ol-dropdown-option',zhChoice(text));option.type='button';option.dataset.value=i+t.min;option.setAttribute('role','option');
           option.onclick=()=>{send(t.id,t.kind,i+t.min);close();trigger.focus({preventScroll:true});};return option;
         }));
       }
@@ -93,7 +105,7 @@ window.mountOverlayLive = (root, { designOnly = false } = {}) => {
   }
   function editable(range) {
     const value = el('input', 'ol-number'); value.type = 'number'; value.dataset.liveId = range.dataset.liveId;
-    value.setAttribute('aria-label', `${range.closest('label').querySelector('span').textContent} value`);
+    value.setAttribute('aria-label', `${range.closest('label').querySelector('span').textContent}数值`);
     range.nextElementSibling.replaceWith(value);
     range.addEventListener('input', () => { value.value = range.value; });
     const commit = () => {
@@ -106,7 +118,7 @@ window.mountOverlayLive = (root, { designOnly = false } = {}) => {
   }
   function addTool(target, t) {
     // Feeder's signed tri-state values use the same compact dropdown widget.
-    const feedChoices={306:['自动 (Auto)','强制 SDR','强制 HDR'],307:['自动 (Auto)','正向深度 (Normal)','反向深度 (Inverted)'],308:['双线性 (Bilinear)','FSR 1','DLSS SR (实验性)'],309:['自动 (Auto)','关闭 (Off)','开启 (On)']};
+    const feedChoices={306:['自动','强制 SDR','强制 HDR'],307:['自动','正向深度','反向深度'],308:['双线性','FSR 1','DLSS SR（实验性）'],309:['自动','关闭','开启']};
     if(feedChoices[t.id])t={...t,options:feedChoices[t.id],name:{306:'HDR 色彩契约',307:'深度方向约定',308:'工作分辨率上采样',309:'HDR10 桥接'}[t.id]};
     const displayName = zhName(t.name);
     const isChoice=t.kind===4||!!t.options;
@@ -139,34 +151,28 @@ window.mountOverlayLive = (root, { designOnly = false } = {}) => {
     }
     panel.querySelector('.ol-muted .ol-check small').textContent = 'RenoDX 角色/皮肤保护遮罩';
     const maskLabel = panel.querySelector('.ol-muted .ol-check');
-    for (const node of maskLabel.childNodes) if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('MODEL AUTOMASK')) node.textContent = ' 角色自动遮罩 (CHARACTER MASK) ';
+    for (const node of maskLabel.childNodes) if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('模型自动遮罩')) node.textContent = ' 角色自动遮罩 ';
     panel.querySelector('.ol-muted').classList.toggle('ol-muted', !status?.nrAvailable);
     panel.querySelector('#olMaskStructure').previousElementSibling.textContent = '角色/皮肤结构强度';
     const extra = panel.querySelector('.ol-group').parentElement;
     extra.replaceChildren(el('h4', '', '更多 DLSS 5 神经渲染高级控制'));
     const tools = el('div', 'ol-additional'); extra.append(tools);
-    for (const t of status?.nrTools || []) if (![101, 102, 103, 103, 104, 105, 114].includes(t.id)) addTool(tools, t);
+    const nrStyle = status?.nrTools?.find(t => t.id === 114);
+    const compactStyles = JSON.stringify(nrStyle?.options) === JSON.stringify(['Default', 'Natural', 'Cinematic']);
+    // Preserve consumers with other style lists through the full dropdown.
+    for (const t of status?.nrTools || []) if (![101, 102, 103, 104, 105].includes(t.id) && (t.id !== 114 || !compactStyles)) addTool(tools, t);
     if (!status?.nrTools) tools.append(el('p', 'ol-live-note', '重启游戏或按 Home 键打开完整中文高级菜单。'));
     const models = panel.querySelector('.ol-models');
-    models.parentElement.querySelector('h4').textContent = '神经渲染画质风格 (NR STYLE)';
+    models.parentElement.hidden = !!nrStyle && !compactStyles;
+    models.parentElement.querySelector('h4').textContent = '神经渲染画质风格';
     for (const [i, model] of [...models.children].entries()) {
-      model.textContent = `模式 ${['A', 'B', 'C'][i]} · ${['默认 (Default)', '自然 (Natural)', '电影感 (Cinematic)'][i]}`;
+      model.textContent = `模式 ${['A', 'B', 'C'][i]} · ${['默认', '自然', '电影感'][i]}`;
       model.dataset.styleValue = i;
       model.onclick = () => send(114, 4, i);
       model.classList.remove('selected'); model.setAttribute('aria-pressed', 'false');
     }
     // The style buttons stay above the scrollable advanced controls.
     extra.before(models.parentElement);
-    if(status?.feedPresent){
-      const section=el('section','ol-feed-section');section.append(el('h4','','FEEDER 深度与运动矢量馈送控制'));
-      const feed=el('div','ol-additional');for(const t of status.feedTools||[])addTool(feed,t);
-      section.append(feed,el('p','ol-live-note ol-feed-status',status.feedReason));
-      extra.after(section);
-      // Keep the compact panel bounded: choose a backend section instead of
-      // stacking two tall scroll areas. NR remains accessible above.
-      const toggle=el('button','ol-model','显示 RenoDX 高级参数');extra.before(toggle);extra.hidden=true;
-      toggle.onclick=()=>{extra.hidden=!extra.hidden;section.hidden=!extra.hidden;toggle.textContent=extra.hidden?'显示 RenoDX 高级参数':'显示 Feeder 馈送参数';};
-    }
     panel.querySelector('footer').textContent = status===sample?'当前为交互式设计预览。进入游戏后自动连接 RenoDX DLSS 5，按 Home 键可呼出完整中文调节面板。':status?.nrAvailable
       ? '实时 RenoDX DLSS 5 设置已连接。A/B/C 切换神经渲染风格；按 Home 键可呼出完整 ReShade + MFG + DLSS 5 全中文高级菜单。'
       : '正在等待游戏加载 RenoDX DLSS 5 模块… 按 Home 键可随时打开完整中文菜单。';
@@ -174,15 +180,65 @@ window.mountOverlayLive = (root, { designOnly = false } = {}) => {
   function build() {
     window.mountOverlayPanel(root);
     const panel = root.querySelector('.ol-panel');
-    panel.classList.add('ol-connected');
-    const modes = el('div', 'ol-models ol-live-modes');
-    for (const [label, design] of [['全部实时工具', false], ['DLSS 5 核心控制', true]]) {
-      const b = el('button', `ol-model ${preview === design ? 'selected' : ''}`, label);
-      b.onclick = () => { preview = design; build(); update(); }; modes.append(b);
+    panel.classList.add('ol-connected', 'ol-compact');
+    bindNr(panel);
+    const header = panel.querySelector('header'), footer = panel.querySelector('footer');
+    const panes = el('div','ol-panes'), nr = el('div','ol-pane');
+    nr.dataset.overlayPane='nr';
+    for(const node of [...panel.children])if(node!==header&&node!==footer)nr.append(node);
+    const advanced=nr.querySelector('.ol-additional').parentElement;
+    const details=el('details','ol-advanced');details.open=advancedOpen;
+    details.append(el('summary','','高级参数'));
+    advanced.querySelector('h4')?.remove();
+    details.append(...advanced.childNodes);advanced.replaceWith(details);
+    details.addEventListener('toggle',()=>{advancedOpen=details.open;closeChoices();});
+    const feed=el('div','ol-pane');feed.dataset.overlayPane='feed';
+    const feedSection=el('section','ol-feed-section');feedSection.append(el('h4','','Feeder 参数'));
+    for(const t of status?.feedTools||[])addTool(feedSection,t);
+    feedSection.append(el('p','ol-live-note ol-feed-status',zhStatus(status?.feedReason)||'此游戏尚未连接 Feeder。'));
+    feed.append(feedSection);
+    const fx=el('div','ol-pane');fx.dataset.overlayPane='fx';
+    const fxSection=el('section','ol-fx-section');fxSection.append(el('h4','','ReShade 着色器'));
+    addTool(fxSection,{id:0,kind:3,name:'ReShade shader effects'});
+    let previousEffect='';
+    for(const t of status?.tools||[]){
+      if(t.effect!==previousEffect){fxSection.append(el('h4','ol-live-effect',t.effect));previousEffect=t.effect;}
+      addTool(fxSection,t);
     }
-    // Preserve the requested panel itself; optional FX tools never replace it
-    // automatically and are not presented as a RenoDX connection.
-    panel.after(modes);
+    if(!status?.tools?.length)fxSection.append(el('p','ol-live-note','未检测到额外的 .fx 着色器参数。'));
+    fx.append(fxSection);
+    const statePane=el('div','ol-pane');statePane.dataset.overlayPane='status';
+    const stateSection=el('section','ol-status-detail');stateSection.append(el('h4','','运行状态'),el('dl','ol-status-list'));
+    statePane.append(stateSection,el('p','ol-live-note','帧生成倍率与更多高级选项可按 Home 在原有菜单中查看。'));
+    panes.append(nr,feed,fx,statePane);
+    const tabs=el('nav','ol-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','面板分页');
+    const setTab=value=>{
+      activeTab=value;closeChoices();
+      for(const button of tabs.children){const selected=button.dataset.overlayTab===value;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;}
+      for(const pane of panes.children){pane.hidden=pane.dataset.overlayPane!==value;pane.setAttribute('role','tabpanel');pane.setAttribute('aria-label',{nr:'DLSS 5',feed:'Feeder',fx:'着色器',status:'状态'}[pane.dataset.overlayPane]);}
+      panes.scrollTop=0;
+    };
+    for(const [id,label] of [['nr','DLSS 5'],['feed','Feeder'],['fx','着色器'],['status','状态']]){
+      const button=el('button','ol-tab',label);button.type='button';button.dataset.overlayTab=id;button.setAttribute('role','tab');
+      button.onclick=()=>setTab(id);tabs.append(button);
+    }
+    tabs.addEventListener('keydown',event=>{
+      if(!['ArrowLeft','ArrowRight'].includes(event.key))return;
+      event.preventDefault();const index=[...tabs.children].indexOf(document.activeElement);
+      const next=tabs.children[(index+(event.key==='ArrowRight'?1:3))%4];next.click();next.focus();
+    });
+    const title=el('span','ol-compact-title','Enhanced 控制面板');
+    const badge=el('span','ol-prototype');
+    const fold=el('button','ol-fold');fold.type='button';
+    const strip=el('div','ol-status-strip');strip.append(el('span','ol-connection'),el('span','ol-nr-summary'));
+    const note=el('p','ol-live-note ol-nr-status',nrNote());
+    const foldPanel=()=>{tabs.hidden=panes.hidden=strip.hidden=footer.hidden=collapsed;note.hidden=collapsed||!note.textContent;fold.textContent=collapsed?'+':'−';fold.setAttribute('aria-label',collapsed?'展开面板':'收起面板');fold.setAttribute('aria-expanded',String(!collapsed));closeChoices();};
+    fold.onclick=()=>{collapsed=!collapsed;foldPanel();};
+    header.replaceChildren(title,badge,fold);
+    footer.className='ol-live-hotkey';
+    footer.textContent=`${root.dataset.overlayHotkey||'F8'} 显示／隐藏 · 拖动标题栏移动 · 右下角缩放 · Home 高级菜单`;
+    panel.replaceChildren(header,tabs,panes,strip,note,footer);
+    setTab(activeTab);foldPanel();
     if(designOnly){
       const backend=el('button','ol-preview-backend',sample.feedPresent?'预览模式：Feeder + RenoDX':'预览模式：RenoDX');
       backend.onclick=()=>{
@@ -192,29 +248,12 @@ window.mountOverlayLive = (root, { designOnly = false } = {}) => {
         sample.feedTools=[['启用 Feeder 深度馈送',1,1,0,1],['工作分辨率 (%)',0,100,50,100],['工作锐度',0,.3,0,1],['运动矢量缩放 X',0,1,-2,2],['运动矢量缩放 Y',0,1,-2,2],['HDR 色彩契约',0,-1,-1,1],['深度方向约定',0,-1,-1,1],['工作分辨率上采样',0,0,0,2],['HDR10 桥接',0,-1,-1,1],['HDR 参考白点 (尼特)',0,203,50,1000],['输出稳定器保持',0,0,0,1],['稳定器变化容差',0,.04,0,1]].map(([name,kind,value,min,max],i)=>({id:301+i,name,kind,value,min,max,step:[0,1,5,6,7,8,9].includes(i)?1:.01,available:i!==0,effect:'Feeder 1.19.0'}));
         build();update();
       };
-      modes.after(backend);
+      panel.after(backend);
     }
-    if(status!==sample){const note=el('p','ol-live-note ol-nr-status',nrNote());note.hidden=!note.textContent;modes.after(note);}
-    if (preview) { bindNr(panel); return; }
-    panel.querySelector('.ol-prototype').textContent = status ? '已连接游戏' : '未连接';
-    panel.querySelector('.ol-eyebrow').textContent = 'DLSS 5 SWAPPER · 游戏内实时控制';
-    for (const element of [...panel.children]) if (element !== modes && element.tagName !== 'HEADER') element.remove();
-    const info = el('p', 'ol-live-note', status===sample?'设计预览模式，未连接游戏。':status?.nrAvailable ? 'RenoDX 神经渲染控制已实时连接。按 Home 键可打开原版完整中文高级菜单。' : '等待游戏加载兼容的 RenoDX 模块。');
-    panel.append(info);
-    const tools = el('div', 'ol-live-tools'); panel.append(tools);
-    const add = t => addTool(tools, t);
-    add({ id: 0, kind: 3, name: '启用 ReShade 着色器效果' });
-    let previousEffect = '';
-    for (const t of [...(status?.nrAvailable ? status.nrTools : []), ...(status?.feedPresent ? status.feedTools : []), ...(status?.tools || [])]) {
-      if (t.effect !== previousEffect) { tools.append(el('h4', 'ol-live-effect', t.effect)); previousEffect = t.effect; }
-      add(t);
-    }
-    if (!status?.tools.length) tools.append(el('p', 'ol-live-note', '未检测到额外的 .fx 着色器参数（RenoDX 原生插件无需 .fx 着色器即可运行）。'));
-    panel.append(el('footer', 'ol-live-hotkey', `${root.dataset.overlayHotkey||'F8'}: 显示/隐藏 · 拖动顶部: 移动窗口 · Esc: 关闭 · Home: 完整高级菜单`));
   }
   function update() {
-    const note = root.querySelector('.ol-nr-status'); if (note) { note.textContent = nrNote(); note.hidden = !note.textContent; }
-    const feedNote=root.querySelector('.ol-feed-status');if(feedNote)feedNote.textContent=status?.feedReason||'';
+    const note = root.querySelector('.ol-nr-status'); if (note) { note.textContent = nrNote(); note.hidden = collapsed || !note.textContent; }
+    const feedNote=root.querySelector('.ol-feed-status');if(feedNote)feedNote.textContent=zhStatus(status?.feedReason)||'此游戏尚未连接 Feeder。';
     for (const input of root.querySelectorAll('[data-live-id]')) {
       const id = Number(input.dataset.liveId);
       const t = id >= 301 ? status?.feedPresent&&status.feedTools?.find(t=>t.id===id) : id === 0 ? { kind: 3, value: status?.effects ? 1 : 0, available: !!status } :
@@ -223,8 +262,9 @@ window.mountOverlayLive = (root, { designOnly = false } = {}) => {
         id === 50 ? { kind: 1, value: status?.badge ? 1 : 0, available: !!status, effect: 'DLSS 5 Swapper', name: 'On-screen status card' } :
         id >= 101 ? status?.nrAvailable && status.nrTools?.find(t => t.id === id) : status?.tools.find(t => t.id === id);
       input.disabled = !t?.available;
-      if (!t || input.dataset.dragging || (document.activeElement === input && input.type === 'number')) continue;
-      input.title = `${t.effect} / ${t.name}`;
+      if (!t) {if(input.type==='checkbox')input.checked=false;if(input.type==='number')input.value='';continue;}
+      if (input.dataset.dragging || (document.activeElement === input && input.type === 'number')) continue;
+      input.title = `${t.effect || 'ReShade'} / ${zhName(t.name || (id === 0 ? 'ReShade shader effects' : ''))}`;
       if (input.type === 'range' || input.type === 'number') { input.min = t.min; input.max = t.max; input.step = t.step; input.value = Number(t.value).toFixed(2); }
       else if(input.updateChoice) input.updateChoice(t);
       else input.checked = !!t.value;
@@ -236,6 +276,17 @@ window.mountOverlayLive = (root, { designOnly = false } = {}) => {
       const selected = !model.disabled && Number(model.dataset.styleValue) === style.value;
       model.classList.toggle('selected', selected); model.setAttribute('aria-pressed', String(selected));
     }
+    const connection=status===sample?'交互预览':status?'已连接游戏':'等待游戏';
+    const nrToggle=status?.nrAvailable&&status.nrTools?.find(t=>t.id===103&&t.available);
+    const nrState=nrToggle?(nrToggle.value?'开启':'关闭'):'不可用';
+    root.querySelector('.ol-prototype').textContent=status===sample?'预览':status?'实时':'等待连接';
+    root.querySelector('.ol-connection').textContent=connection;
+    root.querySelector('.ol-nr-summary').textContent=`神经渲染：${nrState}`;
+    root.querySelector('.ol-status-strip').dataset.connected=String(!!status&&status!==sample);
+    const toolOption=id=>{const t=status?.nrAvailable&&status.nrTools?.find(t=>t.id===id&&t.available);return t?zhChoice(t.options?.[t.value-t.min]??String(t.value)):'不可用';};
+    const rows=[['连接状态',connection],['神经渲染',nrState],['神经渲染预设',toolOption(113)],['神经渲染风格',toolOption(114)],['Feeder',status?.feedPresent?'已连接':'未连接'],['ReShade 效果',status?(status.effects?'开启':'关闭'):'不可用']];
+    const list=root.querySelector('.ol-status-list');list.replaceChildren();
+    for(const [label,value]of rows){list.append(el('dt','',label),el('dd','',value));}
   }
   build(); update();
   runtime?.onStatus(value => {

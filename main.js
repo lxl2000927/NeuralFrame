@@ -3,7 +3,23 @@
 // Finds the games already on the machine and installs DLSS 5 Neural
 // Rendering into them, using the scanners in src/core.
 const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Menu, Tray, Notification, nativeImage, safeStorage } = require('electron');
-const fs = require('fs');
+const previewFs = require('./src/core/preview-fs');
+const fs = previewFs.fs;
+const { ComponentReview } = require('./src/core/component-review');
+let componentReview;
+const reviews = () => componentReview || (componentReview = new ComponentReview(app.getPath('userData')));
+let unifiedComponents, componentUpdates;
+function components() {
+  return unifiedComponents ||= new (require('./src/core/component-library').ComponentLibrary)(app.getPath('userData'), {
+    payloadDir: resolvePayloadRoot(), overlayDir: app.isPackaged ? path.join(process.resourcesPath, 'overlay') : path.join(__dirname, 'dist/overlay')
+  });
+}
+function updates() { return componentUpdates ||= new (require('./src/core/component-updates').ComponentUpdates)(components(),{fetcher:(...args)=>require('electron').net.fetch(...args)}); }
+async function managedReview(dir, request, work, token) {
+  const library=components(), selected=library.profile(dir).selected;
+  if (!Object.keys(selected).length) return reviews().run(dir,request,work,token);
+  return reviews().run(dir,{...request,componentSelection:selected},()=>require('./src/core/component-deploy').managed(library,dir,selected,work),token);
+}
 const path = require('path');
 const { pathToFileURL, fileURLToPath } = require('url');
 const { paletteFromPixels, mergePalettes } = require('./src/core/palette');
@@ -15,9 +31,11 @@ const { scanGame } = require('./src/core/scan.js');
 const { discover, folder, dedupe, isInside, steam } = require('./src/library');
 const { contextForSteamGame, createSetupRunner } = require('./src/core/proton');
 const art = require('./src/steamart');
+const artCache = require('./src/art-cache');
 const { backupRoot, saveActiveManifest, writeTracked, makeReShadeConfigWritable } = require('./src/core/apply.js');
 const { scanSource } = require('./src/core/scan.js');
 const pe = require('./src/core/pe.js');
+const { isInternalAddon } = require('./src/core/addon-policy');
 const { ensureLumenite, ensureDgVoodoo, missingVCRuntime } = require('./src/core/runtime-components.js');
 const communityKeys = require('./src/shared/community-keys');
 const gpuModel = require('./src/shared/gpu-model');
@@ -66,6 +84,7 @@ const communityAnswer = async work => {
 };
 const gameName = dir => lastGames.find(game => keyFor(game.dir) === keyFor(dir))?.name || path.basename(dir);
 function saveOperation(dir, manifest, action, send) {
+  if (previewFs.active()) return;
   try { history().record(dir, manifest, action, gameName(dir)); }
   catch (error) {
     // The game operation succeeded. Report the separate history write failure.
@@ -112,6 +131,7 @@ const KNOWN = {
 const describedFiles = new Map();
 
 function describe(file, label) {
+  if (isInternalAddon(file)) return null;
   let stat;
   try { stat = fs.statSync(file); } catch { return null; }
   const key = path.resolve(file).toLowerCase();
@@ -179,6 +199,7 @@ function addonLibrary() {
 
   const p = payload(true);
   if (p && p.source.addon) add(p.source.addon, null);
+  const integratedId = p?.source.addon ? describe(p.source.addon, null)?.id : null;
 
   for (const box of addonFolders()) {
     let dropped = [];
@@ -197,7 +218,7 @@ function addonLibrary() {
   const base = p && path.basename(p.source.addon).toLowerCase();
   const chosen = new Set(enabledAddons());
   return found
-    .filter((r) => !r.shipped)
+    .filter((r) => !r.shipped && (r.custom || r.id !== integratedId))
     .map((r) => ({
       ...r,
       active: chosen.has(r.path),
@@ -308,12 +329,12 @@ function posterUrl(game, state) {
   // Art fetched earlier is already on disk; use it before the
   // launcher's own cache, which is often only a wide header.
   const record = state.art && state.art[key];
-  const saved = record?.rules === ART_RULES ? record : null;
-  if (saved && saved.cover) return { url: saved.cover, tall: true, custom: false };
+  const saved = artCache.usable(record, onDisk);
+  if (saved.cover) return { url: saved.cover, tall: true, custom: false };
   // A game too new for a portrait capsule still has a banner. The grid knows
   // how to show a wide image, which beats falling back to two initials.
-  if (saved && saved.hero) return { url: saved.hero, tall: false, custom: false };
-  if (game.poster) return { url: pathToFileURL(game.poster.file).href, tall: game.poster.tall, custom: false };
+  if (saved.hero) return { url: saved.hero, tall: false, custom: false };
+  if (game.poster && fs.existsSync(game.poster.file)) return { url: pathToFileURL(game.poster.file).href, tall: game.poster.tall, custom: false };
   return null;
 }
 
@@ -463,7 +484,7 @@ app.whenReady().then(async () => {
   if (!singleInstance) return;
   // Registered here rather than at load: main.js is exercised in a plain vm
   // context by the tests, where src modules are stubbed and cannot be called.
-  require('./src/overlay-ipc')({ app, ipcMain, dialog, shell, window: () => win, bridge: () => overlayBridge });
+  require('./src/overlay-ipc')({ app, ipcMain, dialog, shell, window: () => win, bridge: () => overlayBridge, language: () => loadState().lang || 'zh' });
   createWindow();
   // The icon is there from launch, not only after the first close - somebody
   // who wants the app parked in the tray wants to see that it is.
@@ -495,6 +516,7 @@ ipcMain.handle('boot', () => {
   };
   return {
     version: require('./package.json').version,
+    distribution: require('./package.json').distribution || null,
     // Said at launch rather than at the moment somebody presses Install. The
     // app used to look completely healthy right up until it could not work.
     payloadMissing: (() => {
@@ -1474,7 +1496,7 @@ ipcMain.handle('community-palette-merge', (_event, palettes) =>
 
 // Bumped whenever the art picked for a game could change, so folders cached
 // under the old rule fetch again instead of keeping a bad banner forever.
-const ART_RULES = 4;
+const ART_RULES = artCache.RULES;
 
 // A community card is a game somebody else has, so there is no folder to key
 // its artwork by - but a card keyed "steam:<appid>" carries the appid itself,
@@ -1563,29 +1585,37 @@ ipcMain.handle('art-fetch', async (_event, dir, name, appid) => {
   const state = loadState();
   const key = keyFor(dir);
   const cached = state.art && state.art[key];
-  if (cached && cached.rules === ART_RULES) return cached;
+  if (artCache.reusable(cached, onDisk)) return { ...cached, ...artCache.usable(cached, onDisk) };
+
+  const remember = record => {
+    const latest = loadState();
+    latest.art = latest.art || {};
+    latest.art[key] = record;
+    saveState(latest);
+    return record;
+  };
+  const previous = artCache.usable(cached, onDisk);
+  const miss = () => remember({ ...cached, ...previous, rules: ART_RULES, fetchedAt: Date.now() });
 
   try {
     const hit = await art.look(name, appid);
-    if (!hit) return { none: true };
+    if (!hit) return miss();
 
     const dest = path.join(app.getPath('userData'), 'art');
     const record = { ...hit, cover: null, hero: null, rules: ART_RULES, fetchedAt: Date.now() };
     const grab = async (url, suffix) => {
+      if (!url) return null;
       try { return pathToFileURL(await art.download(url, path.join(dest, key + suffix))).href; }
       catch { return null; }
     };
-    record.cover = await grab(hit.coverUrl, '-cover.jpg');
+    record.cover = previous.cover || await grab(hit.coverUrl, '-cover.jpg');
     // A few older apps have no hero image; the store header is the same shape.
-    record.hero = await grab(hit.heroUrl, '-hero.jpg');
+    record.hero = previous.hero || await grab(hit.heroUrl, '-hero.jpg');
     if (!record.hero && hit.heroFallbackUrl) record.hero = await grab(hit.heroFallbackUrl, '-hero.jpg');
 
-    state.art = state.art || {};
-    state.art[key] = record;
-    saveState(state);
-    return record;
+    return remember(record);
   } catch (err) {
-    return { error: err.message };
+    return { ...miss(), error: err.message };
   }
 });
 
@@ -1630,8 +1660,14 @@ function newerRelease(current, latest) {
 ipcMain.handle('update-check', async () => {
   if (updateAnswer) return updateAnswer;
   const current = app.getVersion();
+  const distribution = require('./package.json').distribution;
+  const repository = distribution?.channel === 'independent' ? distribution.releaseRepository : 'skyi7943-cmd/DLSS5-Swapper-Enhanced';
+  if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository)) {
+    return (updateAnswer = { current, latest: null, newer: false, channel: 'independent', status: 'unconfigured',
+      message: '独立分支尚未配置软件发布源；插件可在组件库中单独检查更新。' });
+  }
   try {
-    const response = await fetch('https://api.github.com/repos/skyi7943-cmd/DLSS5-Swapper-Enhanced/releases/latest', {
+    const response = await require('electron').net.fetch(`https://api.github.com/repos/${repository}/releases/latest`, {
       headers: { 'User-Agent': `DLSS5-Swapper-Enhanced/${current}`, Accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(8000)
     });
@@ -1764,11 +1800,11 @@ async function exclusiveMutation(work) {
   if (mutationBusy) return { ok: false, code: 'errJobBusy' };
   mutationBusy = true;
   try { return await work(); }
-  catch (err) { return { ok: false, code: err.code, message: err.message }; }
+  catch (err) { return { ok: false, code: err.code, message: err.message, dependencies: err.dependencies }; }
   finally { mutationBusy = false; }
 }
 
-ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi) => exclusiveMutation(async () => {
+ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, reviewToken) => exclusiveMutation(() => managedReview(dir, { kind: 'install', exePath, requestedRoute, requestedApi }, async () => {
   const p = payload();
   if (!p) return { ok: false, ...payloadMissing() };
   const scan = await scanGame(dir);
@@ -1806,7 +1842,7 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi) =>
     return { ok: false, code: 'errLinuxVulkanUnsupported', message: 'The Vulkan Feeder route needs a host Vulkan layer and is not supported on Linux yet. Select a DirectX renderer in the game.' };
   }
 
-  const send = (e) => event.sender.send('job', e);
+  const send = (e) => { if (!previewFs.active()) event.sender.send('job', e); };
   await guards.assertGameClosed(dir, target.path);
   if (fs.existsSync(journal.pendingPath(dir))) return { ok: false, code: 'errBackendRecovery' };
   const old = backends.readManifest(dir);
@@ -1814,7 +1850,7 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi) =>
   if (changed && (old.game.api === 'vulkan' || api === 'vulkan')) return { ok: false, code: 'errBackendVulkanSwitch' };
   let antiCheatAcknowledged = false;
   if (compatibility.hasAntiCheat(dir, target.path)) {
-    const answer = await dialog.showMessageBox(win, antiCheatWarning.dialogOptions(loadState().lang, dir, target.path));
+    const answer = previewFs.active() ? { response: 1 } : await dialog.showMessageBox(win, antiCheatWarning.dialogOptions(loadState().lang, dir, target.path));
     if (answer.response !== 1) return { ok: false, cancelled: true };
     antiCheatAcknowledged = true;
     send({ code: 'antiCheatRiskAccepted', params: {} });
@@ -1843,7 +1879,7 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi) =>
     // is their decision to make, with both facts in front of them.
     const oldCard = gpu ? !guards.gpuModelSupported(gpu) : false;
     const oldDriver = gpu ? !guards.driverSupported(gpu) : false;
-    const confirmation = await dialog.showMessageBox(win, {
+    const confirmation = previewFs.active() ? { response: 0 } : await dialog.showMessageBox(win, {
       type: 'warning', title: 'OptiScaler DLSS-NR',
       message: featureText('optiConfirm'),
       detail: [gpu ? gpu.map(g => `${g.name} — ${g.driver}`).join('\n') : featureText('errOptiHardware'),
@@ -1878,6 +1914,7 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi) =>
     for (const [bits, folder] of checks) {
       const missing = missingVCRuntime(bits, folder);
       if (missing.length) {
+        if (previewFs.active()) return { ok: false, code: 'runtimeRequiredHint', message: missing.join(', ') };
         const response = await dialog.showMessageBox(win, {
           type: 'warning', title: 'Microsoft Visual C++ Runtime',
           message: featureText('runtimeRequiredHint'),
@@ -1960,7 +1997,7 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi) =>
     // A game could have been launched while the component download ran.
     await guards.assertGameClosed(dir, target.path);
     // Preserve the previous snapshot before a repeat install changes it.
-    history().list([{ dir, name: gameName(dir) }], error => send({ code: 'historySaveWarning', params: { error: error.message } }));
+    if (!previewFs.active()) history().list([{ dir, name: gameName(dir) }], error => send({ code: 'historySaveWarning', params: { error: error.message } }));
     const manifest = await backends.install({
       gameDir: dir,
       exePath: target.path,
@@ -2018,13 +2055,13 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi) =>
     try { require('./src/game-overlay').cleanupMissing(overlayLibrary(), dir); } catch {}
     return { ok: false, code: err.code, message: err.message };
   }
-}));
+}, reviewToken)));
 
-ipcMain.handle('restore', (event, dir) => exclusiveMutation(async () => {
+ipcMain.handle('restore', (event, dir, reviewToken) => exclusiveMutation(() => reviews().run(dir, { kind: 'restore' }, async () => {
   let restoredManifest = null;
   const send = (e) => {
     if (e.code === 'restoreDone') restoredManifest = e.params;
-    event.sender.send('job', e);
+    if (!previewFs.active()) event.sender.send('job', e);
   };
   try {
     let old = null;
@@ -2034,14 +2071,14 @@ ipcMain.handle('restore', (event, dir) => exclusiveMutation(async () => {
     if (!old && !fs.existsSync(journal.pendingPath(dir))) return { ok: false, code: 'errNoBackup' };
     const exe = old ? journal.safePath(dir, old.game.exe) : null;
     await guards.assertGameClosed(dir, exe);
-    history().list([{ dir, name: gameName(dir) }], error => send({ code: 'historySaveWarning', params: { error: error.message } }));
+    if (!previewFs.active()) history().list([{ dir, name: gameName(dir) }], error => send({ code: 'historySaveWarning', params: { error: error.message } }));
     if (!await backends.restore(dir, send)) return { ok: false, code: 'errNoBackup' };
     saveOperation(dir, restoredManifest || {}, restoredManifest ? 'restore' : 'recovery', send);
     return { ok: true };
   } catch (err) {
     return { ok: false, code: err.code, message: err.message };
   }
-}));
+}, reviewToken)));
 
 // ---------- Enhanced Modules (DLSS 5 Neural Rendering + RTX 40 MFG + Diagnostics) ----------
 const neuralModels = require('./src/core/neural-models');
@@ -2148,7 +2185,7 @@ ipcMain.handle('enhanced-models', async (_event, profileOverride) => {
   }
 });
 
-ipcMain.handle('enhanced-import-model', async (_event, filePath, meta) => {
+ipcMain.handle('enhanced-import-model', (_event, filePath, meta) => exclusiveMutation(async () => {
   try {
     let targetPath = filePath;
     if (!targetPath) {
@@ -2161,6 +2198,7 @@ ipcMain.handle('enhanced-import-model', async (_event, filePath, meta) => {
       targetPath = res.filePaths[0];
     }
     const record = neuralModels.importNeuralModel(targetPath, app.getPath('userData'), meta || {});
+    await components().importPackage({component:'dlss-nr',version:record.version,files:{'nvngx_dlssnr.dll':record.filePath},source:'模型页导入'});
     const hw = await combinedManager.detectHardwareEnvironment();
     const state = loadState();
     const activeProfile = combinedManager.resolveHardwareProfile(state.hardwareProfile, hw.gpu.name);
@@ -2169,7 +2207,7 @@ ipcMain.handle('enhanced-import-model', async (_event, filePath, meta) => {
   } catch (err) {
     return { ok: false, code: err.code || 'errInvalidNeuralModel', message: err.message, details: err.details || null };
   }
-});
+}));
 
 ipcMain.handle('enhanced-status', async (_event, dir, profileOverride) => {
   if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) {
@@ -2187,14 +2225,14 @@ ipcMain.handle('enhanced-status', async (_event, dir, profileOverride) => {
   }
 });
 
-ipcMain.handle('enhanced-apply', (event, dir, config) => exclusiveMutation(async () => {
+ipcMain.handle('enhanced-apply', (event, dir, config, reviewToken) => exclusiveMutation(() => managedReview(dir, { kind: 'enhanced', config }, async () => {
   if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, message: '无效的游戏目录' };
-  const state = loadState();
+  const state = { ...loadState() };
   if (config && config.hardwareProfile && ['rtx40_laptop', 'rtx40_desktop', 'rtx50_desktop'].includes(config.hardwareProfile)) {
     state.hardwareProfile = config.hardwareProfile;
-    saveState(state);
+    if (!previewFs.active()) saveState(state);
   }
-  const send = (e) => event.sender.send('job', e);
+  const send = (e) => { if (!previewFs.active()) event.sender.send('job', e); };
   const scanForOverride = await scanGame(dir).catch(() => null);
   const chosenExe = scanForOverride?.chosen?.path;
   const result = await combinedManager.applyCombinedConfiguration(dir, {
@@ -2208,5 +2246,66 @@ ipcMain.handle('enhanced-apply', (event, dir, config) => exclusiveMutation(async
   const manifest = backends.readManifest(dir);
   if (manifest) saveOperation(dir, manifest, 'install', send);
   return result;
+}, reviewToken)));
+
+ipcMain.handle('component-inventory', async (_event, dir) => {
+  if (mutationBusy) return { ok: false, message: '安装操作进行中，请完成后再刷新组件清单。' };
+  try { return await reviews().inventory(dir); }
+  catch (error) { return { ok: false, message: error.message, code: error.code }; }
+});
+ipcMain.handle('library-components', (_event, dir) => exclusiveMutation(async () => {
+  const result=await components().list(dir);
+  result.updates=updates().status();
+  if(dir){result.inventory=await reviews().inventory(dir);result.rollback=backends.readManifest(dir)?.componentHistory?.at(-1)||null;}
+  return result;
+}));
+ipcMain.handle('library-select', (_event, dir, selection) => exclusiveMutation(()=>components().select(dir,selection)));
+ipcMain.handle('library-check', () => exclusiveMutation(()=>updates().check()));
+ipcMain.handle('library-download', (event, id) => exclusiveMutation(async()=>{await components().init();updates().onProgress=p=>{if(!event.sender.isDestroyed())event.sender.send('library-progress',p);};try{return await updates().download(id);}finally{updates().onProgress=()=>{};}}));
+ipcMain.handle('library-cancel',()=>updates().cancel());
+ipcMain.handle('library-apply', (_event,dir,token) => exclusiveMutation(async()=>{
+  const library=components(),selection=library.profile(dir).selected;
+  if(!Object.keys(selection).length)throw Error('请先选择组件版本');
+  return reviews().run(dir,{kind:'component-update',selection},()=>library.apply(dir,selection,{strict:true}),token);
+}));
+ipcMain.handle('library-rollback', (_event,dir,id,token) => exclusiveMutation(async()=>{
+  const result=await reviews().run(dir,{kind:'component-rollback',id},()=>components().rollback(dir,id),token);
+  if(result.ok&&!result.preview){try{await components().select(dir,result.selection);}catch(e){result.recordWarning='组件已回滚，但版本选择未保存：'+e.message;}}
+  return result;
+}));
+ipcMain.handle('library-import', (_event, component) => exclusiveMutation(async()=>{
+  const definition=require('./src/core/component-definitions').DEFINITIONS[component];
+  if(!definition||definition.pinned||definition.internal)throw Error('这个内部组件由程序维护');
+  const chosen=await dialog.showOpenDialog({title:'导入组件文件或完整 ZIP 包',properties:['openFile'],filters:[{name:'组件文件',extensions:['zip','dll','addon64','addon32']}]});
+  if(chosen.canceled)return{ok:false,cancelled:true};
+  const file=chosen.filePaths[0],library=components();await library.init();
+  const staging=require('./src/core/component-library').safe(library.root,'imports/'+crypto.randomUUID());
+  let files;
+  try{
+    if(/\.zip$/i.test(file)){await fs.promises.mkdir(staging,{recursive:true});await require('./src/core/component-updates').unpack(file,staging);files=await require('./src/core/component-updates').mapFiles(staging,component);}
+    else {if(definition.files.length!==1)throw Error('该组件需要完整 ZIP 配套包');files={[definition.files[0]]:file};}
+    const p=await library.importPackage({component,files,source:'手动导入',trustedAdapter:false});return{ok:true,package:p};
+  }finally{if(fs.existsSync(staging))await fs.promises.rm(staging,{recursive:true,force:true});}
+}));
+let runtimeDetector;
+ipcMain.handle('component-runtime', async (_event, dir) => {
+  try {
+    runtimeDetector ||= new (require('./src/core/runtime-status').RuntimeStatus)();
+    return await runtimeDetector.inspect(dir);
+  } catch (error) { return { ok: false, message: error.message }; }
+});
+ipcMain.handle('component-lock', (_event, dir, enabled) => exclusiveMutation(async () => {
+  if (typeof enabled !== 'boolean') throw new Error('无效的锁定状态');
+  return reviews().setLock(dir, enabled);
+}));
+ipcMain.handle('component-prepare', (_event, dependencies) => exclusiveMutation(async () => {
+  if (!Array.isArray(dependencies) || dependencies.length > 4) throw new Error('无效的缓存准备请求');
+  for (const dependency of new Set(dependencies)) {
+    if (dependency === 'dgvoodoo') await ensureDgVoodoo(app.getPath('userData'));
+    else if (dependency === 'lumenite') await ensureLumenite(app.getPath('userData'));
+    else if (typeof dependency === 'string' && dependency.startsWith('optiscaler:') && optiscaler.RELEASES.some(r => r.version === dependency.slice(11))) await optiscaler.ensureOptiScaler(app.getPath('userData'), dependency.slice(11));
+    else throw new Error('未知的缓存组件');
+  }
+  return { ok: true };
 }));
 

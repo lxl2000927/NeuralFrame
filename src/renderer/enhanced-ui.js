@@ -4,9 +4,9 @@
  * DLSS 5 Swapper Enhanced — 前端三大核心模块界面控制器 (Phase 5)
  *
  * 包含三个核心功能区域：
- * 1. Neural Rendering Manager (模块 A)
- * 2. Multi Frame Generation Manager (模块 B)
- * 3. Compatibility & Diagnostics (模块 C：协同运行与 7 项诊断)
+ * 1. 神经渲染管理 (模块 A)
+ * 2. 多帧生成管理 (模块 B)
+ * 3. 兼容性与诊断 (模块 C：协同运行与 7 项诊断)
  *
  * 状态严格区分：
  * - 已验证可用 (verified)
@@ -16,6 +16,11 @@
  */
 
 (function initEnhancedUi(root) {
+  const displayMode = mode => ({off:'关闭',legacy:'旧版模型',latest_compatible:'本地兼容模型',oct2026_faster:'本地兼容模型',fixed:'固定倍率',dynamic:'动态倍率',x2:'2 倍',x3:'3 倍',x4:'4 倍'})[mode] || mode;
+  const localError = (message, code) => {
+    if (code && root.i18n?.S?.zh?.[code]) return root.i18n.t(code);
+    return String(message || '').replace(/^Close the game and helper first:/, '请先关闭游戏及其辅助进程：');
+  };
   const escHtml = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({
     '&': '&amp;',
     '<': '&lt;',
@@ -30,7 +35,7 @@
       label: '💻 笔记本 40 系列 (默认黄金档)',
       tag: '原版黄金参数 · 防黑屏已加固',
       desc: 'RTX 4050 / 4060 / 4070 / 4080 / 4090 Laptop · 杀手3实测 150~164 FPS 黄金参数 + 动态多帧生成防黑屏',
-      dlssSummary: '【DLSS 5 神经渲染策略】保持黄金单通渲染 (NRPasses=1) + 超分后完整分辨率 (NRHookPoint=0, NRResolutionScale=1, 预设#2 + 自然风格) + 黄金 DLSS 310.9.1.0 超分底座，关闭多通道遮罩与 UI 校正以杜绝画面异常。',
+      dlssSummary: '【DLSS 5 神经渲染模板】超分后处理，75% 神经渲染工作分辨率、1 次推理、4 个工作集；采用基准运行库。关闭自动遮罩与 UI 校正，具体画面和性能需在当前游戏中验证。',
       mfgSummary: '【MFG 多帧生成策略】默认启用 NVIDIA 动态多帧生成 (DynamicMFG=1) + 原生输入模式 (QualityGuardMode=0) + DllMain 抢先挂钩，彻底解决开启补帧黑屏问题。'
     },
     {
@@ -47,7 +52,7 @@
       tag: 'Blackwell 原生硬件加速',
       desc: 'RTX 5070 / 5070Ti / 5080 / 5090D · 原生 sm_120 (23核) 直通 + 零冲突原生硬件 MFG x2/x3/x4',
       dlssSummary: '【DLSS 5 神经渲染策略】直通 CUDA sm_120 (23 个 Blackwell 原生核函数) + 100% 满血工作分辨率 (NRResolutionScale=1) + 8 表面缓冲池 + 2026-10 极速运行时管线。',
-      mfgSummary: '【MFG 多帧生成策略】自动旁路所有 40 系二进制补丁 (TemporalFix=0, BlackwellFrameworkKernels=0, ForceFlipMeteringOff=0)，零冲突直通第 5 代 Tensor 硬件 Flip Metering + Dynamic MFG。'
+      mfgSummary: '【MFG 多帧生成策略】自动旁路所有 40 系二进制补丁 (TemporalFix=0, BlackwellFrameworkKernels=0, ForceFlipMeteringOff=0)，零冲突直通第 5 代 Tensor 硬件帧呈现计量 + 动态多帧生成。'
     }
   ];
 
@@ -76,7 +81,7 @@
         hardwareProfile: statusProfile,
         neuralMode: currentNrMode,
         neuralModelId: currentModelId,
-        runtimeStack: statusProfile === 'rtx50_desktop' ? 'oct2026-310.9.16' : 'baseline-310.9.1',
+        runtimeStack: status?.neural?.configuredRuntimeStack || (status?.neural?.installed && status.neural.runtimeStack) || (statusProfile === 'rtx50_desktop' ? 'oct2026-310.9.16' : 'baseline-310.9.1'),
         mfgMode: currentMfgMode,
         hdrCompatibility: false
       });
@@ -84,6 +89,8 @@
     const d = draftState.get(dir);
     if (!d.hardwareProfile) d.hardwareProfile = statusProfile;
     if (!d.neuralModelId) d.neuralModelId = status?.neural?.currentModel?.id || '310.8.SF-v2';
+    if (d.neuralModelId === '310.9.16-oct2026') d.neuralModelId = '310.8.SF-v2';
+    if (d.neuralMode === 'oct2026_faster') d.neuralMode = 'latest_compatible';
     return d;
   }
 
@@ -132,7 +139,7 @@
         title: '1. 模块 DLL 冲突检查',
         status: hasErrConflict ? 'incompatible' : (conflicts.length ? 'experimental' : 'verified'),
         badge: hasErrConflict ? '不兼容' : (conflicts.length ? '实验性支持' : '已验证可用'),
-        detail: conflicts.length ? conflicts.map((c) => c.message).join(' ') : '无 DLL 命名或 Hook 冲突'
+        detail: conflicts.length ? conflicts.map((c) => c.message).join(' ') : '无 DLL 命名或 挂钩冲突'
       },
       {
         title: '2. Streamline / NGX 注入链协同',
@@ -144,13 +151,13 @@
         title: '3. 运动矢量与补帧质量保护',
         status: coExec.motionVectorCheck?.mitigationActive ? 'verified' : 'untested',
         badge: coExec.motionVectorCheck?.mitigationActive ? '已验证可用' : '尚未测试',
-        detail: coExec.motionVectorCheck?.message || 'Boundary Artifact Mitigation 保护边缘光流'
+        detail: coExec.motionVectorCheck?.message || '边界伪影缓解 保护边缘光流'
       },
       {
         title: '4. HUD / HDR 闪烁与拖影抑制',
         status: coExec.hudFlickerCheck?.hdrGameNeedsGuard ? 'experimental' : 'verified',
         badge: coExec.hudFlickerCheck?.hdrGameNeedsGuard ? '实验性支持' : '已验证可用',
-        detail: coExec.hudFlickerCheck?.message || 'Native HUD/UI 标记直通正常'
+        detail: coExec.hudFlickerCheck?.message || '原生 HUD/UI 标记直通正常'
       },
       {
         title: vramCheckTitle,
@@ -162,7 +169,7 @@
         title: '6. Reflex 帧同步与延迟控制',
         status: coExec.reflexCheck?.ok ? 'verified' : 'experimental',
         badge: coExec.reflexCheck?.ok ? '已验证可用' : '实验性支持',
-        detail: coExec.reflexCheck?.message || 'sl.reflex.dll 与硬件 Flip Metering 正常'
+        detail: coExec.reflexCheck?.message || 'sl.reflex.dll 与硬件帧呈现计量 正常'
       },
       {
         title: '7. 游戏退出后完整恢复原状能力',
@@ -193,50 +200,42 @@
     };
     const checks = buildCoExecCheckItems(coExec, activeProfileId);
 
-    // 1. Neural Rendering Manager 状态判定
+    // 1. 神经渲染管理 状态判定
     const nrBadge = renderStatusBadge(nr.overallStatus, nr.overallBadge);
 
     const currentModelText = nr.currentModel
-      ? `${nr.currentModel.name} (${nr.currentModel.version || '310.8.0.0'})`
-      : '未安装 (Off)';
+      ? `${nr.currentModel.name || nr.currentModel.id || '未识别模型'} · 文件版本 ${nr.currentModel.version || '未知'}`
+      : '未安装';
+    const latestModelText = nr.latestCompatibleModel
+      ? `${nr.latestCompatibleModel.name} · 文件版本 ${nr.latestCompatibleModel.version}`
+      : '暂无可用的本地兼容模型';
+    const runtimeVerText = nr.runtimeVersion ? `DLSS SR ${nr.runtimeVersion}` : '未检测到 DLSS SR 运行库';
+    const gpuCompatText = nr.gpuCompatibility
+      ? `${nr.gpuCompatibility.badge} · ${nr.gpuCompatibility.reason}`
+      : '尚未检查 GPU 架构';
+    const modelChoices = nr.availableModels || modelsInfo?.models || [];
+    const modelOptions = modelChoices.map(m => `<option value="${escHtml(m.id)}" ${draft.neuralModelId === m.id ? 'selected' : ''} ${!m.availableOnDisk || m.compatStatus === 'incompatible' ? 'disabled' : ''}>${escHtml(m.name)} · ${escHtml(m.version || '版本未知')} · ${m.availableOnDisk ? '本地可用' : '未导入'}</option>`).join('');
+    const legacyAvailable = modelChoices.some(m => m.availableOnDisk && m.role === 'legacy' && m.compatStatus !== 'incompatible');
 
-    const latestModelText = nr.latestModel
-      ? `${nr.latestModel.name} · v${nr.latestModel.version}`
-      : '310.8.SF-v2 (Oct 2026)';
-
-    const runtimeVerText = nr.dlssVersion
-      ? `DLSS ${nr.dlssVersion} / SL ${nr.streamlineVersion || '2.14.16.0'} / Feeder 1.19.0`
-      : '待部署 (内置 Oct 2026 DLSS 310.9.16 + SL 2.14.16 + Feeder 1.19.0)';
-
-    const targetArchLabel = activeProfileId === 'rtx50_desktop'
-      ? 'CUDA sm_120 (Blackwell 23 核原生直通)'
-      : `CUDA sm_89 (${activeProfileId === 'rtx40_desktop' ? 'Ada 桌面满血 15 核' : 'Ada 笔记本黄金 15 核'})`;
-
-    const gpuCompatText = `${status.hardware?.gpu?.name || 'RTX 4070 Laptop GPU'} · 目标档位：${activeProfileMeta.label} (${targetArchLabel}) — 已验证可用`;
-
-    // 2. Multi Frame Generation Manager 状态判定
+    // 2. 多帧生成管理 状态判定
     const mfgBadgeHtml = renderStatusBadge(mfg.status, mfg.statusBadge);
 
-    const effectiveMultiplierText = mfg.runtimeVerification?.verifiedActive
-      ? `${mfg.runtimeVerification.effectiveMultiplier}x (运行时日志已确认生效)`
-      : mfg.currentConfig?.installed
-        ? `已配置 ${mfg.currentConfig.mode} (${mfg.currentConfig.multiplier}x) · 实际生效倍率：${activeProfileId === 'rtx50_desktop' ? 'Blackwell 原生硬件支持' : '尚未测试 (需运行游戏产生日志后验证)'}`
-        : '未激活 (1x 原始帧输出)';
+    const effectiveMultiplierText = '请使用顶部运行时检测；配置倍率和兼容性评估不代表已生效。';
 
     const dlssgVerText = mfg.dlssg?.present
       ? `${mfg.dlssg.version} (${mfg.dlssg.valid ? '原生 NVIDIA NGX DLSS-G' : '非原生 DLL'})`
       : '未部署 (应用时自动部署 310.9.16.0)';
 
     const mfgSupportedModesText = activeProfileId === 'rtx50_desktop'
-      ? 'Off / x2 (原生支持) / x3 (Blackwell 原生硬件支持) / x4 (Blackwell 原生硬件支持)'
+      ? '关闭 / x2 (原生支持) / x3 (Blackwell 原生硬件支持) / x4 (Blackwell 原生硬件支持)'
       : activeProfileId === 'rtx40_desktop'
-        ? 'Off / x2 (原生支持) / x3 (40系桌面低延迟解锁) / x4 (40系桌面低延迟解锁)'
-        : 'Off / x2 (原生支持) / x3 (实验性支持) / x4 (实验性支持)';
+        ? '关闭 / x2 (原生支持) / x3 (40系桌面低延迟解锁) / x4 (40系桌面低延迟解锁)'
+        : '关闭 / x2 (原生支持) / x3 (实验性支持) / x4 (实验性支持)';
 
     const mfgX3Sub = activeProfileId === 'rtx50_desktop' ? '3帧输出 (原生支持)' : (activeProfileId === 'rtx40_desktop' ? '3帧输出 (桌面满血)' : '3帧输出 (实验性)');
     const mfgX4Sub = activeProfileId === 'rtx50_desktop' ? '4帧输出 (原生支持)' : (activeProfileId === 'rtx40_desktop' ? '4帧输出 (桌面满血)' : '4帧输出 (实验性)');
 
-    // 3. Compatibility & Diagnostics 状态判定
+    // 3. 兼容性与诊断 状态判定
     const diagBadgeHtml = renderStatusBadge(diag.combinedStatus, diag.combinedBadge);
 
     const vramBoxTitle = activeProfileId === 'rtx50_desktop'
@@ -266,30 +265,30 @@
           </div>
           <div class="enh-profile-summary">
             <div><b>当前已选档位：${escHtml(activeProfileMeta.label)}</b></div>
+            <p class="hint enh-preset-scope">通用硬件模板：并非每款游戏都有专用调校。应用只写入当前选中的游戏；重新应用会将模板涵盖的参数写回默认值，可能覆盖游戏内的手动调整。</p>
             <small>${escHtml(activeProfileMeta.dlssSummary)}</small>
             <small>${escHtml(activeProfileMeta.mfgSummary)}</small>
           </div>
         </section>
 
         <div class="enh-grid">
-          <!-- ==================== 模块 A: Neural Rendering Manager ==================== -->
-          <section class="enh-card" aria-label="Neural Rendering Manager">
+          <!-- ==================== 模块 A: 神经渲染管理 ==================== -->
+          <section class="enh-card" aria-label="神经渲染管理">
             <div class="enh-card-head">
               <div class="enh-card-title">
-                <h4>Neural Rendering Manager <small style="font-weight:500;color:var(--muted)">模块 A · DLSS 5 神经渲染</small></h4>
-                <p>管理 DLSS 5 神经渲染模型 (nvngx_dlssnr.dll)、CUDA SM 架构校验与 2026-10 运行时栈（笔记本40 / 桌面40 / 桌面50 全兼容）</p>
+                <h4>神经渲染管理 <small style="font-weight:500;color:var(--muted)">模块 A · DLSS 5 神经渲染</small></h4>
+                <p>分别管理神经渲染模型文件与运行库组合。文件安装、架构匹配和游戏内生效是不同状态。</p>
               </div>
               ${nrBadge}
             </div>
 
             <div class="enh-kv-list">
-              <div class="enh-kv-row"><span class="k">当前硬件档位 (Hardware Profile)</span><span class="v">${escHtml(activeProfileMeta.label)}</span></div>
-              <div class="enh-kv-row"><span class="k">当前模型 (Current Model)</span><span class="v">${escHtml(currentModelText)}</span></div>
-              <div class="enh-kv-row"><span class="k">最新模型 (Latest Model)</span><span class="v">${escHtml(latestModelText)}</span></div>
-              <div class="enh-kv-row"><span class="k">2026-10 官方模型追踪</span><span class="v">v310.9.16 (118M Faster AI Model · 全档位已内置兼容)</span></div>
-              <div class="enh-kv-row"><span class="k">运行时版本 (Runtime Version)</span><span class="v mono">${escHtml(runtimeVerText)}</span></div>
-              <div class="enh-kv-row"><span class="k">GPU 兼容性 (GPU Compatibility)</span><span class="v">${escHtml(gpuCompatText)}</span></div>
-              <div class="enh-kv-row"><span class="k">安装状态 (Install Status)</span><span class="v">${nr.installed ? `已安装 (${escHtml(nr.mode)})` : '未安装'}</span></div>
+              <div class="enh-kv-row"><span class="k">当前硬件档位</span><span class="v">${escHtml(activeProfileMeta.label)}</span></div>
+              <div class="enh-kv-row"><span class="k">当前模型 </span><span class="v">${escHtml(currentModelText)}</span></div>
+              <div class="enh-kv-row"><span class="k">本地推荐模型</span><span class="v">${escHtml(latestModelText)}</span></div>
+              <div class="enh-kv-row"><span class="k">已检测 SR 版本</span><span class="v mono">${escHtml(runtimeVerText)}</span></div>
+              <div class="enh-kv-row"><span class="k">GPU 兼容性 </span><span class="v">${escHtml(gpuCompatText)}</span></div>
+              <div class="enh-kv-row"><span class="k">安装状态 </span><span class="v">${nr.installed ? `已安装 (${escHtml(displayMode(nr.mode))})` : '未安装'}</span></div>
             </div>
 
             <div class="enh-control-group">
@@ -297,39 +296,38 @@
                 <span>DLSS 5 神经渲染模式选择</span>
                 <span>选中项仅代表待应用配置</span>
               </div>
-              <div class="enh-seg" role="group" aria-label="Neural Rendering Mode">
+              <div class="enh-seg" role="group" aria-label="神经渲染模式">
                 <button type="button" class="enh-seg-btn ${draft.neuralMode === 'off' ? 'active' : ''}" data-nr-mode="off">
-                  <span>Off</span><small>关闭神经渲染</small>
+                  <span>关闭</span><small>关闭神经渲染</small>
                 </button>
-                <button type="button" class="enh-seg-btn ${draft.neuralMode === 'legacy' ? 'active' : ''}" data-nr-mode="legacy">
-                  <span>Legacy Model</span><small>310.8.0-RTX40 基线</small>
+                <button type="button" class="enh-seg-btn ${draft.neuralMode === 'legacy' ? 'active' : ''}" data-nr-mode="legacy" ${legacyAvailable ? '' : 'disabled title="请先导入旧版模型文件"'}>
+                  <span>旧版模型</span><small>${legacyAvailable ? '本地已导入' : '需先导入文件'}</small>
                 </button>
                 <button type="button" class="enh-seg-btn ${draft.neuralMode === 'latest_compatible' ? 'active' : ''}" data-nr-mode="latest_compatible">
-                  <span>Latest Compatible</span><small>最新全兼容模型</small>
+                  <span>本地兼容模型</span><small>不自动联网更新</small>
                 </button>
               </div>
             </div>
 
             <div class="enh-select-row">
               <label>
-                <span>选择神经渲染模型 (全系 40/50 显卡 100% 兼容)</span>
+                <span>神经渲染模型文件</span>
                 <select data-enh-field="neuralModelId">
-                  <option value="310.8.SF-v2" ${draft.neuralModelId === '310.8.SF-v2' ? 'selected' : ''}>310.8.SF-v2 全架构满血画质模型 (sm_75/86/89/120 · 柔光抗闪烁 · 推荐)</option>
-                  <option value="310.9.16-oct2026" ${draft.neuralModelId === '310.9.16-oct2026' ? 'selected' : ''}>310.9.16-oct2026 极速模型管线 (2026-10 118M Faster AI + SL 2.14.16 · 全兼容)</option>
-                  <option value="310.8.0-RTX40" ${draft.neuralModelId === '310.8.0-RTX40' ? 'selected' : ''}>310.8.0-RTX40 官方首发原版基线模型 (sm_75/86/89/120 · 全兼容)</option>
+                  ${!modelChoices.some(m => m.id === draft.neuralModelId) ? '<option value="" selected disabled>所选模型不可用，请导入或重新选择</option>' : ''}
+                  ${modelOptions}
                 </select>
               </label>
               <label>
-                <span>运行时栈版本 (Streamline / DLSS / Feeder)</span>
+                <span>运行库组合 (独立于模型文件)</span>
                 <select data-enh-field="runtimeStack">
-                  <option value="baseline-310.9.1" ${draft.runtimeStack === 'baseline-310.9.1' ? 'selected' : ''}>v2.2.9 黄金基线运行时 (DLSS 310.9.1.0 超分底座 + Dynamic MFG 310.9.16 · 推荐默认)</option>
-                  <option value="oct2026-310.9.16" ${draft.runtimeStack === 'oct2026-310.9.16' ? 'selected' : ''}>2026-10 极速运行时 (DLSS 310.9.16 + SL 2.14.16 + Feeder 1.19.0 · 50系原生)</option>
+                  <option value="baseline-310.9.1" ${draft.runtimeStack === 'baseline-310.9.1' ? 'selected' : ''}>基准组合：DLSS SR 310.9.1 / Streamline 2.13 / Feeder 1.17</option>
+                  <option value="oct2026-310.9.16" ${draft.runtimeStack === 'oct2026-310.9.16' ? 'selected' : ''}>可选组合：DLSS SR 310.9.16 / Streamline 2.14.16 / Feeder 1.19</option>
                 </select>
               </label>
             </div>
 
             <div class="enh-note">
-              <b>档位模型说明</b>：内置模型均同时包含 <code>sm_89</code> (40系笔记本/桌面卡 15核) 与 <code>sm_120</code> (50系桌面卡 23核) 原生张量核指令集。${escHtml(activeProfileMeta.dlssSummary)}
+              <b>模型与运行库</b>：旧选项“310.9.16-oct2026”与“310.8.SF-v2”共用同一文件，现已合并。切换运行库组合不会把模型升级成 310.9.16，也不保证提速。模型按文件哈希识别；实际生效请看运行时检测。
             </div>
 
             <div class="enh-actions-single">
@@ -338,33 +336,33 @@
             </div>
           </section>
 
-          <!-- ==================== 模块 B: Multi Frame Generation Manager ==================== -->
-          <section class="enh-card" aria-label="Multi Frame Generation Manager">
+          <!-- ==================== 模块 B: 多帧生成管理 ==================== -->
+          <section class="enh-card" aria-label="多帧生成管理">
             <div class="enh-card-head">
               <div class="enh-card-title">
-                <h4>Multi Frame Generation Manager <small style="font-weight:500;color:var(--muted)">模块 B · 全系 40/50 显卡 x3/x4 多帧生成</small></h4>
+                <h4>多帧生成管理 <small style="font-weight:500;color:var(--muted)">模块 B · 全系 40/50 显卡 x3/x4 多帧生成</small></h4>
                 <p>全面兼容笔记本 40 系列、40 系桌面卡与 50 系列桌面卡的原生 NVIDIA DLSS-G 多帧生成控制器</p>
               </div>
               ${mfgBadgeHtml}
             </div>
 
             <div class="enh-kv-list">
-              <div class="enh-kv-row"><span class="k">当前补帧档位 (MFG Profile)</span><span class="v">${escHtml(activeProfileMeta.label)}</span></div>
-              <div class="enh-kv-row"><span class="k">当前显卡 (Current GPU)</span><span class="v">${escHtml(mfg.gpuSupport?.gpuName || 'NVIDIA GeForce RTX 4070 Laptop GPU')}</span></div>
-              <div class="enh-kv-row"><span class="k">DLSS-G 版本 (DLSS-G Version)</span><span class="v mono">${escHtml(dlssgVerText)}</span></div>
-              <div class="enh-kv-row"><span class="k">支持模式 (Supported Modes)</span><span class="v">${escHtml(mfgSupportedModesText)}</span></div>
-              <div class="enh-kv-row"><span class="k">实际生效倍率 (Effective Multiplier)</span><span class="v">${escHtml(effectiveMultiplierText)}</span></div>
-              <div class="enh-kv-row"><span class="k">当前游戏兼容性 (Game Compatibility)</span><span class="v">${escHtml(mfg.knownGame ? `${mfg.knownGame.title} (${mfg.knownGame.notes})` : '标准 DirectX 12 游戏 (支持 Streamline DLSS-G 注入)')}</span></div>
+              <div class="enh-kv-row"><span class="k">当前补帧档位 </span><span class="v">${escHtml(activeProfileMeta.label)}</span></div>
+              <div class="enh-kv-row"><span class="k">当前显卡 </span><span class="v">${escHtml(mfg.gpuSupport?.gpuName || 'NVIDIA GeForce RTX 4070 Laptop GPU')}</span></div>
+              <div class="enh-kv-row"><span class="k">DLSS-G 版本 </span><span class="v mono">${escHtml(dlssgVerText)}</span></div>
+              <div class="enh-kv-row"><span class="k">支持模式 </span><span class="v">${escHtml(mfgSupportedModesText)}</span></div>
+              <div class="enh-kv-row"><span class="k">实际生效倍率 </span><span class="v" data-runtime-mfg>${escHtml(effectiveMultiplierText)}</span></div>
+              <div class="enh-kv-row"><span class="k">当前游戏兼容性 </span><span class="v">${escHtml(mfg.knownGame ? `${mfg.knownGame.title} (${mfg.knownGame.notes})` : '未收录游戏专用兼容说明；请以 API 检测和运行时结果为准。')}</span></div>
             </div>
 
             <div class="enh-control-group">
               <div class="enh-control-label">
-                <span>Multi Frame Generation 补帧倍率选择</span>
+                <span>多帧生成倍率选择</span>
                 <span>${activeProfileId === 'rtx50_desktop' ? '50系桌面卡原生硬件直通' : (activeProfileId === 'rtx40_desktop' ? '40系桌面卡 V3 高锐度 + 低延迟护栏' : '笔记本 40 系列黄金配置')}</span>
               </div>
-              <div class="enh-seg enh-seg-4" role="group" aria-label="Multi Frame Generation Mode">
+              <div class="enh-seg enh-seg-4" role="group" aria-label="多帧生成模式">
                 <button type="button" class="enh-seg-btn ${draft.mfgMode === 'off' ? 'active' : ''}" data-mfg-mode="off">
-                  <span>Off</span><small>关闭补帧</small>
+                  <span>关闭</span><small>关闭补帧</small>
                 </button>
                 <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x2' ? 'active' : ''}" data-mfg-mode="x2">
                   <span>x2</span><small>标准 FG (已验证)</small>
@@ -383,7 +381,7 @@
                 <span>帧生成输入源策略 (QualityGuardMode)</span>
                 <select data-enh-field="hdrCompatibility">
                   <option value="false" ${draft.hdrCompatibility === false ? 'selected' : ''}>原生输入模式 (QualityGuardMode=0 · 推荐绝大多数游戏 · 防止黑屏)</option>
-                  <option value="true" ${draft.hdrCompatibility !== false ? 'selected' : ''}>HDR UI 保护模式 (QualityGuardMode=2 · 仅限开启 HDR 的特定游戏)</option>
+                  <option value="true" ${draft.hdrCompatibility !== false ? 'selected' : ''}>HDR 界面保护模式 (QualityGuardMode=2 · 仅限开启 HDR 的特定游戏)</option>
                 </select>
               </label>
             </div>
@@ -393,30 +391,30 @@
             </div>
 
             <div class="enh-actions-single">
-              <button type="button" class="enh-btn single-load" data-enh-act="apply-mfg">🎯 单独加载 MFG 多帧生成 (${escHtml(draft.mfgMode.toUpperCase())})</button>
+              <button type="button" class="enh-btn single-load" data-enh-act="apply-mfg">🎯 单独加载 MFG 多帧生成 (${escHtml(displayMode(draft.mfgMode))})</button>
             </div>
           </section>
 
-          <!-- ==================== 模块 C: Compatibility & Diagnostics ==================== -->
-          <section class="enh-card enh-card-full" aria-label="Compatibility & Diagnostics">
+          <!-- ==================== 模块 C: 兼容性与诊断 ==================== -->
+          <section class="enh-card enh-card-full" aria-label="兼容性与诊断">
             <div class="enh-card-head">
               <div class="enh-card-title">
-                <h4>Compatibility & Diagnostics <small style="font-weight:500;color:var(--muted)">模块 C · DLSS 5 + MFG 协同运行与诊断</small></h4>
-                <p>独立控制 Neural Rendering 与 Multi Frame Generation 同时运行，实时检查 7 项底层兼容性指标与目标显卡显存预算</p>
+                <h4>兼容性与诊断 <small style="font-weight:500;color:var(--muted)">模块 C · DLSS 5 + MFG 协同运行与诊断</small></h4>
+                <p>独立控制 神经渲染与多帧生成 同时运行，实时检查 7 项底层兼容性指标与目标显卡显存预算</p>
               </div>
               ${diagBadgeHtml}
             </div>
 
             <div class="enh-kv-list">
-              <div class="enh-kv-row"><span class="k">游戏名称 (Game Name)</span><span class="v">${escHtml(diag.gameName || '未选择游戏')}</span></div>
-              <div class="enh-kv-row"><span class="k">生效硬件档位 (Active Profile)</span><span class="v">${escHtml(activeProfileMeta.label)}</span></div>
-              <div class="enh-kv-row"><span class="k">图形 API (Graphics API)</span><span class="v">${escHtml(diag.graphicsApi || 'DirectX 12')} (${status.bitness || 64}-bit)</span></div>
-              <div class="enh-kv-row"><span class="k">神经渲染状态 (Neural Rendering Status)</span><span class="v">${escHtml(diag.neuralStatus || '尚未测试')}</span></div>
-              <div class="enh-kv-row"><span class="k">MFG 状态 (MFG Status)</span><span class="v">${escHtml(diag.mfgStatus || '尚未测试')}</span></div>
-              <div class="enh-kv-row"><span class="k">无 DLSS / 低版本 / 破解兼容 (DLSS & Crack Compat)</span><span class="v">${escHtml(coExec.dlssCompat?.summary || '已启用无 DLSS 光流注入、深层旧版 DLSS 自动升级与补丁防覆盖保护')}</span></div>
-              <div class="enh-kv-row"><span class="k">DLL 冲突 (DLL Conflicts)</span><span class="v">${diag.dllConflicts?.length ? escHtml(diag.dllConflicts.map((c) => c.message).join('；')) : '无冲突 (0 项冲突)'}</span></div>
-              <div class="enh-kv-row"><span class="k">错误日志 (Error Logs)</span><span class="v">${diag.errorLogs?.length ? escHtml(diag.errorLogs.join(' | ')) : '无错误记录 (0 项异常)'}</span></div>
-              <div class="enh-kv-row"><span class="k">备份状态 (Backup Status)</span><span class="v">${escHtml(diag.backupStatus || '原版纯净状态')}</span></div>
+              <div class="enh-kv-row"><span class="k">游戏名称</span><span class="v">${escHtml(diag.gameName || '未选择游戏')}</span></div>
+              <div class="enh-kv-row"><span class="k">生效硬件档位</span><span class="v">${escHtml(activeProfileMeta.label)}</span></div>
+              <div class="enh-kv-row"><span class="k">图形 API</span><span class="v">${escHtml(diag.graphicsApi || 'DirectX 12')} (${status.bitness || 64} 位)</span></div>
+              <div class="enh-kv-row"><span class="k">神经渲染状态</span><span class="v">${escHtml(diag.neuralStatus || '尚未测试')}</span></div>
+              <div class="enh-kv-row"><span class="k">多帧生成状态</span><span class="v">${escHtml(diag.mfgStatus || '尚未测试')}</span></div>
+              <div class="enh-kv-row"><span class="k">无 DLSS / 低版本 / 破解兼容 </span><span class="v">${escHtml(coExec.dlssCompat?.summary || '已启用无 DLSS 光流注入、深层旧版 DLSS 自动升级与补丁防覆盖保护')}</span></div>
+              <div class="enh-kv-row"><span class="k">DLL 冲突 </span><span class="v">${diag.dllConflicts?.length ? escHtml(diag.dllConflicts.map((c) => c.message).join('；')) : '无冲突 (0 项冲突)'}</span></div>
+              <div class="enh-kv-row"><span class="k">错误日志 </span><span class="v">${diag.errorLogs?.length ? escHtml(diag.errorLogs.join(' | ')) : '无错误记录 (0 项异常)'}</span></div>
+              <div class="enh-kv-row"><span class="k">备份状态 </span><span class="v">${escHtml(diag.backupStatus || '原版纯净状态')}</span></div>
             </div>
 
             <!-- 显存预算进度条 -->
@@ -444,7 +442,7 @@
             </div>
 
             <div class="enh-master-bar">
-              <button type="button" class="enh-btn master-load" data-enh-act="apply-combined">🚀 同时加载 DLSS 5 + MFG 多帧生成（推荐黄金组合 · ${escHtml(activeProfileMeta.label.split(' ')[1])} · MFG ${escHtml(draft.mfgMode.toUpperCase())}）</button>
+              <button type="button" class="enh-btn master-load" data-enh-act="apply-combined">🚀 同时加载 DLSS 5 + MFG 多帧生成（推荐黄金组合 · ${escHtml(activeProfileMeta.label.split(' ')[1])} · MFG ${escHtml(displayMode(draft.mfgMode))}）</button>
               <button type="button" class="enh-btn danger-restore" data-enh-act="restore-all" ${coExec.backupCheck?.hasManifest ? '' : 'disabled'}>⏪ 一键卸载并恢复游戏原始状态</button>
               <button type="button" class="enh-btn" data-enh-act="refresh-status">🔄 刷新状态</button>
             </div>
@@ -479,7 +477,7 @@
         if (container.dataset.enhPrefix === 'view') {
           await renderEnhancedView();
         } else {
-          await refreshContainer(container, dir, pickedProfile);
+          await refreshCurrent(pickedProfile);
         }
       };
     }
@@ -488,9 +486,9 @@
       btn.onclick = () => {
         draft.neuralMode = btn.dataset.nrMode;
         if (draft.neuralMode === 'legacy') {
-          draft.neuralModelId = '310.8.0-RTX40';
-        } else if (draft.neuralMode === 'latest_compatible' && draft.neuralModelId === '310.8.0-RTX40') {
-          draft.neuralModelId = '310.8.SF-v2';
+          draft.neuralModelId = status.neural?.availableModels?.find(m => m.availableOnDisk && m.role === 'legacy' && m.compatStatus !== 'incompatible')?.id || draft.neuralModelId;
+        } else if (draft.neuralMode === 'latest_compatible') {
+          draft.neuralModelId = status.neural?.latestCompatibleModel?.id || draft.neuralModelId;
         }
         onUpdated();
       };
@@ -510,7 +508,7 @@
           draft.hdrCompatibility = sel.value === 'true';
         } else if (field === 'neuralModelId') {
           draft.neuralModelId = sel.value;
-          if (sel.value === '310.8.0-RTX40') draft.neuralMode = 'legacy';
+          if (status.neural?.availableModels?.find(m => m.id === sel.value)?.role === 'legacy') draft.neuralMode = 'legacy';
           else if (draft.neuralMode === 'off' || draft.neuralMode === 'legacy') draft.neuralMode = 'latest_compatible';
         } else {
           draft[field] = sel.value;
@@ -519,6 +517,7 @@
       };
     }
 
+    const refreshCurrent = profile => container.dataset.enhGameDir === dir ? refreshContainer(container, dir, profile) : Promise.resolve();
     const runAction = async (payload) => {
       const buttons = container.querySelectorAll('button, select');
       buttons.forEach((b) => { b.disabled = true; });
@@ -531,10 +530,13 @@
         const msg = `Enhanced: 应用配置 [档位=${finalPayload.hardwareProfile}] (Neural=${finalPayload.neuralMode ?? '保持'}, Model=${finalPayload.neuralModelId}, MFG=${finalPayload.mfgMode ?? '保持'})`;
         if (typeof root.jobLog === 'function') root.jobLog(`--- ${msg} ---`);
         if (typeof root.log === 'function') root.log(`${msg} -> ${dir}`);
-        const res = await root.lab.enhancedApply(dir, finalPayload);
-        if (!res?.ok && res?.message) {
-          if (typeof root.jobLog === 'function') root.jobLog(`错误: ${res.message}`);
-          if (typeof root.log === 'function') root.log(`错误: ${res.message}`);
+        const res = await root.componentReview.run(token => root.lab.enhancedApply(dir, finalPayload, token));
+        if (res?.cancelled) return;
+        if (!res?.ok) {
+          const message = localError(res?.message || res?.code || '操作未完成', res?.code);
+          if (typeof root.jobLog === 'function') root.jobLog(`错误: ${message}`);
+          if (typeof root.log === 'function') root.log(`错误: ${message}`);
+          await root.ask({title:'操作未完成',body:message,confirm:'知道了',cancel:'关闭'});
         } else {
           if (res?.feederDeployed) {
             const feederMsg = `Enhanced: 已自动为老游戏离线部署 ${res.feederSummary || 'Feeder + 光流着色器'} + DLSS 5 神经渲染 + 全中文菜单。`;
@@ -551,7 +553,7 @@
       } catch (err) {
         if (typeof root.log === 'function') root.log(`Enhanced 操作异常: ${err.message}`);
       } finally {
-        await refreshContainer(container, dir, draft.hardwareProfile);
+        await refreshCurrent(draft.hardwareProfile);
       }
     };
 
@@ -576,9 +578,9 @@
             if (typeof root.log === 'function') {
               root.log(`已导入神经渲染模型: ${res.model.name} (${res.model.sha256.slice(0, 12)}…)`);
             }
-            await refreshContainer(container, dir, draft.hardwareProfile);
+            await refreshCurrent(draft.hardwareProfile);
           } else if (!res?.cancelled && res?.message) {
-            alert(`导入模型失败：${res.message}`);
+            alert(`导入模型失败：${localError(res.message, res.code)}`);
           }
         } finally {
           btnImportNr.disabled = false;
@@ -589,9 +591,10 @@
     const btnRestoreNr = container.querySelector('[data-enh-act="restore-nr"]');
     if (btnRestoreNr) {
       btnRestoreNr.onclick = async () => {
-        await root.lab.restoreGame(dir);
+        const res = await root.componentReview.run(token => root.lab.restoreGame(dir, token));
+        if (!res?.ok) { if (!res?.cancelled) await root.ask({title:'恢复未完成',body:res?.message || res?.code || '恢复失败',confirm:'知道了',cancel:'关闭'}); return; }
         draftState.delete(dir);
-        await refreshContainer(container, dir, draft.hardwareProfile);
+        await refreshCurrent(draft.hardwareProfile);
       };
     }
 
@@ -638,20 +641,25 @@
     const btnRestoreAll = container.querySelector('[data-enh-act="restore-all"]');
     if (btnRestoreAll) {
       btnRestoreAll.onclick = async () => {
-        await root.lab.restoreGame(dir);
+        const res = await root.componentReview.run(token => root.lab.restoreGame(dir, token));
+        if (!res?.ok) { if (!res?.cancelled) await root.ask({title:'恢复未完成',body:res?.message || res?.code || '恢复失败',confirm:'知道了',cancel:'关闭'}); return; }
         draftState.delete(dir);
-        await refreshContainer(container, dir, draft.hardwareProfile);
+        await refreshCurrent(draft.hardwareProfile);
       };
     }
   }
 
   async function refreshContainer(container, dir, profileOverride) {
     if (!container || !dir) return;
+    const request = String(Number(container.dataset.enhRequest || 0) + 1);
+    container.dataset.enhRequest = request;
+    container.dataset.enhGameDir = dir;
     const effectiveProfile = profileOverride || draftState.get(dir)?.hardwareProfile || activeGlobalProfile;
     const [status, modelsInfo] = await Promise.all([
       root.lab.enhancedStatus(dir, effectiveProfile),
       cachedModels ? Promise.resolve(cachedModels) : root.lab.enhancedModels(effectiveProfile)
     ]);
+    if (container.dataset.enhRequest !== request) return;
     cachedModels = modelsInfo;
     if (!status) return;
     if (status.hardwareProfile) {
@@ -660,6 +668,7 @@
     const render = () => {
       container.innerHTML = buildThreePanelsHtml(dir, status, modelsInfo, container.dataset.enhPrefix || 'sheet');
       wirePanelEvents(container, dir, status, render);
+      root.componentReview?.mount(container, dir);
     };
     render();
   }
@@ -733,19 +742,19 @@
 
     const modelsRows = (modelsInfo?.models || []).map((m) => `
       <tr>
-        <td><b>${escHtml(m.name)}</b><br><small style="color:var(--muted)">${escHtml(m.id)}</small></td>
-        <td><code>${escHtml(m.version)}</code> (${escHtml(m.releaseDate)})</td>
-        <td><code>${escHtml((m.architectures || []).join(', '))}</code></td>
-        <td>${renderStatusBadge(m.compatibility?.status || 'verified', m.compatibility?.badge || '已验证可用')}</td>
-        <td><code style="font-size:11px">${escHtml(m.sha256 ? m.sha256.slice(0, 16) + '…' : '内置运行时管线')}</code></td>
+        <td><b>${escHtml(m.name)}</b><br><small style="color:var(--muted)">${escHtml(m.sourceType || '来源未记录')}</small></td>
+        <td><code>${escHtml(m.version || '未知')}</code><br><small>${m.availableOnDisk ? '已读取本地文件' : '目录记录 · 未导入'}</small></td>
+        <td><code>${escHtml((m.architectures || []).map(a => 'sm_' + a).join(', '))}</code></td>
+        <td title="${escHtml(m.compatReason || '')}">${renderStatusBadge(m.availableOnDisk ? m.compatStatus : 'untested', m.availableOnDisk ? (m.compatBadge || '尚未检查') : '未导入')}</td>
+        <td><code title="${escHtml(m.sha256 || '')}" style="font-size:11px">${escHtml(m.sha256 ? m.sha256.slice(0, 16) + '…' : '未记录')}</code></td>
       </tr>
     `).join('');
 
     view.innerHTML = `
       <div class="section-head">
         <div>
-          <h3>DLSS 5 + 全系 40/50 显卡 MFG 增强控制中心 <span class="beta-tag" style="margin-left:8px">ENHANCED v2.3.1</span></h3>
-          <p class="hint">支持【笔记本 40 系列】【40 系桌面卡】【50 系列桌面卡】三档专属调优，全模型 100% 兼容且桌面显卡完整兼容 MFG 多帧生成</p>
+          <h3>DLSS 5 与多帧生成 <span class="beta-tag">独立分支 ${escHtml(root.appRelease?.version || '0.1.0')}</span></h3>
+          <p class="hint">选择游戏与硬件档位，分别管理神经渲染、帧生成和运行时组件。</p>
         </div>
       </div>
 
@@ -753,19 +762,19 @@
         <!-- 本机硬件实时检测横幅 -->
         <div class="enh-hw-banner" aria-label="Hardware Detection">
           <div class="enh-hw-item">
-            <span class="k">本机物理显卡 (Physical GPU)</span>
+            <span class="k">本机物理显卡</span>
             <span class="v">${escHtml(gpu.name)}</span>
-            <span class="s">当前生效档位：${escHtml(activeProfileMeta.label)} · ${gpu.vramTotalMB || 8188} MB VRAM</span>
+            <span class="s">当前生效档位：${escHtml(activeProfileMeta.label)} · ${gpu.vramTotalMB || 8188} MB 显存</span>
           </div>
           <div class="enh-hw-item">
             <span class="k">显卡驱动与功耗上限</span>
-            <span class="v">NVIDIA Driver ${escHtml(gpu.driver)}</span>
+            <span class="v">NVIDIA 驱动 ${escHtml(gpu.driver)}</span>
             <span class="s">TGP 默认上限 ${gpu.powerDefaultW || 100}W / 最大 ${gpu.powerMaxW || 140}W</span>
           </div>
           <div class="enh-hw-item">
             <span class="k">处理器与系统内存</span>
             <span class="v">${escHtml(hw.cpu || 'Intel Core i7-13650HX')}</span>
-            <span class="s">${hw.cpuCores || 20} 逻辑核心 · ${hw.ramGB || 16} GB RAM</span>
+            <span class="s">${hw.cpuCores || 20} 逻辑核心 · ${hw.ramGB || 16} GB 内存</span>
           </div>
           <div class="enh-hw-item">
             <span class="k">目标显示与帧率</span>
@@ -798,19 +807,19 @@
         <section class="enh-card">
           <div class="enh-card-head">
             <div class="enh-card-title">
-              <h4>DLSS 5 神经渲染模型版本数据库 (Model & CUDA Fatbin Database)</h4>
-              <p>所有内置模型均包含 sm_89 (40系笔记本/桌面卡) 与 sm_120 (50系桌面卡) CUDA Fatbin 核函数，全系 100% 兼容</p>
+              <h4>神经渲染模型文件库</h4>
+              <p>本地文件按 SHA-256 去重，版本读取自 DLL。未导入条目仅为历史目录记录；架构检查不代表游戏内生效。</p>
             </div>
-            ${renderStatusBadge('verified', '全档位哈希与 SM 校验已启用')}
+            ${renderStatusBadge('untested', '本地文件库 · 非在线更新源')}
           </div>
           <div class="enh-table-wrap">
             <table class="enh-table">
               <thead>
                 <tr>
-                  <th>模型名称 / ID</th>
-                  <th>版本与发布日期</th>
+                  <th>模型 / 来源</th>
+                  <th>文件版本 / 本地状态</th>
                   <th>包含 CUDA SM 架构</th>
-                  <th>当前档位 (${escHtml(activeProfileMeta.label.split(' ')[1])}) 兼容性</th>
+                  <th>架构检查</th>
                   <th>SHA-256 指纹</th>
                 </tr>
               </thead>
@@ -853,7 +862,7 @@
           cachedModels = await root.lab.enhancedModels(activeGlobalProfile);
           await renderEnhancedView();
         } else if (!res?.cancelled && res?.message) {
-          alert(`导入模型失败：${res.message}`);
+          alert(`导入模型失败：${localError(res.message, res.code)}`);
         }
       };
     }
@@ -937,6 +946,10 @@
 
   function showReleaseUpdateBanner(answer, { manual = false } = {}) {
     if (!answer) return;
+    if (answer.channel === 'independent' && answer.status === 'unconfigured') {
+      if (manual) root.ask({title:`独立分支 v${answer.current}`,body:answer.message,confirm:'知道了',cancel:'关闭'});
+      return;
+    }
     if (!answer.newer && !manual) return;
     const activeView = document.querySelector('.view.active') || document.getElementById('view-home');
     if (!activeView) return;
