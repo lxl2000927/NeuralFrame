@@ -1,6 +1,6 @@
 'use strict';
 
-// History is an append-only audit log, not a view of the current backup.
+// History normally appends operations; an explicit clear replaces only this log.
 // Backups change on reinstall/restore; the audit survives both and library resets.
 const fs = require('fs');
 const path = require('path');
@@ -72,20 +72,46 @@ function fromManifests(folders) {
 class HistoryStore {
   constructor(file) { this.file = file; this.pending = new Map(); }
 
-  saved() {
+  read() {
     let content;
     try { content = fs.readFileSync(this.file, 'utf8'); }
-    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    catch (error) { if (error.code === 'ENOENT') return { rows: [], clearedAt: 0 }; throw error; }
     const rows = new Map();
+    let clearedAt = 0;
     for (const line of content.split(/\r?\n/)) {
       if (!line.trim()) continue;
       try {
         const row = JSON.parse(line);
+        if (row.type === 'history-cleared' && validDate(row.date)) {
+          clearedAt = Math.max(clearedAt, Date.parse(row.date));
+          rows.clear();
+          continue;
+        }
         if (typeof row.id === 'string' && typeof row.dir === 'string' && path.isAbsolute(row.dir) &&
             validDate(row.date) && ['install', 'restore', 'recovery'].includes(row.action)) rows.set(row.id, row);
       } catch { /* A truncated final write must not lose older operations. */ }
     }
-    return [...rows.values()];
+    return { rows: [...rows.values()], clearedAt };
+  }
+
+  saved() { return this.read().rows; }
+
+  clear() {
+    fs.mkdirSync(path.dirname(this.file), { recursive: true });
+    const temporary = this.file + '.' + crypto.randomUUID() + '.tmp';
+    try {
+      const fd = fs.openSync(temporary, 'wx');
+      try {
+        // Keep a cutoff so opening History cannot re-import the deleted records
+        // from unchanged backup manifests. Backups and rollback stay untouched.
+        fs.writeFileSync(fd, JSON.stringify({ type: 'history-cleared', date: new Date().toISOString() }) + '\n');
+        fs.fsyncSync(fd);
+      } finally { fs.closeSync(fd); }
+      fs.renameSync(temporary, this.file);
+      this.pending.clear();
+    } finally {
+      if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    }
   }
 
   append(rows) {
@@ -109,12 +135,14 @@ class HistoryStore {
 
   list(folders = [], onWarning = () => {}) {
     let saved = [];
-    try { saved = this.saved(); } catch (error) { onWarning(error); }
+    let clearedAt = 0;
+    try { ({ rows: saved, clearedAt } = this.read()); } catch (error) { onWarning(error); }
     const ids = new Set(saved.map(row => row.id));
     for (const id of ids) this.pending.delete(id);
     const rows = [...saved, ...[...this.pending.values()].filter(row => !ids.has(row.id))];
     const seen = new Set(rows.map(fingerprint));
     for (const row of fromManifests(folders)) {
+      if (Date.parse(row.date) <= clearedAt) continue;
       if (!seen.has(fingerprint(row))) { rows.push(row); seen.add(fingerprint(row)); }
     }
     const unsaved = rows.filter(row => !ids.has(row.id));

@@ -182,27 +182,27 @@ function cardMarkup(g) {
   const dx12 = Boolean(s && s.dx12);
   const hasDlss = gameFilters.hasDlss(g);
   const status = s && s.ok
-    ? `<span class="card-status-item"><span class="dot-s ${hasDlss ? 'on' : ''}"></span>${s.dlss ? esc(short(s.dlss)) : t(hasDlss ? 'hasDlss' : 'noDlss')}</span>
-       <span class="card-status-item"><span class="dot-s ${s.addon || s.optiscaler ? 'on' : ''}"></span>${s.optiscaler ? 'OptiScaler' : t('addonShort')}</span>`
+    ? `<span class="dot-s ${hasDlss ? 'on' : ''}"></span>${s.dlss ? esc(short(s.dlss)) : t(hasDlss ? 'hasDlss' : 'noDlss')}
+       <span class="dot-s ${s.addon || s.optiscaler ? 'on' : ''}" style="margin-inline-start:8px"></span>${s.optiscaler ? 'OptiScaler' : t('addonShort')}`
     : '';
   const strip = status ? `<div class="status">${status}</div>` : '';
-  const placeholder = `<div class="placeholder" aria-hidden="true"><span>${esc(initials(g.name))}</span><small>${esc(g.name)}</small></div>`;
-  const poster = `<div class="poster${g.poster ? ' has-art' : ''}${g.poster && !g.poster.tall ? ' wide' : ''}">
-    ${placeholder}${g.poster ? `<img class="poster-image" src="${esc(g.poster.url)}" alt="" loading="lazy" decoding="async">` : ''}${strip}</div>`;
+  const poster = g.poster
+    ? `<div class="poster${g.poster.tall ? '' : ' wide'}"${g.poster.tall ? '' : ` style="--bgimg:url('${g.poster.url}')"`}>
+         <img class="poster-image" src="${esc(g.poster.url)}" alt="" loading="lazy" decoding="async">${strip}</div>`
+    : `<div class="poster"><div class="placeholder">${initials(g.name)}</div>${strip}</div>`;
 
   return `
     <article class="card${dx12 ? ' dx12' : ''}${s && !s.ok ? ' unsupported' : ''}" data-dir="${esc(g.dir)}" tabindex="0" aria-label="${esc(g.name)}" aria-haspopup="menu">
       <div class="tools">
-        <button class="tool" data-act="poster" title="${esc(t('menuPoster'))}">🖼</button>
-        <button class="tool" data-act="open" title="${esc(t('menuOpen'))}">📂</button>
-        <button class="tool" data-act="hide" title="${esc(t('menuHide'))}">✕</button>
+        <button class="tool" data-act="poster" title="${esc(t('menuPoster'))}" aria-label="${esc(t('menuPoster'))}">🖼</button>
+        <button class="tool" data-act="open" title="${esc(t('menuOpen'))}" aria-label="${esc(t('menuOpen'))}">📂</button>
+        <button class="tool" data-act="hide" title="${esc(t('menuHide'))}" aria-label="${esc(t('menuHide'))}">✕</button>
       </div>
       <span class="badge${dx12 ? ' dx12' : ''}">${esc(api)}</span>
       ${poster}
-      <div class="name" title="${esc(g.name)}">${esc(g.name)}</div>
+      <div class="name">${esc(g.name)}</div>
     </article>`;
 }
-
 // A removed or corrupt local picture must leave a readable card, not a broken
 // image icon. Capture image errors because they do not bubble.
 document.addEventListener('error', event => {
@@ -212,6 +212,12 @@ document.addEventListener('error', event => {
     const poster = img.closest('.poster');
     poster?.classList.remove('has-art', 'wide');
     poster?.querySelectorAll('img').forEach(image => image.remove());
+    if (poster && !poster.querySelector('.placeholder')) {
+      const label = document.createElement('div');
+      label.className = 'placeholder';
+      label.textContent = initials(poster.closest('.card')?.getAttribute('aria-label') || '');
+      poster.prepend(label);
+    }
   } else if (img.parentElement?.classList.contains('rcard')) {
     const label = document.createElement('div');
     label.className = 'initials';
@@ -335,9 +341,11 @@ $('gameQuickFilters').onclick = (event) => {
 // ---------------- history / settings ----------------
 
 let historyRenderId = 0;
+let historyClearing = false;
 async function renderHistory() {
   const requestId = ++historyRenderId;
   $('copyHistory').disabled = true;
+  $('clearHistory').disabled = true;
   $('historyWarning').classList.add('hidden');
   let result;
   try {
@@ -355,6 +363,7 @@ async function renderHistory() {
   $('historyWarning').classList.toggle('hidden', !result.warning);
   $('historyWarning').textContent = result.warning ? t('historySaveWarning') : '';
   $('copyHistory').disabled = rows.length === 0;
+  $('clearHistory').disabled = historyClearing || rows.length === 0;
   $('history').innerHTML = rows.length
     ? rows.map((r) => `<div class="hist-row">
         <div class="n"><bdi>${esc(r.name)}</bdi> <span class="undone">${esc(historyAction(r))}</span>
@@ -541,13 +550,6 @@ async function renderSettings() {
         aria-checked="${info.groupGamesByStore !== false}" aria-label="${t('setGroupGames')}" aria-describedby="setGroupGamesHint">
         <span class="knob"></span>
       </button></div>
-    <div class="set-row"><div><div class="k">${t('setNotices')}</div>
-      <div class="v" id="setNoticesHint">${t('setNoticesHint')}</div></div>
-      <button class="setting-switch" id="setNotices" type="button" role="switch"
-        aria-checked="${(await window.lab.communityNoticeSettings()).on ? 'true' : 'false'}"
-        aria-label="${t('setNotices')}" aria-describedby="setNoticesHint">
-        <span class="knob"></span>
-      </button></div>
     <div class="set-row"><div><div class="k">${t('setSafeGraphics')}</div>
       <div class="v" id="setSafeGraphicsHint">${t('setSafeGraphicsHint')}</div></div>
       <button class="setting-switch" id="setSafeGraphics" type="button" role="switch"
@@ -566,7 +568,7 @@ async function renderSettings() {
         aria-checked="${info.autoScanDrives ? 'true' : 'false'}" aria-label="${t('setAutoScan')}">
         <span class="knob"></span>
       </button></div>
-    <div class="set-row"><div><div class="k">${t('setRoots')}</div>${
+    <div class="set-row set-paths-row"><div><div class="k">${t('setRoots')}</div>${
         (info.roots || []).length
           ? `<div class="paths">${info.roots.map((f) => `
               <div class="path-row"><span>${esc(f)}</span>
@@ -575,7 +577,7 @@ async function renderSettings() {
                 </button></div>`).join('')}</div>`
           : `<div class="v">—</div>`}</div>
       <span class="d">${(info.roots || []).length}</span></div>
-    <div class="set-row"><div><div class="k">${t('setFolders')}</div>
+    <div class="set-row set-paths-row"><div><div class="k">${t('setFolders')}</div>
         ${info.folders.length
           ? `<div class="paths">${info.folders.map((f) => `
               <div class="path-row"><span>${esc(f)}</span>
@@ -598,17 +600,6 @@ async function renderSettings() {
       <button class="ghost sm" id="setReset">${t('setReset')}</button></div>
     <div class="set-row"><div><div class="k">${t('setPosters')}</div><div class="v">${esc(info.posterDir)}</div></div>
       <span class="d">${t('setSaved', info.posterCount)}</span></div>`;
-  // Turning these off stops the asking as well as the showing: the poll in
-  // the main process reads the same setting.
-  $('setNotices').onclick = async () => {
-    const toggle = $('setNotices');
-    const on = toggle.getAttribute('aria-checked') !== 'true';
-    toggle.disabled = true;
-    try {
-      const answer = await window.lab.communityNoticeSettings(on);
-      toggle.setAttribute('aria-checked', String(answer.on));
-    } finally { toggle.disabled = false; }
-  };
   for (const button of document.querySelectorAll('[data-skin-choice]')) {
     button.onclick = async () => {
       const choice = button.dataset.skinChoice;
@@ -696,7 +687,6 @@ async function renderSettings() {
     };
   }
   $('setReset').onclick = async () => { await window.lab.reset(); load(); };
-  await window.communityUi.renderProfile($('settings'));
 }
 
 // ---------------- loading ----------------
@@ -973,7 +963,9 @@ async function showUpdateNotice() {
 function jobLog(line) {
   jobLines.push(line);
   const box = document.querySelector('.job');
-  if (box) { box.textContent = jobLines.join('\n'); box.scrollTop = box.scrollHeight; }
+  if (box) {
+    box.textContent = jobLines.join('\n'); box.scrollTop = box.scrollHeight;
+  }
   if ($('copyJob')) $('copyJob').disabled = jobLines.length === 0;
 }
 
@@ -1022,7 +1014,7 @@ async function openSheet(dir, keepLog = false) {
 
   const [d, art] = await Promise.all([
     window.lab.details(dir),
-    window.lab.artFetch(dir, g.name, g.appid)
+    window.lab.artFetch(dir, g.name, g.appid).catch(() => null)
   ]);
   if (sheetGame !== g) return;
   sheetDetails = d;
@@ -1032,9 +1024,11 @@ async function openSheet(dir, keepLog = false) {
   }
   if (!routeChoice.has(dir) && d.installedRoute) routeChoice.set(dir, d.installedRoute);
 
-  const info = art && !art.error && !art.none ? art : null;
-  const cover = (info && info.cover) || (g.poster && g.poster.tall ? g.poster.url : null);
-  const hero = (info && info.hero) || (g.poster && !g.poster.tall ? g.poster.url : null);
+  const info = art && (art.cover || art.hero || (!art.error && !art.none)) ? art : null;
+  // Launcher artwork is often landscape-only. Reuse it in the detail portrait
+  // instead of throwing away a valid image merely because it is not tall.
+  const cover = (g.poster?.custom && g.poster.url) || info?.cover || g.poster?.url || info?.hero || null;
+  const hero = info?.hero || (!g.poster?.tall && g.poster?.url) || cover;
   const upToDate = Boolean(d.newDlss && d.currentDlss && d.currentDlss.version === d.newDlss);
   // With a picker on screen the executable already has its own row, so the
   // fact tile would only repeat it.
@@ -1057,7 +1051,7 @@ async function openSheet(dir, keepLog = false) {
       <div class="head">
         <div class="cover">${cover ? `<img src="${cover}" alt="">` : esc(initials(g.name))}</div>
         <div class="who">
-          <h3>${esc(info ? info.name : g.name)}</h3>
+          <h3>${esc(info?.name || g.name)}</h3>
           <div class="meta">${[g.launcher, info && info.released, info && info.genres && info.genres.join(', '),
               info && info.rating ? info.rating + '/100' : null].filter(Boolean).map(esc).join(' · ')}</div>
           <div class="path">${esc(g.dir)}</div>
@@ -1408,6 +1402,24 @@ $('rescan').onclick = async () => {
 $('clearLog').onclick = () => { state.log = []; renderLog(); };
 $('copyLog').onclick = () => copyText(state.log.map(e => `[${e.t}] ${e.m}`).join('\n'));
 $('copyHistory').onclick = () => copyText(historyText());
+$('clearHistory').onclick = async () => {
+  if (historyClearing || !state.history.length) return;
+  historyClearing = true;
+  $('clearHistory').disabled = true;
+  try {
+    if (!await ask({ title: t('clearHistory'), body: t('clearHistoryHint'), confirm: t('clearHistory'), cancel: t('cancel') })) return;
+    ++historyRenderId;
+    const result = await window.lab.clearHistory();
+    if (!result?.ok) throw Error(t(result?.code === 'busy' ? 'clearHistoryBusy' : 'clearHistoryFailed'));
+    await renderHistory();
+  } catch (error) {
+    $('historyWarning').textContent = error.message || t('clearHistoryFailed');
+    $('historyWarning').classList.remove('hidden');
+  } finally {
+    historyClearing = false;
+    $('clearHistory').disabled = state.history.length === 0;
+  }
+};
 
 const cardActionsBusy = new Set();
 let contextMenuOpen = false;

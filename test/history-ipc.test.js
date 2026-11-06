@@ -126,4 +126,11 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
   assert.equal(menuItems.find(item => item.id === 'restore').enabled, false);
   assert.equal(menuItems.find(item => item.id === 'scan').enabled, false);
   assert.equal(menuItems.find(item => item.id === 'open').label, 'فتح المجلد');
+  vm.runInContext('mutationBusy = true', context);
+  assert.equal(handlers.get('history-clear')().code, 'busy');
+  assert.equal(handlers.get('history')().rows.length, 8);
+  vm.runInContext('mutationBusy = false', context);
+  assert.equal(handlers.get('history-clear')().ok, true);
+  vm.runInContext('historyStore = null', context);
+  assert.equal(handlers.get('history')().rows.length, 0);
 });

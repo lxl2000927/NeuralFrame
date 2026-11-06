@@ -1435,13 +1435,17 @@ select option { background: var(--panel); color: var(--text); }
   -webkit-user-select: none;
   -webkit-user-drag: none;
 }
-input, textarea {
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]), textarea {
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
 }
+input[type="checkbox"], input[type="radio"], input[type="range"],
+input[type="button"], input[type="submit"] { cursor: pointer; }
+input:disabled { cursor: not-allowed; }
 /* Without this the pointer turns into a text caret over every label. */
 body { cursor: default; }
+.history-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .card:focus-visible, .rcard:focus-visible {
   outline: 3px solid var(--accent); outline-offset: 3px;

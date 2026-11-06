@@ -4,6 +4,8 @@
 const DEFINITIONS = Object.freeze({
   'dlss-sr': {name:'DLSS 超分辨率', files:['nvngx_dlss.dll'], online:'rhi-sr'},
   'dlss-fg': {name:'DLSS 帧生成运行库', files:['nvngx_dlssg.dll'], online:'rhi-fg'},
+  'streamline': {name:'Streamline 配套运行库',files:[],managedRoute:true},
+  'dlss-rr': {name:'DLSS 光线重建',files:['nvngx_dlssd.dll'],managedRoute:true},
   'dlss-nr': {name:'DLSS 神经渲染模型', files:['nvngx_dlssnr.dll'], online:'rhi-nr'},
   'renodx-nr': {name:'RenoDX 神经渲染插件', files:['renodx-dlss5.addon64'], online:'renodx'},
   'renodx-multipass': {name:'RenoDX 多通道插件', files:['renodx-dlss.addon64'], online:'multipass'},
@@ -29,7 +31,7 @@ const PROVIDERS = Object.freeze({
 });
 function builtins(payload, overlayDir) {
   const path=require('path'),fs=require('fs'),result=[];
-  const add=(component,version,files)=>{if(Object.values(files).every(f=>fs.existsSync(f)))result.push({component,version,files,source:'随包组件快照',trustedAdapter:true});};
+  const add=(component,version,files)=>{if(Object.values(files).every(f=>fs.existsSync(f)))result.push({component,version,files,source:'已适配组件缓存',trustedAdapter:true});};
   for(const [folder,label] of [['streamline','310.9.1'],['enhanced/streamline-2.14.16','310.9.16']])for(const [id,name] of [['dlss-sr','nvngx_dlss.dll'],['dlss-fg','nvngx_dlssg.dll']])add(id,label,{[name]:path.join(payload,folder,name)});
   add('dlss-nr','310.8.SF-v2',{'nvngx_dlssnr.dll':path.join(payload,'streamline/nvngx_dlssnr.dll')});
   add('renodx-nr','8.5.0-rc10',{'renodx-dlss5.addon64':path.join(payload,'renodx-dlss5.addon64')});

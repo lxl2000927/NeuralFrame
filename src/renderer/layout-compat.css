@@ -1,0 +1,33 @@
+/* Compatibility fixes over the unchanged Enhanced upstream styles.
+   No new grid, section order, card size, color palette or folded layout. */
+:root { --ui-font: "Segoe UI Variable Display", "Segoe UI", Tahoma, "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+body, button, input, select, textarea { font-family: var(--ui-font); }
+
+/* Native selects can otherwise contribute the entire option label as their
+   intrinsic width, stretching the two upstream manager cards. */
+.enh-card, .enh-select-row label, .enh-hw-item, .enh-profile-btn,
+.enh-toolbar-bar label, .gp-main, .gp-side { min-width: 0; }
+.enh-select-row select { width: 100%; min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+.enh-toolbar-bar label { max-width: 100%; }
+.enh-toolbar-bar select { min-width: 0; max-width: 100%; flex: 1; }
+.enh-kv-row .v, .enh-hw-item .v { min-width: 0; overflow-wrap: anywhere; }
+.enh-card-title { min-width: 0; }
+.enh-card-title h4 { flex-wrap: wrap; }
+.enh-control-label { flex-wrap: wrap; gap: 4px 10px; }
+.enh-badge { flex-shrink: 0; }
+.enh-check-top { flex-wrap: wrap; }
+#enhToolbarFeedback:empty { display: none; }
+
+/* Freeze the upstream sticky heading's geometry while scrolling. Preserve its
+   original glass/colors; only eliminate the size-change feedback loop. */
+:root[data-skin="two"] .games-heading.stuck { padding: 14px 16px; }
+:root[data-skin="two"] .games-heading.stuck h3 { font-size: 21px; }
+:root[data-skin="two"] #view-games.active :is(.games-heading, .game-filters, .game-quick-filters),
+:root[data-skin="two"] .card { animation: none; }
+.card:focus-within .tools { opacity: 1; }
+
+/* Keep long custom game paths inside their original settings row. */
+.set-paths-row > div:first-child { min-width: 0; flex: 1; }
+.set-paths-row .path-row { align-items: center; }
+.set-paths-row .path-row span { min-width: 0; overflow-wrap: anywhere; }
+.set-paths-row .path-row .drop { flex: none; }

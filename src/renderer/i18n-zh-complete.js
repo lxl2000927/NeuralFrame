@@ -1,5 +1,7 @@
 'use strict';
 Object.assign(window.i18n.S.en, {
+  clearHistory:'Clear history', clearHistoryHint:'Delete all operation history? This cannot be undone. Game files, component backups, version locks and rollback data are kept.',
+  clearHistoryFailed:'Could not clear history. Check access to the app data folder and try again.', clearHistoryBusy:'An operation is in progress. Clear history after it finishes.',
   latestReleases:'Releases for this branch',
   aboutBody:'Independent branch with a persistent component library, per-game version selection, plugin updates, Chinese menus and runtime loading checks.',
   aboutBy:'Based on skyi7943-cmd’s Enhanced fork and Rakan Alkhaldi’s MIT-licensed project. This build uses independent version numbers.',
@@ -18,6 +20,8 @@ Object.assign(window.i18n.S.en, {
 });
 // Simplified Chinese additions. Keep technical identifiers, filenames and IPC values intact.
 Object.assign(window.i18n.S.zh, {
+  clearHistory:'清除历史记录', clearHistoryHint:'清除全部操作历史？此操作无法撤销。游戏文件、组件备份、版本锁定和回滚数据都会保留。',
+  clearHistoryFailed:'清除历史记录失败，请检查软件数据目录的访问权限后重试。', clearHistoryBusy:'正在执行操作，请完成后再清除历史记录。',
   latestReleases:'本分支发行版与更新说明',
   aboutBody:'独立维护的增强分支，集成统一组件库、每款游戏的版本选择、插件在线更新、中文面板和运行时加载检测。',
   aboutBy:'基于 skyi7943-cmd 的 Enhanced 分支与 Rakan Alkhaldi 的 MIT 开源项目；本版使用独立版本号。',

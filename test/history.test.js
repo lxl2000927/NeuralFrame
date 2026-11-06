@@ -94,3 +94,42 @@ test('failed history writes retain copyable rows and can retry without duplicate
   assert.equal(store.list().length, 1);
   assert.equal(new HistoryStore(file).list().length, 1);
 });
+
+test('clearing history survives reopen, leaves backup files intact, and records future operations', t => {
+  const { root, store, file } = fixture(t);
+  const game = path.join(root, 'game');
+  backup(game, 'manifest.json', manifest());
+  const original = fs.readFileSync(path.join(game, '_DLSS5_Backup', 'manifest.json'));
+  const savedDll = path.join(game, '_DLSS5_Backup', 'original.dll');
+  fs.writeFileSync(savedDll, 'untouched backup');
+  store.record(game, manifest(), 'install');
+  assert.equal(store.list([{ dir: game }]).length, 1);
+  store.clear();
+  assert.deepEqual(store.list([{ dir: game }]), []);
+  const reopened = new HistoryStore(file);
+  assert.deepEqual(reopened.list([{ dir: game }]), []);
+  assert.deepEqual(fs.readFileSync(path.join(game, '_DLSS5_Backup', 'manifest.json')), original);
+  assert.equal(fs.readFileSync(savedDll, 'utf8'), 'untouched backup');
+  reopened.record(game, manifest(), 'restore');
+  assert.equal(reopened.list([{ dir: game }]).length, 1);
+  assert.equal(new HistoryStore(file).list()[0].action, 'restore');
+});
+
+test('a failed clear keeps persisted and pending history and removes the temporary file', t => {
+  const { root, store, file } = fixture(t);
+  store.record(root, manifest(), 'install');
+  const original = fs.readFileSync(file);
+  const append = store.append;
+  store.append = () => { throw Error('full'); };
+  assert.throws(() => store.record(root, manifest(), 'restore'));
+  store.append = append;
+  const rename = t.mock.method(fs, 'renameSync', () => { throw Error('denied'); });
+  assert.throws(() => store.clear(), /denied/);
+  assert.deepEqual(fs.readFileSync(file), original);
+  assert.equal(store.pending.size, 1);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), ['history.jsonl']);
+  rename.mock.restore();
+  store.clear();
+  assert.equal(store.pending.size, 0);
+  assert.deepEqual(store.list(), []);
+});

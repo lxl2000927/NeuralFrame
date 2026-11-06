@@ -1,0 +1,1048 @@
+{
+  "schema": 1,
+  "release": "runtime-components-2026.11.06",
+  "repository": "lxl2000927/DLSS5-Swapper-Enhanced",
+  "packs": [
+    {
+      "id": "nr-3108",
+      "name": "神经渲染模型 310.8.SF-v2",
+      "component": "dlss-nr",
+      "version": "310.8.0.0",
+      "bundled": false,
+      "files": [
+        {
+          "path": "licenses/nr-3108/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/nr-3108/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/nr-3108/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/nr-3108/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/nr-3108/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        },
+        {
+          "path": "streamline/nvngx_dlssnr.dll",
+          "size": 165840496,
+          "sha256": "8270b350cd82de5ce89806872cdd6b6a9249b80836b91bbeb3573470744cc206"
+        }
+      ],
+      "contentId": "69e628a6601a3259e11ec8ec05828fe31e29e32c44e32fa889e442b8e553e316",
+      "archive": "nr-3108-69e628a6601a3259.zip",
+      "size": 117682177,
+      "sha256": "84d7de1e20120d51e5ddf22f232feebf4381c8d2930e3872b56c01c446cc4597",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/nr-3108-69e628a6601a3259.zip"
+    },
+    {
+      "id": "sr-baseline",
+      "name": "DLSS 超分 310.9.1",
+      "component": "dlss-sr",
+      "version": "310.9.1",
+      "bundled": false,
+      "files": [
+        {
+          "path": "licenses/sr-baseline/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/sr-baseline/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/sr-baseline/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/sr-baseline/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/sr-baseline/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        },
+        {
+          "path": "streamline/nvngx_dlss.dll",
+          "size": 58956912,
+          "sha256": "3975567b8943c53acce397f2b72380092f84f162d00b0d2c7d08a1025c563983"
+        }
+      ],
+      "contentId": "28584006a3298a7aeb8b60a55d8fccac7ca6d9f3f61170510f2ffe5cf6df5f99",
+      "archive": "sr-baseline-28584006a3298a7a.zip",
+      "size": 31130094,
+      "sha256": "21029b8c9567d6f5dbf44b1fb0e2be357de37c239b4418ffc562bb129b36a9f3",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/sr-baseline-28584006a3298a7a.zip"
+    },
+    {
+      "id": "fg-baseline",
+      "name": "DLSS 帧生成 310.9.1",
+      "component": "dlss-fg",
+      "version": "310.9.1",
+      "bundled": false,
+      "files": [
+        {
+          "path": "licenses/fg-baseline/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/fg-baseline/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/fg-baseline/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/fg-baseline/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/fg-baseline/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        },
+        {
+          "path": "streamline/nvngx_dlssg.dll",
+          "size": 7460976,
+          "sha256": "ff6e90eb78b827927dff5b4ecc6b1c870c2e9bca29ed9f48c7d348cc9e170b82"
+        }
+      ],
+      "contentId": "3d1ae994a63a9664ade8755cd57f7c70d8421487c0f61785e6dc00c2dd29cef4",
+      "archive": "fg-baseline-3d1ae994a63a9664.zip",
+      "size": 3738710,
+      "sha256": "8c786ef91c8b151e1ea997c54340b52ccf31097dcbfaba1b51e5398b21f6e4b3",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/fg-baseline-3d1ae994a63a9664.zip"
+    },
+    {
+      "id": "sl-baseline",
+      "name": "Streamline 2.13",
+      "component": "streamline",
+      "version": "2.13",
+      "bundled": false,
+      "files": [
+        {
+          "path": "licenses/sl-baseline/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/sl-baseline/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/sl-baseline/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/sl-baseline/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/sl-baseline/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        },
+        {
+          "path": "streamline/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "streamline/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "streamline/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        },
+        {
+          "path": "streamline/sl.common.dll",
+          "size": 830592,
+          "sha256": "a4b2b5acbe49fbc6d44dd432cac19cd53218f698b2539dc7ed0fb268c72cfc8d"
+        },
+        {
+          "path": "streamline/sl.dlss.dll",
+          "size": 421504,
+          "sha256": "1eb5fb3d6f01d340fe086d981cc2de4f18aa6d05ee276e5cf28ecd54818dcc8b"
+        },
+        {
+          "path": "streamline/sl.dlss_g.dll",
+          "size": 625792,
+          "sha256": "b8b5effd7debdb750abd216de43385fb653261712bc315d85eba68811fb3ee02"
+        },
+        {
+          "path": "streamline/sl.dlss_nr.dll",
+          "size": 401024,
+          "sha256": "9f6672e5e0170dc118a3188d21bda187e1fc1aa3502895b21ab846d23165c11d"
+        },
+        {
+          "path": "streamline/sl.interposer.dll",
+          "size": 651392,
+          "sha256": "27b2190057994c0b287c2c5716953bf1586f6499ac12fbbb2092b9aaf8396570"
+        },
+        {
+          "path": "streamline/sl.nis.dll",
+          "size": 1155200,
+          "sha256": "6039e38a1af56c8e86f3e936596e2db910bf3d76bbf4268562a3b13763049dfa"
+        },
+        {
+          "path": "streamline/sl.pcl.dll",
+          "size": 360064,
+          "sha256": "12aa4e76c28a27c735e4ecb3072f44d09428acb107b70ac38e4bd48ddb05f88d"
+        },
+        {
+          "path": "streamline/sl.reflex.dll",
+          "size": 382080,
+          "sha256": "ecf12973cdcec2ffced2ea77b1c7e45f4d387e7c864ddb5531b66a6f947effb3"
+        }
+      ],
+      "contentId": "14d68ef83e6f5f601a69a02616653e00a85a0155d5e3d0525dc91f32dc622772",
+      "archive": "sl-baseline-14d68ef83e6f5f60.zip",
+      "size": 2067149,
+      "sha256": "493cd93236b98ac63205c839dbcac8f50d554b342cffd6fedba30496a699cf4f",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/sl-baseline-14d68ef83e6f5f60.zip"
+    },
+    {
+      "id": "sr-modern",
+      "name": "DLSS 超分 310.9.16",
+      "component": "dlss-sr",
+      "version": "310.9.16",
+      "bundled": false,
+      "files": [
+        {
+          "path": "enhanced/streamline-2.14.16/nvngx_dlss.dll",
+          "size": 74187376,
+          "sha256": "858ccff96360c3098db9264cd6f13d04a027e09b6ce7ad5bbc297570e824b4f2"
+        },
+        {
+          "path": "licenses/sr-modern/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/sr-modern/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/sr-modern/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/sr-modern/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/sr-modern/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        }
+      ],
+      "contentId": "bd946ff2791187d2d928cf462af43f59fe076fb7e273c310056bdff3e4fbf653",
+      "archive": "sr-modern-bd946ff2791187d2.zip",
+      "size": 45339665,
+      "sha256": "21c08700ee6992774fa12cc5824c51a9211599498478dabd7579bfc346a3184e",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/sr-modern-bd946ff2791187d2.zip"
+    },
+    {
+      "id": "fg-modern",
+      "name": "DLSS 帧生成 310.9.16",
+      "component": "dlss-fg",
+      "version": "310.9.16",
+      "bundled": false,
+      "files": [
+        {
+          "path": "enhanced/streamline-2.14.16/nvngx_dlssg.dll",
+          "size": 7506544,
+          "sha256": "cadee1aa6db3907babdc3285da2aebc4553d92b89c38ba3eae8abd8bba1bea72"
+        },
+        {
+          "path": "licenses/fg-modern/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/fg-modern/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/fg-modern/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/fg-modern/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/fg-modern/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        }
+      ],
+      "contentId": "110edc44fa18cdf6b1b034b93ea3053e72896e58fc063b860d5fa0fee285ebbb",
+      "archive": "fg-modern-110edc44fa18cdf6.zip",
+      "size": 3760776,
+      "sha256": "48fb29919d8f63cfda72c114270a557a8c8ebc75ac87a61df3833626e780da9f",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/fg-modern-110edc44fa18cdf6.zip"
+    },
+    {
+      "id": "sl-modern",
+      "name": "Streamline 2.14.16",
+      "component": "streamline",
+      "version": "2.14.16",
+      "bundled": false,
+      "files": [
+        {
+          "path": "enhanced/streamline-2.14.16/NvLowLatencyVk.dll",
+          "size": 57840,
+          "sha256": "2a77dc3e1c724b7eea5755be0ae7423752e79a2459fae72181a9f00e3507e5d6"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/nvngx_deepdvc.dll",
+          "size": 3104880,
+          "sha256": "dc9562c67594fa06b763fe5d78f4aa53452c5344f8b43e6e2b81264320588500"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.common.dll",
+          "size": 843904,
+          "sha256": "38eea3b4209afc455636ea372b5933d65fcc13becec6c84d101dcfc4d8648f75"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.deepdvc.dll",
+          "size": 376448,
+          "sha256": "2d493dccfefdc0580deb85afc65e70ae36adf77c6dd3c745c60623d9b8ac54f9"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.directsr.dll",
+          "size": 369792,
+          "sha256": "4b2c0c90195c3a9991b4e0b59004113511a90802c85d81fc7faa7c7c75f53927"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.dlss.dll",
+          "size": 422016,
+          "sha256": "18871eea87c90345da97d8109faa81ea7d5840e8d99b51b55b0e46cfa177f84e"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.dlss_d.dll",
+          "size": 437376,
+          "sha256": "8dff36fd063094eb1f659e8d4dcd52c7423859a9c4a3df3796084c48412d60ac"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.dlss_g.dll",
+          "size": 637056,
+          "sha256": "3ed9538df724993bea8a050195a6a78b9c8c8a566d5b05ade477aab3c390e90f"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.interposer.dll",
+          "size": 652928,
+          "sha256": "8c87c9499461da561edd529aa9bf7831d67d7b94ebb1c1a5ed54ef4934e1ea4c"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.nis.dll",
+          "size": 1155712,
+          "sha256": "f9f3873c00e2737b22df1bf7605d4fdc7978dbf2955df4e152c5b52aada13b79"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.nvperf.dll",
+          "size": 761472,
+          "sha256": "dc5a820b97943c4d697a9ddec59b0dcde86ecadc093b401cf55980f7f89be43b"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.pcl.dll",
+          "size": 360064,
+          "sha256": "5698c38e722318681f215c9fe68e45b9bedd51378acc699d8eee26e961e57770"
+        },
+        {
+          "path": "enhanced/streamline-2.14.16/sl.reflex.dll",
+          "size": 388736,
+          "sha256": "443577e869352436ff7ec8f4d9c90418d3e95368436ce219261e0f4f07a38122"
+        },
+        {
+          "path": "licenses/sl-modern/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/sl-modern/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/sl-modern/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/sl-modern/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/sl-modern/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        }
+      ],
+      "contentId": "ba04234f2d6476ba15d318c4fb79d5251dd62c80495570a911adb4cca834ba5e",
+      "archive": "sl-modern-ba04234f2d6476ba.zip",
+      "size": 4350749,
+      "sha256": "21088e43fa3f209715f26047959712197ce28a0fd1724b5ea48cbc9e5ad8c657",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/sl-modern-ba04234f2d6476ba.zip"
+    },
+    {
+      "id": "rr-baseline",
+      "name": "DLSS 光线重建",
+      "component": "dlss-rr",
+      "version": "310.9.1",
+      "bundled": false,
+      "files": [
+        {
+          "path": "licenses/rr-baseline/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/rr-baseline/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/rr-baseline/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/rr-baseline/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/rr-baseline/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        },
+        {
+          "path": "streamline/nvngx_dlssd.dll",
+          "size": 48343664,
+          "sha256": "4bc7ea5fcb2f32cf86bc2cb072e8d2860914a0be511cbdcb2fc206c1d9d83b80"
+        }
+      ],
+      "contentId": "4bb19a0ca398f6aa33bc9c0556dc2f461174ecd381164f46bd9ffef54d6b2541",
+      "archive": "rr-baseline-4bb19a0ca398f6aa.zip",
+      "size": 21587466,
+      "sha256": "6f8df4ceae93255849bf62e495295c5bcce8cfdc835142583805b29dee501cf4",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/rr-baseline-4bb19a0ca398f6aa.zip"
+    },
+    {
+      "id": "renodx-nr",
+      "name": "RenoDX 神经渲染插件",
+      "component": "renodx-nr",
+      "version": "8.5.0-rc10",
+      "bundled": false,
+      "files": [
+        {
+          "path": "feeder/host64/renodx-dlss5.addon64",
+          "size": 3141632,
+          "sha256": "dcd93881e976ad033d83c2bb01f4bc3e4ddc59c15fe0dd4ca165bc5fc7d1ac68"
+        },
+        {
+          "path": "licenses/renodx-nr/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/renodx-nr/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/renodx-nr/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/renodx-nr/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/renodx-nr/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        },
+        {
+          "path": "renodx-dlss5.addon64",
+          "size": 3141632,
+          "sha256": "dcd93881e976ad033d83c2bb01f4bc3e4ddc59c15fe0dd4ca165bc5fc7d1ac68"
+        }
+      ],
+      "contentId": "06ea89ac6976860171af1ff9594093e8b5e5a80884441dd4b497adcb4c806e44",
+      "archive": "renodx-nr-06ea89ac69768601.zip",
+      "size": 2416067,
+      "sha256": "93e721b0c288934f2c888eaf08272075e9e350c4dea0e4ea125c76db0349f44d",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/renodx-nr-06ea89ac69768601.zip"
+    },
+    {
+      "id": "renodx-multipass",
+      "name": "RenoDX 多通道插件",
+      "component": "renodx-multipass",
+      "version": "SF 26.1003.2350",
+      "bundled": false,
+      "files": [
+        {
+          "path": "feeder/host64/renodx-dlss.addon64",
+          "size": 3010048,
+          "sha256": "1310119c87e4ab5ad0af41511411bd4608ff3c3030a29196ae0e4bba32c84585"
+        },
+        {
+          "path": "licenses/renodx-multipass/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/renodx-multipass/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/renodx-multipass/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/renodx-multipass/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/renodx-multipass/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        }
+      ],
+      "contentId": "d474c0fb39a03a473abc959ac3418d8a8c910008c430b689e9deeb5266c35420",
+      "archive": "renodx-multipass-d474c0fb39a03a47.zip",
+      "size": 1245269,
+      "sha256": "e03ad535fe96f42bb917d276c2c7ddbd36085b7eeaa3b10b38dd27f825001e87",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/renodx-multipass-d474c0fb39a03a47.zip"
+    },
+    {
+      "id": "feeder",
+      "name": "Feeder 加载链与着色器",
+      "component": "feeder",
+      "version": "1.17 + 1.19",
+      "bundled": false,
+      "files": [
+        {
+          "path": "enhanced/feeder-1.19.0/READ-ME-FIRST.txt",
+          "size": 1983,
+          "sha256": "45174447689ffe17b3b8436b9101f7a9532e7a5f9e330af7bf96ca13b611afe1"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/Verify-DLSS5Feeder.ps1",
+          "size": 105584,
+          "sha256": "c84b672c8b92241fcd03018ce731eab1cb7f09f68f64cf41014c7bf7d76b5c2b"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/dlss5-feed-helper.addon64",
+          "size": 211456,
+          "sha256": "c069aa9d8b01fcee34234bc458a798c3be6f27fc8b9f23b74b5fb1784a828886"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/dlss5-feed.addon32",
+          "size": 195584,
+          "sha256": "34c767bd53a99f51a6cb5d87b267734e04314d16bf495a6c69ab98acd62d0874"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/dlss5-feed.addon64",
+          "size": 343552,
+          "sha256": "2b8c905012fd464ddf0554c6b178cba55030ec10eb917acdcee0e7a2376fe4dd"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/host64/dlss5-feed-host64.exe",
+          "size": 177664,
+          "sha256": "79e427430c5c0102f6c7a557155b706ad51b0c40933f6e245fce922bf5b1401e"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/layer-x64/VkLayer_feed_vk.dll",
+          "size": 18944,
+          "sha256": "ed5978fff1ac1b2c85aed7b1ffe2c7668e2be71f5a8cff86b4327bfa1d959a28"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/layer-x64/VkLayer_feed_vk.json",
+          "size": 589,
+          "sha256": "c15967b3f8847a145e21058a1e57e92c595ee17fc5dd23ab3278b0148ad6e9d1"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/layer-x64/run-with-feed-layer.bat",
+          "size": 730,
+          "sha256": "bc9aa7964742e23653556be978f540f503f3cef928b6de7a38f77c570bb764f9"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/layer-x86/VkLayer_feed_vk32.dll",
+          "size": 15872,
+          "sha256": "cbb3039e13ce1a851c00bba24a93586ea8d9731dad3fcf426f412cc764a61860"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/layer-x86/VkLayer_feed_vk32.json",
+          "size": 584,
+          "sha256": "28f8174eb8fed02266bafa6910eab07922ec6d2bdb33110699c586f74b254921"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/layer-x86/run-with-feed-layer32.bat",
+          "size": 840,
+          "sha256": "75d4584ad01619402a10e0d8342b114613057a1d3b0ac8dbe9280b740090c3e8"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/reshade-shaders/Shaders/DLSS5_Feed.fx",
+          "size": 52600,
+          "sha256": "c4ba1610df8e1593faa7c203d6d0517058d3a8ecf2dfda18ca67849844391456"
+        },
+        {
+          "path": "enhanced/feeder-1.19.0/reshade-shaders/Shaders/DrawText.fxh",
+          "size": 69,
+          "sha256": "87ef137fcb92e4f8518c005500d5d369f39dd4c3cbc0f00d8a0cdee7b3e20892"
+        },
+        {
+          "path": "feeder/Verify-DLSS5Feeder.ps1",
+          "size": 102574,
+          "sha256": "2cdb0eac0f4f8ea9da8e6290c442f846074aae9b87750425e0d2da4a820d0aca"
+        },
+        {
+          "path": "feeder/dlss5-feed-host64.exe",
+          "size": 169472,
+          "sha256": "c835754277a0590780d846443f314a83a30e2d2815ee0b2f7c18f1a24f252936"
+        },
+        {
+          "path": "feeder/dlss5-feed.addon32",
+          "size": 189952,
+          "sha256": "bfe24218be719cf5b91d829283953432907922333280931b755d83ac793fd8b2"
+        },
+        {
+          "path": "feeder/dlss5-feed.addon64",
+          "size": 329728,
+          "sha256": "6854d012eac307021cd31c978bafd42f1e22c5b7b2922c80e0a0010d428a3fd7"
+        },
+        {
+          "path": "feeder/layer-x64/VkLayer_feed_vk.dll",
+          "size": 18944,
+          "sha256": "ed5978fff1ac1b2c85aed7b1ffe2c7668e2be71f5a8cff86b4327bfa1d959a28"
+        },
+        {
+          "path": "feeder/layer-x64/VkLayer_feed_vk.json",
+          "size": 589,
+          "sha256": "c15967b3f8847a145e21058a1e57e92c595ee17fc5dd23ab3278b0148ad6e9d1"
+        },
+        {
+          "path": "feeder/layer-x64/run-with-feed-layer.bat",
+          "size": 730,
+          "sha256": "bc9aa7964742e23653556be978f540f503f3cef928b6de7a38f77c570bb764f9"
+        },
+        {
+          "path": "feeder/layer-x86/VkLayer_feed_vk32.dll",
+          "size": 15872,
+          "sha256": "cbb3039e13ce1a851c00bba24a93586ea8d9731dad3fcf426f412cc764a61860"
+        },
+        {
+          "path": "feeder/layer-x86/VkLayer_feed_vk32.json",
+          "size": 584,
+          "sha256": "28f8174eb8fed02266bafa6910eab07922ec6d2bdb33110699c586f74b254921"
+        },
+        {
+          "path": "feeder/layer-x86/run-with-feed-layer32.bat",
+          "size": 840,
+          "sha256": "75d4584ad01619402a10e0d8342b114613057a1d3b0ac8dbe9280b740090c3e8"
+        },
+        {
+          "path": "feeder/licenses/DLSS5-Feeder-LICENSE.txt",
+          "size": 1187,
+          "sha256": "6562d5a5e3d7534711e34f4b34335f23f067acc839ae5274c1250bf5f4654b8b"
+        },
+        {
+          "path": "feeder/licenses/THIRD-PARTY-SOURCES.txt",
+          "size": 534,
+          "sha256": "8b9371240a4d9341fd4f3dcea6c203564e02e1fe1a54d7ecc6a3a0650facd4f9"
+        },
+        {
+          "path": "feeder/licenses/VORT-LICENSE.txt",
+          "size": 1068,
+          "sha256": "800bacb0f9db4df8203f0dad1f99947109a44f4097380807e0483bd62dee0d41"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/DLSS5_Feed.fx",
+          "size": 52600,
+          "sha256": "c4ba1610df8e1593faa7c203d6d0517058d3a8ecf2dfda18ca67849844391456"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/DrawText.fxh",
+          "size": 69,
+          "sha256": "87ef137fcb92e4f8518c005500d5d369f39dd4c3cbc0f00d8a0cdee7b3e20892"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_ACES.fxh",
+          "size": 36642,
+          "sha256": "967cb4914457f18cc91e8844e6f7ccef0b353e4091e38f9c8667d36d45309b61"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_Bloom.fxh",
+          "size": 8242,
+          "sha256": "a3ab7942b73c61dcabe9b83ae42dafe65956c7a60d627aea27ede48a7cfb3c04"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_BlueNoise.fxh",
+          "size": 354,
+          "sha256": "a1eca01ddc6bdfef2b0c52601d297c59d7dabd71039d1489b7092532407cb455"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_ColorChanges.fxh",
+          "size": 12499,
+          "sha256": "0cbd91dff9aa5ab615a206f56ba760378810a5540d4f2928e35138c7980b1538"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_ColorTex.fxh",
+          "size": 497,
+          "sha256": "f5eef2db313c73b0419503295731c03bc4365fe1ed219f4afa618707b59e8d6c"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_Defs.fxh",
+          "size": 23415,
+          "sha256": "a00e99ece8b07899a7918a5248a2d603fd7f98882c795e3d31b9470cfe70a61c"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_Depth.fxh",
+          "size": 1892,
+          "sha256": "92d4f0a93b3945452c861e580117bb875bb594157694b3c8741790eaf3826205"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_Filters.fxh",
+          "size": 4848,
+          "sha256": "8d98a78f2fd7fe91f34bf4044d81094bd40fbb2c7b8f520ef66c5043f720f98d"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_HDRTex.fxh",
+          "size": 166,
+          "sha256": "5d3d002a6d4d0fc6e67dcdd4a68497163268fbb590c7477220dac8f1293f916e"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_MotionBlur.fxh",
+          "size": 19846,
+          "sha256": "67edbc5db1645d3c10c08375eb0bec0911c59c4fc1d3dde2d3e9c46a292ea35b"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_MotionBlur_Cheap.fxh",
+          "size": 13122,
+          "sha256": "0837c8151a50ef57c77bab7a3b14dd4c3b92354e4021ee37f54eb47f3f5589c7"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_MotionUtils.fxh",
+          "size": 5765,
+          "sha256": "2d353b23cea6961ca40308a6aebf1e56d509485a728399d5f6b36427b7023027"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_MotionVectors.fxh",
+          "size": 17148,
+          "sha256": "22d5c8f8a5f2cccee0ddde994ba04a7bc5379c54b1b3e9c7cf7d46f1f8ead87d"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_Motion_UI.fxh",
+          "size": 4934,
+          "sha256": "29783705b01d7b83a408d29a9d4b72c5a90012a91fb05ebdf1166ba9e9aeac2b"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_OKColors.fxh",
+          "size": 16191,
+          "sha256": "5a0a8468e97eaa9e8e018246e12002a86e3fb0c7a9cb97a3bc38390fc3f854e2"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_Static_UI.fxh",
+          "size": 8274,
+          "sha256": "ccd75ef28359b5324cf479fe568fbad7586ac203f6b1921f1b6fae48ae19bef2"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_TAA.fxh",
+          "size": 5837,
+          "sha256": "9b5c701fdacb37f15e565ca1aa3a861e4df3f55db493cd6589d509927ed08ede"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/Includes/vort_Tonemap.fxh",
+          "size": 2903,
+          "sha256": "9413eef6190303e920356310bc3aa2a270c052a1bcfde44f024f0a8986095f30"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/ReShade.fxh",
+          "size": 4250,
+          "sha256": "6dabfbbaf968c3871905d2ea17f96572ff7b1cec01310b5d0e5252b66b30174f"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/ReShadeUI.fxh",
+          "size": 9930,
+          "sha256": "78adf672df47460297eb9fe6dd238d2aafa24510b52b84feb1a745dff70eb901"
+        },
+        {
+          "path": "feeder/reshade-shaders/Shaders/vort_Motion.fx",
+          "size": 2359,
+          "sha256": "71ef3086ccf86792f5a333346eebb7b857434583712d3a51b9998db99e562edc"
+        },
+        {
+          "path": "feeder/reshade-shaders/Textures/vort_BlueNoise.png",
+          "size": 262548,
+          "sha256": "050d26db9283fbaece3b6883e300d22403631d83a12a5f2f79dc8b789b860305"
+        },
+        {
+          "path": "feeder/reshade-shaders/Textures/vort_MLUT.png",
+          "size": 3892952,
+          "sha256": "acb25ed926e7e847aeb0ef521745287d4ddda3c7f22e472ee42d61bb3064bbd7"
+        },
+        {
+          "path": "licenses/feeder/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/feeder/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/feeder/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/feeder/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/feeder/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        }
+      ],
+      "contentId": "c1ce58a1cc43a08a7d1d8dc4f5e254f8c7d72de6235e511da3287c42c27b4c1f",
+      "archive": "feeder-c1ce58a1cc43a08a.zip",
+      "size": 5155163,
+      "sha256": "601651bb1098d539be5c11aab3291c9bbbb7b6655be05ff9e4ebd7094a0a32e3",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/feeder-c1ce58a1cc43a08a.zip"
+    },
+    {
+      "id": "reshade",
+      "name": "ReShade 加载器",
+      "component": "reshade",
+      "version": "6.8.0",
+      "bundled": false,
+      "files": [
+        {
+          "path": "ReShade_Setup_6.8.0_Addon.exe",
+          "size": 4318424,
+          "sha256": "afe4c8f13048306307983b8b3d41d5bf00a86820440b0e57dea10950e1176445"
+        },
+        {
+          "path": "licenses/reshade/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/reshade/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/reshade/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/reshade/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/reshade/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        },
+        {
+          "path": "reshade-vulkan/ReShade32.dll",
+          "size": 4398080,
+          "sha256": "da430e0a9c6eecefa0d1b27d05e16c426fb5d04e808b194d914eaac4b31bc0f8"
+        },
+        {
+          "path": "reshade-vulkan/ReShade32.json",
+          "size": 526,
+          "sha256": "dbfdbadb8c64b398b2f8bf30469841ab8c35e10c9da40ba69b966559d5fa15f6"
+        },
+        {
+          "path": "reshade-vulkan/ReShade64.dll",
+          "size": 5592064,
+          "sha256": "0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7"
+        },
+        {
+          "path": "reshade-vulkan/ReShade64.json",
+          "size": 526,
+          "sha256": "aa21713718843e531da396e2bfc80772c9cb3c369d6c30b836be6b0ae812d503"
+        }
+      ],
+      "contentId": "cb61305a2f90baa229791458f17d37106f1ed21be6e2a8b78eefe6d992f74a3d",
+      "archive": "reshade-cb61305a2f90baa2.zip",
+      "size": 8718277,
+      "sha256": "2fa30eb8a02d5bfdfa2856d4ebdf2d61bd5d1f655aa5db1036d9b4277abf6dc8",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/reshade-cb61305a2f90baa2.zip"
+    },
+    {
+      "id": "mfg-renodx",
+      "name": "MFG 解锁 1.5.5",
+      "component": "mfg-renodx",
+      "version": "1.5.5",
+      "bundled": false,
+      "files": [
+        {
+          "path": "enhanced/mfg/licenses/MFGAdaUnlock-RenoDx-LICENSE.txt",
+          "size": 1065,
+          "sha256": "4ce922ecb6aa4b60d24f63f6241f0436e960a00989d71c68e2eb81ecc3d718fd"
+        },
+        {
+          "path": "enhanced/mfg/renodx-mfgunlock.addon64",
+          "size": 4556800,
+          "sha256": "e1529d0d20a5ec57c17beb740b14966e5d3ade24e229623d75029b900fd5943e"
+        },
+        {
+          "path": "licenses/mfg-renodx/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/mfg-renodx/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/mfg-renodx/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/mfg-renodx/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/mfg-renodx/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        }
+      ],
+      "contentId": "d34a562ee21c5e5f7268466b20a5b22191d9f43442758050177279bd276fa5ba",
+      "archive": "mfg-renodx-d34a562ee21c5e5f.zip",
+      "size": 1838415,
+      "sha256": "66354e61928059cfd7753c06eeddee2cf24fd05e1affc009fc2e5a8a4160d108",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/mfg-renodx-d34a562ee21c5e5f.zip"
+    },
+    {
+      "id": "mfg-universal",
+      "name": "MFG 解锁 1.7.0",
+      "component": "mfg-universal",
+      "version": "1.7.0",
+      "bundled": false,
+      "files": [
+        {
+          "path": "enhanced/mfg/MFGUnlocker.dll",
+          "size": 14445568,
+          "sha256": "e6b6e6b70a6ed3af839c9647a32fc22660ae6b2d655062c5c072246c91fc10c7"
+        },
+        {
+          "path": "enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt",
+          "size": 1071,
+          "sha256": "433da96087fd9b91afd44c6350ca92da53167c9636a0a71e428f71036d8c372f"
+        },
+        {
+          "path": "licenses/mfg-universal/MANAGER-LICENSE.txt",
+          "size": 2819,
+          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
+        },
+        {
+          "path": "licenses/mfg-universal/THIRD_PARTY_NOTICES.md",
+          "size": 9039,
+          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
+        },
+        {
+          "path": "licenses/mfg-universal/nis.license.txt",
+          "size": 1199,
+          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
+        },
+        {
+          "path": "licenses/mfg-universal/nvngx_dlss.license.txt",
+          "size": 27316,
+          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
+        },
+        {
+          "path": "licenses/mfg-universal/reflex.license.txt",
+          "size": 20504,
+          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+        }
+      ],
+      "contentId": "dd271afbb56e834f49d02cb96239b0271f28d7174b33062f50d203927080e106",
+      "archive": "mfg-universal-dd271afbb56e834f.zip",
+      "size": 4980335,
+      "sha256": "ce5c7a5021338d212919d058605472b52afe4c6920404e269a0a6636230c905a",
+      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/mfg-universal-dd271afbb56e834f.zip"
+    },
+    {
+      "id": "localization",
+      "name": "中文适配与预加载桥接",
+      "component": "localization",
+      "version": "zh1.10",
+      "bundled": true,
+      "files": [
+        {
+          "path": "enhanced/zh-cn/dlss5-zh-cn.addon32",
+          "size": 839168,
+          "sha256": "5b15891ad240093e1e798540854824ac52f248a96703690132246ca172bf3faa"
+        },
+        {
+          "path": "enhanced/zh-cn/dlss5-zh-cn.addon64",
+          "size": 828928,
+          "sha256": "41f5e109dfcb24d56e656da8dee31dc4f013a552173aed9602c68adef9d0d4d5"
+        },
+        {
+          "path": "enhanced/zh-cn/winmm.dll",
+          "size": 228352,
+          "sha256": "d46783325e8c834bad740e1dc4b0296caabb9d193a9203905b2f52308c5660fa"
+        }
+      ],
+      "contentId": "627f2e854c7bed8623f1ea378a9afe9469af8dc645e10455825f5d4169ea32af"
+    }
+  ]
+}

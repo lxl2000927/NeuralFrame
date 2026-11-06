@@ -23,15 +23,28 @@
       dialog.showModal(); dialog.querySelector('[data-review-cancel]').focus();
     });
   }
+  async function prepare(dependencies) {
+    const dialog=document.createElement('dialog');dialog.className='component-dialog';
+    dialog.innerHTML='<header><h2>准备配套组件</h2></header><div class="component-dialog-body"><p data-progress role="status">正在检查已有缓存…</p><progress style="width:100%"></progress><p class="hint">仅下载当前操作需要的组件。完成后保留在独立缓存，软件升级无需重复下载；此时尚未修改游戏。</p></div><footer><button type="button" class="ghost">取消下载</button></footer>';
+    document.body.append(dialog);dialog.showModal();
+    const cancel=()=>{root.lab.componentCancelPrepare?.();dialog.querySelector('button').disabled=true;dialog.querySelector('[data-progress]').textContent='正在取消…';};
+    dialog.querySelector('button').onclick=cancel;dialog.oncancel=e=>{e.preventDefault();cancel();};
+    const unsubscribe=root.lab.onComponentProgress?.(p=>{
+      const progress=dialog.querySelector('progress');
+      if(p.total){progress.max=p.total;progress.value=p.loaded;}else progress.removeAttribute('value');
+      dialog.querySelector('[data-progress]').textContent=`${p.name} · ${p.stage==='download'?((p.loaded/1048576).toFixed(1)+' / '+(p.total/1048576).toFixed(1)+' MB'):p.stage==='verify'?'校验中':p.stage==='ready'?'已就绪':'检查本地缓存'}`;
+    });
+    try{return await root.lab.componentPrepare(dependencies);}finally{unsubscribe?.();dialog.close();dialog.remove();}
+  }
   async function run(operation) {
     if (busy) return {ok:false,message:'另一个组件操作正在进行，请先完成或取消。'};
     busy = true;
     try {
       let result = await operation();
       for (let tries = 0; result?.dependencies?.length && tries < 3; tries++) {
-        const ready = await root.ask({ title:'准备预览所需的组件', body:`${result.message}\n\n只准备管理器缓存，完成后重新生成文件清单，不会在这一步安装到游戏。`, confirm:'准备缓存', cancel:'取消', tone:'accent' });
+        const ready = await root.ask({ title:'准备预览所需的组件', body:`${result.message}${result.downloads?.length ? '\n\n所需组件（已有缓存将复用）：\n'+result.downloads.map(p=>p.name+' · '+(p.size/1048576).toFixed(1)+' MB').join('\n') : ''}\n\n只准备管理器缓存，完成后重新生成文件清单，不会在这一步安装到游戏。`, confirm:'准备缓存', cancel:'取消', tone:'accent' });
         if (!ready) return {ok:false,cancelled:true};
-        const prepared = await root.lab.componentPrepare(result.dependencies);
+        const prepared = await prepare(result.dependencies);
         if (!prepared?.ok) return prepared;
         result = await operation();
       }
@@ -49,7 +62,7 @@
     if (box) return;
     box = document.createElement('section'); box.className = 'component-inventory';
     box.innerHTML = '<div class="component-heading"><div><h3>游戏组件与版本锁定</h3><p class="hint">按需读取磁盘文件，不在后台持续扫描。</p></div><button type="button" class="ghost" data-component-load>查看组件</button></div><div class="component-inventory-body" hidden></div>';
-    container.prepend(box);
+    container.append(box);
     if(root.lab.libraryComponents){const choose=document.createElement('button');choose.className='ghost';choose.textContent='选择组件版本';choose.onclick=()=>root.componentLibrary.open(dir);box.querySelector('.component-heading').append(choose);}
     const runtime = root.runtimeView?.mount(box, dir);
     const body = box.querySelector('.component-inventory-body'), load = box.querySelector('[data-component-load]');
@@ -77,5 +90,5 @@
     };
     load.onclick = refresh;
   }
-  root.componentReview = { run, mount };
+  root.componentReview = { run, mount, prepare };
 })(window);

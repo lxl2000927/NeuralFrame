@@ -305,7 +305,7 @@
     const { d, game, art, cover, hero, pick, dir, upToDate, inGameDlss } = context;
     const shots = [hero, cover, game.poster && game.poster.url]
       .filter((one, index, all) => one && all.indexOf(one) === index);
-    const name = art ? art.name : game.name;
+    const name = art?.name || game.name;
     const kicker = String(name).split(/[:\u2013-]/)[0].trim().toUpperCase();
     const genres = (art && art.genres ? art.genres : []).slice(0, 3);
     const ready = Boolean(d.ok && pick && !pick.installIssue && routesFor(pick).length);

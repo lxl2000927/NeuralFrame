@@ -1,0 +1,8 @@
+/* Preserve the translated standalone overlay's typography independently of
+   the manager layout. */
+:root { --ui-font: "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+body, button, input, select, textarea, [data-overlay-theme] .ol-panel.ol-compact { font-family: var(--ui-font); }
+body { font-size: 14px; line-height: 1.55; }
+:root[data-theme="light"] { --muted: #566574; --dim: #647282; }
+:root[data-theme="dark"] { --muted: #b1bdcc; --dim: #9ba9ba; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

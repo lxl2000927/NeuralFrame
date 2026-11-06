@@ -26,7 +26,7 @@ class ComponentLibrary {
   directory(p){return safe(path.join(this.root,'packages'),p.id);}
   async verify(p){for(const f of p.files){const file=safe(this.directory(p),f.rel);if(!fs.existsSync(file)||await digest(file)!==f.sha256)throw fail('组件文件已变化或缺失，请重新下载：'+f.rel);}return p;}
   compatibility(p){const def=DEFINITIONS[p.component];if(def?.pinned)return {ready:false,label:'随汉化适配层维护',reason:'保留现有中文面板；不单独替换这个适配层。'};
-    if(['feeder','reshade','preloader','optiscaler'].includes(p.component))return {ready:false,label:'由安装路线成组管理',reason:'包含配套宿主、图层或加载链。可单独下载入库，应用仍使用现有安装路线的已适配组合。'};
+    if(def?.managedRoute||['feeder','reshade','preloader','optiscaler'].includes(p.component))return {ready:false,label:'由安装路线成组管理',reason:'包含配套宿主、图层或加载链。可单独下载入库，应用仍使用现有安装路线的已适配组合。'};
     if(p.trustedAdapter||['dlss-sr','dlss-nr'].includes(p.component))return {ready:true,label:'可选择',reason:p.component==='dlss-nr'?'应用前还会检查实际 GPU 架构。':'文件校验通过，游戏内效果仍需验证。'};
     return {ready:false,label:'已入库 · 等待适配',reason:'此版本尚未验证现有汉化面板、配置协议或组件依赖；可以下载保留，暂不替换游戏中的组件。'};}
   async importPackage(spec){

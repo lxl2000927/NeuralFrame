@@ -1,6 +1,6 @@
 {
   "name": "dlss5-swapper-enhanced",
-  "version": "0.1.0",
+  "version": "0.1.8",
   "distribution": {
     "channel": "independent",
     "releaseRepository": "lxl2000927/DLSS5-Swapper-Enhanced",
@@ -16,25 +16,34 @@
     "test:payload": "node scripts/test-feeder-payload.js",
     "test:optiscaler": "node scripts/test-optiscaler-payload.js",
     "payload": "node scripts/collect-payload.js",
-    "prebuild": "npm run payload",
+    "prebuild": "node scripts/verify-runtime-bootstrap.js",
     "build": "electron-builder --win",
     "build:linux": "electron-builder --linux AppImage deb",
     "icon": "electron scripts/make-icon.js",
     "build:portable": "electron-builder --win portable",
     "overlay:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-overlay.ps1",
-    "overlay:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-overlay.ps1"
+    "overlay:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-overlay.ps1",
+    "prebuild:portable": "node scripts/verify-runtime-bootstrap.js"
   },
-  "author": { "name": "lxl2000927", "url": "https://github.com/lxl2000927" },
-  "repository": { "type": "git", "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced.git" },
+  "author": {
+    "name": "lxl2000927",
+    "url": "https://github.com/lxl2000927"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced.git"
+  },
   "homepage": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced",
-  "bugs": { "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/issues" },
+  "bugs": {
+    "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/issues"
+  },
   "license": "MIT",
   "dependencies": {
     "extract-zip": "^2.0.1"
   },
   "devDependencies": {
     "electron": "^33.2.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "26.15.3"
   },
   "build": {
     "appId": "io.github.lxl2000927.dlss5swapper.enhanced",
@@ -50,15 +59,8 @@
     ],
     "extraResources": [
       {
-        "from": "payload",
+        "from": "dist/runtime-bootstrap",
         "to": "payload",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "addons",
-        "to": "addons",
         "filter": [
           "**/*"
         ]
@@ -67,7 +69,10 @@
         "from": "dist/overlay",
         "to": "overlay",
         "filter": [
-          "**/*"
+          "*.addon64",
+          "*.txt",
+          "*.md",
+          "LICENSE"
         ]
       }
     ],
@@ -89,8 +94,15 @@
       "artifactName": "DLSS5-Swapper-Enhanced-${version}-${arch}.${ext}"
     },
     "compression": "maximum",
-    "publish": { "provider": "github", "owner": "lxl2000927", "repo": "DLSS5-Swapper-Enhanced", "releaseType": "draft" },
+    "publish": {
+      "provider": "github",
+      "owner": "lxl2000927",
+      "repo": "DLSS5-Swapper-Enhanced",
+      "releaseType": "draft"
+    },
     "portable": {
+      "unpackDirName": true,
+      "useZip": true,
       "artifactName": "DLSS5-Swapper-Enhanced-${version}-Portable-x64.exe"
     },
     "nsis": {
@@ -105,7 +117,10 @@
       "installerHeaderIcon": "assets/app.ico",
       "deleteAppDataOnUninstall": false,
       "language": "2052",
-      "installerLanguages": ["zh_CN", "en_US"],
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
       "artifactName": "DLSS5-Swapper-Enhanced-${version}-Setup-x64.exe",
       "include": "build/installer.nsh"
     }

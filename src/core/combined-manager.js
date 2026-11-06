@@ -526,6 +526,19 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     targetApiLabel !== 'DirectX 11';
   const effectiveUserDataDir = userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced');
 
+  if (config.requirePayload) {
+    const repairNeural = neuralMode === undefined && mfgMode && mfgMode !== 'off' &&
+      (fs.existsSync(path.join(exeDir,'renodx-dlss5.addon64')) || fs.existsSync(path.join(exeDir,'renodx-dlss.addon64'))) &&
+      !fs.existsSync(path.join(exeDir,'nvngx_dlssnr.dll'));
+    const localModels = neuralModelId && neuralModelId !== '310.8.SF-v2'
+      ? neuralModels.listNeuralModels({payloadDir:effectivePayloadDir,userDataDir:effectiveUserDataDir,gpuName,hardwareProfile:effectiveProfile}) : [];
+    const customModel=localModels.some(m=>m.availableOnDisk&&(m.id===neuralModelId||m.aliases?.includes(neuralModelId)));
+    const isOpti = prevManifest?.route === 'optiscaler' || scan.install?.optiscaler?.installed ||
+      (fs.existsSync(path.join(exeDir,'OptiScaler.ini')) && !fs.existsSync(path.join(exeDir,'renodx-dlss5.addon64')));
+    await config.requirePayload({kind:'enhanced',config:{...config,hardwareProfile:effectiveProfile,runtimeStack:effectiveRuntimeStack},
+      route:neuralMode && neuralMode!=='off' ? (needsFullFeeder?'feeder':'native') : (isOpti?'optiscaler':'native'),
+      mfgRoute:isOpti?'optiscaler':'native',target,scan,repairNeural,customModel});
+  }
   let neuralResult = null;
   let mfgResult = null;
   let feederDeployed = false;
@@ -536,6 +549,14 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
   // 注意：拥有原生 DLSS 的现代 64 位 DX12/Vulkan 游戏 (!needsFullFeeder) 保持原有黄金逻辑 100% 不变。
   if (needsFullFeeder && neuralMode !== undefined && neuralMode !== 'off' && effectivePayloadDir) {
     const probe = scanSource(effectivePayloadDir);
+    // A user-imported model can bootstrap Feeder without downloading the
+    // default model first. Feed the selected, locally validated file into the
+    // same tracked installer; the later model selection still checks the GPU.
+    if (probe.ok && !probe.hasNeuralRendering && neuralModelId) {
+      const model=neuralModels.listNeuralModels({payloadDir:effectivePayloadDir,userDataDir:effectiveUserDataDir,gpuName,hardwareProfile:effectiveProfile})
+        .find(m=>m.availableOnDisk&&(m.id===neuralModelId||m.aliases?.includes(neuralModelId)));
+      if(model){probe.payload.push({name:'nvngx_dlssnr.dll',path:model.filePath,version:model.version});probe.hasNeuralRendering=true;}
+    }
     if (probe && probe.ok && probe.feeder) {
       if (['d3d8', 'd3d9', 'ddraw'].includes(targetApi)) {
         probe.feeder.dgVoodooDir = await ensureDgVoodoo(effectiveUserDataDir);
@@ -818,7 +839,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
       });
     }
   } else if (
-    effectivePayloadDir &&
+    neuralMode === undefined && mfgMode && mfgMode !== 'off' && effectivePayloadDir &&
     (fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) || fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64'))) &&
     !fs.existsSync(path.join(exeDir, 'nvngx_dlssnr.dll'))
   ) {

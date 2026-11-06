@@ -8,7 +8,17 @@ const fs = previewFs.fs;
 const { ComponentReview } = require('./src/core/component-review');
 let componentReview;
 const reviews = () => componentReview || (componentReview = new ComponentReview(app.getPath('userData')));
-let unifiedComponents, componentUpdates;
+let unifiedComponents, componentUpdates, runtimeCache;
+const onDemandPayload = () => app.isPackaged || process.env.DLSS5_LIGHTWEIGHT === '1';
+function runtimes() {
+  return runtimeCache ||= new (require('./src/core/runtime-payload').RuntimePayload)(app.getPath('userData'), {
+    bundledRoot: app.isPackaged ? path.join(process.resourcesPath,'payload') : path.join(__dirname,'dist/runtime-bootstrap'),
+    fetcher: (...args) => require('electron').net.fetch(...args)
+  });
+}
+async function requireRuntime(options) {
+  if (onDemandPayload()) await runtimes().require(require('./src/core/runtime-payload').requiredPacks(options));
+}
 function components() {
   return unifiedComponents ||= new (require('./src/core/component-library').ComponentLibrary)(app.getPath('userData'), {
     payloadDir: resolvePayloadRoot(), overlayDir: app.isPackaged ? path.join(process.resourcesPath, 'overlay') : path.join(__dirname, 'dist/overlay')
@@ -74,8 +84,9 @@ const community = () => communityClient || (communityClient = new CommunityClien
   baseUrl: process.env.DLSS5_COMMUNITY_API || undefined,
   getAdminToken: () => adminAccess().load()
 }));
+const communityAvailable = () => typeof app.isPackaged !== 'boolean' || Boolean(process.env.DLSS5_COMMUNITY_API);
 const communityAnswer = async work => {
-  if (typeof app.isPackaged === 'boolean' && !process.env.DLSS5_COMMUNITY_API) {
+  if (!communityAvailable()) {
     return { ok: false, error: 'community_offline', message: '增强版已彻底断开原作者私服，运行于纯本地安全离线模式', status: null };
   }
   if (!communityUsed()) return { ok: false, error: 'community_opt_in', message: 'Community has not been opened yet', status: null };
@@ -215,7 +226,7 @@ function addonLibrary() {
   }
 
   // The shipped build is the base, not a choice, so it is not offered.
-  const base = p && path.basename(p.source.addon).toLowerCase();
+  const base = p?.source.addon ? path.basename(p.source.addon).toLowerCase() : null;
   const chosen = new Set(enabledAddons());
   return found
     .filter((r) => !r.shipped && (r.custom || r.id !== integratedId))
@@ -232,7 +243,7 @@ function addonLibrary() {
 function payload(raw) {
   // Installed, the payload rides along as an extra resource; from source it
   // sits beside main.js.
-  for (const dir of [path.join(process.resourcesPath || '', 'payload'), path.join(__dirname, 'payload')]) {
+  for (const dir of (onDemandPayload() ? [runtimes().payloadDir] : [path.join(process.resourcesPath || '', 'payload'), path.join(__dirname, 'payload')])) {
     const probe = scanSource(dir);
     if (probe.ok) {
       const setup = fs.readdirSync(dir).find((f) => /^ReShade_Setup_.*_Addon\.exe$/i.test(f));
@@ -243,7 +254,7 @@ function payload(raw) {
       if (!raw) {
         const state = loadState();
         const list = state.addons || (state.addon ? [state.addon] : []);
-        const base = path.basename(probe.addon).toLowerCase();
+        const base = path.basename(probe.addon || '').toLowerCase();
         const over = list.find((f) => fs.existsSync(f) && path.basename(f).toLowerCase() === base);
         if (over) probe.addon = over;
       }
@@ -522,7 +533,7 @@ ipcMain.handle('boot', () => {
     payloadMissing: (() => {
       // Never let a probe stop the app opening: a launch that fails because it
       // could not check its own files is worse than the missing files.
-      try { return payload() ? null : payloadMissing().message; } catch { return null; }
+      try { return onDemandPayload() || payload() ? null : payloadMissing().message; } catch { return null; }
     })(),
     theme: state.theme || 'light',
     // Which of the two skins draws the app. Theme 1 is the original design and
@@ -585,6 +596,11 @@ ipcMain.handle('history', () => {
   let warning = false;
   const rows = history().list(mutationBusy ? [] : knownFolders(loadState(), lastGames), () => { warning = true; });
   return { rows, warning };
+});
+ipcMain.handle('history-clear', () => {
+  if (mutationBusy) return { ok: false, code: 'busy' };
+  try { history().clear(); return { ok: true }; }
+  catch (error) { return { ok: false, code: 'historyClearFailed', message: error.message }; }
 });
 
 // One file with everything a report needs: the app's own log, the game's
@@ -904,7 +920,7 @@ function markCommunityUsed() {
   saveState(state);
   startNotices();
 }
-const noticesOn = () => loadState().communityNotices !== false && communityUsed();
+const noticesOn = () => communityAvailable() && loadState().communityNotices !== false && communityUsed();
 
 async function pollNotices() {
   if (noticeBusy || !noticesOn() || !win || win.isDestroyed()) return;
@@ -922,6 +938,7 @@ async function pollNotices() {
 
 function startNotices() {
   if (noticeTimer) clearInterval(noticeTimer);
+  if (!communityAvailable()) return;
   noticeTimer = setInterval(() => { pollNotices(); }, NOTICE_EVERY);
   setTimeout(() => { pollNotices(); }, 8000);
 }
@@ -1317,7 +1334,7 @@ function enabledAddons() {
 // file on disk, so it lands on top rather than beside it.
 function replacementAddon() {
   const p = payload(true);
-  if (!p) return null;
+  if (!p?.source.addon) return null;
   const base = path.basename(p.source.addon).toLowerCase();
   return enabledAddons().find((f) => path.basename(f).toLowerCase() === base) || null;
 }
@@ -1326,7 +1343,7 @@ function replacementAddon() {
 // be written, so the first switched on keeps the name.
 function companionAddons() {
   const p = payload(true);
-  if (!p) return [];
+  if (!p?.source.addon) return [];
   const taken = new Set([path.basename(p.source.addon).toLowerCase()]);
   const out = [];
   for (const f of enabledAddons()) {
@@ -1800,13 +1817,11 @@ async function exclusiveMutation(work) {
   if (mutationBusy) return { ok: false, code: 'errJobBusy' };
   mutationBusy = true;
   try { return await work(); }
-  catch (err) { return { ok: false, code: err.code, message: err.message, dependencies: err.dependencies }; }
+  catch (err) { return { ok: false, code: err.code, message: err.message, dependencies: err.dependencies, downloads: err.downloads }; }
   finally { mutationBusy = false; }
 }
 
 ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, reviewToken) => exclusiveMutation(() => managedReview(dir, { kind: 'install', exePath, requestedRoute, requestedApi }, async () => {
-  const p = payload();
-  if (!p) return { ok: false, ...payloadMissing() };
   const scan = await scanGame(dir);
   if (!scan.chosen) return { ok: false, message: 'No game executable found' };
 
@@ -1844,6 +1859,9 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
 
   const send = (e) => { if (!previewFs.active()) event.sender.send('job', e); };
   await guards.assertGameClosed(dir, target.path);
+  await requireRuntime({kind:'install',route,target,scan});
+  const p = payload();
+  if (!p) return {ok:false,...payloadMissing()};
   if (fs.existsSync(journal.pendingPath(dir))) return { ok: false, code: 'errBackendRecovery' };
   const old = backends.readManifest(dir);
   const changed = old && (old.route !== route || old.game.api !== api || old.game.exe.toLowerCase() !== target.rel.toLowerCase());
@@ -2086,6 +2104,7 @@ const mfgManager = require('./src/core/mfg-manager');
 const combinedManager = require('./src/core/combined-manager');
 
 function resolvePayloadRoot() {
+  if (onDemandPayload()) return runtimes().payloadDir;
   const tempDirs = [];
   try {
     const tmp = os.tmpdir();
@@ -2241,7 +2260,8 @@ ipcMain.handle('enhanced-apply', (event, dir, config, reviewToken) => exclusiveM
     reshadeProxy: chosenExe ? reshadeProxyPreference(state, dir, chosenExe) : 'dxgi',
     ...(config || {}),
     payloadDir: resolvePayloadRoot(),
-    userDataDir: app.getPath('userData')
+    userDataDir: app.getPath('userData'),
+    requirePayload: requireRuntime
   }, send);
   const manifest = backends.readManifest(dir);
   if (manifest) saveOperation(dir, manifest, 'install', send);
@@ -2256,6 +2276,7 @@ ipcMain.handle('component-inventory', async (_event, dir) => {
 ipcMain.handle('library-components', (_event, dir) => exclusiveMutation(async () => {
   const result=await components().list(dir);
   result.updates=updates().status();
+  result.runtimePacks=runtimes().list();
   if(dir){result.inventory=await reviews().inventory(dir);result.rollback=backends.readManifest(dir)?.componentHistory?.at(-1)||null;}
   return result;
 }));
@@ -2298,9 +2319,16 @@ ipcMain.handle('component-lock', (_event, dir, enabled) => exclusiveMutation(asy
   if (typeof enabled !== 'boolean') throw new Error('无效的锁定状态');
   return reviews().setLock(dir, enabled);
 }));
-ipcMain.handle('component-prepare', (_event, dependencies) => exclusiveMutation(async () => {
-  if (!Array.isArray(dependencies) || dependencies.length > 4) throw new Error('无效的缓存准备请求');
-  for (const dependency of new Set(dependencies)) {
+ipcMain.handle('component-cancel-prepare', () => runtimes().cancel());
+ipcMain.handle('component-prepare', (event, dependencies) => exclusiveMutation(async () => {
+  if (!Array.isArray(dependencies) || dependencies.length > 24) throw new Error('无效的缓存准备请求');
+  const runtimeIds=dependencies.filter(d=>typeof d==='string'&&d.startsWith('runtime:')).map(d=>d.slice(8));
+  if(runtimeIds.length){
+    const cache=runtimes();cache.onProgress=p=>{if(!event.sender.isDestroyed())event.sender.send('component-progress',p);};
+    try{await cache.prepare(runtimeIds);if(unifiedComponents)unifiedComponents.initialized=false;}
+    finally{cache.onProgress=()=>{};}
+  }
+  for (const dependency of new Set(dependencies.filter(d=>!runtimeIds.some(id=>d==='runtime:'+id)))) {
     if (dependency === 'dgvoodoo') await ensureDgVoodoo(app.getPath('userData'));
     else if (dependency === 'lumenite') await ensureLumenite(app.getPath('userData'));
     else if (typeof dependency === 'string' && dependency.startsWith('optiscaler:') && optiscaler.RELEASES.some(r => r.version === dependency.slice(11))) await optiscaler.ensureOptiScaler(app.getPath('userData'), dependency.slice(11));

@@ -12,8 +12,8 @@
   <link rel="stylesheet" href="chat.css" />
   <link rel="stylesheet" href="theme2.css" />
   <link rel="stylesheet" href="enhanced-ui.css" />
-  <link rel="stylesheet" href="ui-polish.css" />
-  <link rel="stylesheet" href="library-polish.css" />
+  <link rel="stylesheet" href="layout-compat.css" />
+  <link rel="stylesheet" href="addon-library.css" />
   <link rel="stylesheet" href="component-review.css" />
   <link rel="stylesheet" href="component-library.css" />
 </head>
@@ -230,7 +230,10 @@
       <section class="view" id="view-history">
         <div class="section-head">
           <h3 data-i18n="navHistory">History</h3>
-          <button class="ghost sm" id="copyHistory" data-i18n="copyHistory" disabled>Copy history</button>
+          <div class="history-actions">
+            <button class="ghost sm" id="copyHistory" data-i18n="copyHistory" disabled>Copy history</button>
+            <button class="ghost sm" id="clearHistory" data-i18n="clearHistory" disabled>Clear history</button>
+          </div>
         </div>
         <p class="hint hidden" id="historyWarning" role="status"></p>
         <div class="glass" id="history"></div>

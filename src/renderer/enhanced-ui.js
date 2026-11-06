@@ -208,19 +208,19 @@
       : '未安装';
     const latestModelText = nr.latestCompatibleModel
       ? `${nr.latestCompatibleModel.name} · 文件版本 ${nr.latestCompatibleModel.version}`
-      : '暂无可用的本地兼容模型';
+      : '兼容模型首次使用时下载，完成后校验 GPU 架构';
     const runtimeVerText = nr.runtimeVersion ? `DLSS SR ${nr.runtimeVersion}` : '未检测到 DLSS SR 运行库';
     const gpuCompatText = nr.gpuCompatibility
       ? `${nr.gpuCompatibility.badge} · ${nr.gpuCompatibility.reason}`
       : '尚未检查 GPU 架构';
     const modelChoices = nr.availableModels || modelsInfo?.models || [];
-    const modelOptions = modelChoices.map(m => `<option value="${escHtml(m.id)}" ${draft.neuralModelId === m.id ? 'selected' : ''} ${!m.availableOnDisk || m.compatStatus === 'incompatible' ? 'disabled' : ''}>${escHtml(m.name)} · ${escHtml(m.version || '版本未知')} · ${m.availableOnDisk ? '本地可用' : '未导入'}</option>`).join('');
+    const modelOptions = modelChoices.map(m => `<option value="${escHtml(m.id)}" ${draft.neuralModelId === m.id ? 'selected' : ''} ${(!m.availableOnDisk && !m.downloadable) || m.compatStatus === 'incompatible' ? 'disabled' : ''}>${escHtml(m.name)} · ${escHtml(m.version || '版本未知')} · ${m.availableOnDisk ? '本地可用' : m.downloadable ? '首次使用时下载' : '未导入'}</option>`).join('');
     const legacyAvailable = modelChoices.some(m => m.availableOnDisk && m.role === 'legacy' && m.compatStatus !== 'incompatible');
 
     // 2. 多帧生成管理 状态判定
     const mfgBadgeHtml = renderStatusBadge(mfg.status, mfg.statusBadge);
 
-    const effectiveMultiplierText = '请使用顶部运行时检测；配置倍率和兼容性评估不代表已生效。';
+    const effectiveMultiplierText = '请在“运行时检测”中查看；配置倍率和兼容性评估不代表已生效。';
 
     const dlssgVerText = mfg.dlssg?.present
       ? `${mfg.dlssg.version} (${mfg.dlssg.valid ? '原生 NVIDIA NGX DLSS-G' : '非原生 DLL'})`
@@ -304,7 +304,7 @@
                   <span>旧版模型</span><small>${legacyAvailable ? '本地已导入' : '需先导入文件'}</small>
                 </button>
                 <button type="button" class="enh-seg-btn ${draft.neuralMode === 'latest_compatible' ? 'active' : ''}" data-nr-mode="latest_compatible">
-                  <span>本地兼容模型</span><small>不自动联网更新</small>
+                  <span>兼容模型</span><small>按需下载 / 使用缓存</small>
                 </button>
               </div>
             </div>
@@ -331,8 +331,8 @@
             </div>
 
             <div class="enh-actions-single">
-              <button type="button" class="enh-btn single-load" data-enh-act="apply-nr">🎯 单独加载 DLSS 5 神经渲染</button>
-              <button type="button" class="enh-btn sm-import" data-enh-act="import-nr" title="手动导入外部合法的 nvngx_dlssnr.dll">导入外部 .dll</button>
+              <button type="button" class="enh-btn single-load" data-enh-act="apply-nr" title="先预览文件变更，再确认应用">应用神经渲染</button>
+              <button type="button" class="enh-btn sm-import" data-enh-act="import-nr" title="导入 nvngx_dlssnr.dll 到模型库">导入 DLL…</button>
             </div>
           </section>
 
@@ -340,8 +340,8 @@
           <section class="enh-card" aria-label="多帧生成管理">
             <div class="enh-card-head">
               <div class="enh-card-title">
-                <h4>多帧生成管理 <small style="font-weight:500;color:var(--muted)">模块 B · 全系 40/50 显卡 x3/x4 多帧生成</small></h4>
-                <p>全面兼容笔记本 40 系列、40 系桌面卡与 50 系列桌面卡的原生 NVIDIA DLSS-G 多帧生成控制器</p>
+                <h4>多帧生成管理 <small style="font-weight:500;color:var(--muted)">模块 B · DLSS-G 多帧生成</small></h4>
+                <p>管理 NVIDIA DLSS-G 运行库与补帧倍率；实际支持和生效状态以当前游戏检测结果为准。</p>
               </div>
               ${mfgBadgeHtml}
             </div>
@@ -391,7 +391,7 @@
             </div>
 
             <div class="enh-actions-single">
-              <button type="button" class="enh-btn single-load" data-enh-act="apply-mfg">🎯 单独加载 MFG 多帧生成 (${escHtml(displayMode(draft.mfgMode))})</button>
+              <button type="button" class="enh-btn single-load" data-enh-act="apply-mfg" title="先预览文件变更，再确认应用">应用帧生成</button>
             </div>
           </section>
 
@@ -442,9 +442,9 @@
             </div>
 
             <div class="enh-master-bar">
-              <button type="button" class="enh-btn master-load" data-enh-act="apply-combined">🚀 同时加载 DLSS 5 + MFG 多帧生成（推荐黄金组合 · ${escHtml(activeProfileMeta.label.split(' ')[1])} · MFG ${escHtml(displayMode(draft.mfgMode))}）</button>
-              <button type="button" class="enh-btn danger-restore" data-enh-act="restore-all" ${coExec.backupCheck?.hasManifest ? '' : 'disabled'}>⏪ 一键卸载并恢复游戏原始状态</button>
-              <button type="button" class="enh-btn" data-enh-act="refresh-status">🔄 刷新状态</button>
+              <button type="button" class="enh-btn master-load" data-enh-act="apply-combined">预览并应用组合</button>
+              <button type="button" class="enh-btn danger-restore" data-enh-act="restore-all" ${coExec.backupCheck?.hasManifest ? '' : 'disabled'}>还原游戏原始文件</button>
+              <button type="button" class="enh-btn" data-enh-act="refresh-status">刷新状态</button>
             </div>
           </section>
         </div>
@@ -667,6 +667,10 @@
     }
     const render = () => {
       container.innerHTML = buildThreePanelsHtml(dir, status, modelsInfo, container.dataset.enhPrefix || 'sheet');
+      // Bound long native selects without changing the upstream field layout.
+      for (const select of container.querySelectorAll('select')) {
+        select.title = select.selectedOptions[0]?.textContent || '';
+      }
       wirePanelEvents(container, dir, status, render);
       root.componentReview?.mount(container, dir);
     };
@@ -715,7 +719,7 @@
 
     const [hwRes, modelsInfo] = await Promise.all([
       cachedHw ? Promise.resolve(cachedHw) : root.lab.enhancedHardware(),
-      cachedModels ? Promise.resolve(cachedModels) : root.lab.enhancedModels(activeGlobalProfile)
+      root.lab.enhancedModels(activeGlobalProfile)
     ]);
     cachedHw = hwRes;
     cachedModels = modelsInfo;
@@ -740,7 +744,9 @@
       powerMaxW: 140
     };
 
-    const modelsRows = (modelsInfo?.models || []).map((m) => `
+    const modelList = modelsInfo?.models || [];
+    const availableModelCount = modelList.filter(m => m.availableOnDisk).length;
+    const modelsRows = modelList.map((m) => `
       <tr>
         <td><b>${escHtml(m.name)}</b><br><small style="color:var(--muted)">${escHtml(m.sourceType || '来源未记录')}</small></td>
         <td><code>${escHtml(m.version || '未知')}</code><br><small>${m.availableOnDisk ? '已读取本地文件' : '目录记录 · 未导入'}</small></td>
@@ -786,19 +792,21 @@
         <!-- 目标游戏选择器 -->
         <div class="enh-toolbar-bar">
           <label>
-            <span>选择目标游戏目录：</span>
+            <span>目标游戏</span>
             <select id="enhGameSelect">
               ${games.length
-                ? games.map((g) => `<option value="${escHtml(g.dir)}" ${g.dir === selectedViewGameDir ? 'selected' : ''}>${escHtml(g.name)} (${escHtml(g.dir)})</option>`).join('')
-                : '<option value="">未检测到游戏，请点击右侧“浏览并添加游戏目录”添加测试程序</option>'}
+                ? games.map((g) => `<option value="${escHtml(g.dir)}" title="${escHtml(g.dir)}" ${g.dir === selectedViewGameDir ? 'selected' : ''}>${escHtml(g.name)} (${escHtml(g.dir)})</option>`).join('')
+                : '<option value="">尚无游戏，请点击“添加游戏”</option>'}
             </select>
           </label>
           <div class="enh-actions" style="padding-top:0">
-            <button type="button" class="enh-btn" id="enhBrowseGameBtn">浏览并添加游戏目录…</button>
-            <button type="button" class="enh-btn" id="enhGlobalImportBtn">导入自定义 nvngx_dlssnr.dll…</button>
-            <button type="button" class="enh-btn" id="enhCheckUpdateBtn">🔄 检查 GitHub 新版本</button>
+            <button type="button" class="enh-btn" id="enhBrowseGameBtn" title="浏览并添加游戏目录">添加游戏…</button>
+            <button type="button" class="enh-btn" id="enhGlobalImportBtn" title="导入自定义 nvngx_dlssnr.dll 到模型库">导入模型…</button>
+            <button type="button" class="enh-btn" id="enhCheckUpdateBtn" title="检查软件更新">检查更新</button>
           </div>
         </div>
+
+        <p id="enhToolbarFeedback" role="status" aria-live="polite" class="hint"></p>
 
         <!-- 三大核心管理器挂载点 -->
         <div id="enhStandaloneMount" data-enh-prefix="view"></div>
@@ -808,9 +816,10 @@
           <div class="enh-card-head">
             <div class="enh-card-title">
               <h4>神经渲染模型文件库</h4>
-              <p>本地文件按 SHA-256 去重，版本读取自 DLL。未导入条目仅为历史目录记录；架构检查不代表游戏内生效。</p>
+              <p>本地可用 <b id="enhLocalModelCount">${availableModelCount}</b> 个 · 未导入 ${modelList.length - availableModelCount} 个目录记录。兼容模型首次使用时下载，已缓存版本可离线使用；同一文件的不同名称按 SHA-256 去重。</p>
+              <p>更多版本可到组件库检查在线更新或导入本地 DLL。DLSS SR / FG 运行库版本与神经模型分别管理；架构检查不代表游戏内生效。</p>
             </div>
-            ${renderStatusBadge('untested', '本地文件库 · 非在线更新源')}
+            <button type="button" class="enh-btn" id="enhGetModelsBtn">获取更多神经模型</button>
           </div>
           <div class="enh-table-wrap">
             <table class="enh-table">
@@ -832,6 +841,7 @@
       </div>
     `;
 
+    document.getElementById('enhGetModelsBtn').onclick = () => root.componentLibrary.open(selectedViewGameDir, 'dlss-nr');
     const gameSelect = document.getElementById('enhGameSelect');
     const mount = document.getElementById('enhStandaloneMount');
     if (gameSelect) {
@@ -844,13 +854,18 @@
     const browseBtn = document.getElementById('enhBrowseGameBtn');
     if (browseBtn) {
       browseBtn.onclick = async () => {
-        const picked = await root.lab.pickFolder();
-        if (picked) {
-          await root.lab.addGameByPath(picked);
+        browseBtn.disabled = true;
+        const feedback = document.getElementById('enhToolbarFeedback');
+        if (feedback) feedback.textContent = '';
+        try {
+          const picked = await root.lab.addGame();
+          if (!picked) return;
           if (typeof root.load === 'function') await root.load();
           selectedViewGameDir = picked;
           await renderEnhancedView();
-        }
+        } catch (error) {
+          if (feedback) feedback.textContent = `添加游戏未完成：${localError(error.message, error.code)}`;
+        } finally { browseBtn.disabled = false; }
       };
     }
 

@@ -214,6 +214,7 @@ const RUNTIME_STACKS = Object.freeze([
 ]);
 
 function resolvePayloadDir(payloadDir) {
+  if (payloadDir) return payloadDir;
   const os = require('os');
   const tempDirs = [];
   try {
@@ -525,7 +526,7 @@ function listNeuralModels({ payloadDir, userDataDir, gpuName = 'NVIDIA GeForce R
   }
 
   // 自动将内置模型异步持久化备份至 userDataDir，彻底防止便携版运行期间 %TEMP% 被清理工具或二次启动删除
-  if (bundledPath && persistentBundledPath && path.resolve(bundledPath) !== path.resolve(persistentBundledPath)) {
+  if (bundledPath && persistentBundledPath && !bundledPath.includes('component-library-v1') && path.resolve(bundledPath) !== path.resolve(persistentBundledPath)) {
     try {
       if (!fs.existsSync(persistentBundledPath)) {
         fs.mkdirSync(path.dirname(persistentBundledPath), { recursive: true });
@@ -536,7 +537,7 @@ function listNeuralModels({ payloadDir, userDataDir, gpuName = 'NVIDIA GeForce R
 
   // 索引只提供用户备注；版本、身份、可用性均重新读取文件（带状态缓存）。
   const localSources = [];
-  if (bundledInspection) localSources.push({ ...bundledInspection, sourceType: '随包内置 / 本地缓存', bundled: true });
+  if (bundledInspection) localSources.push({ ...bundledInspection, sourceType: '配套版本 / 本地缓存', bundled: true });
   for (const row of readCustomModelsIndex(userDataDir)) {
     const info = inspectNeuralModelBinary(row.filePath);
     if (!info.valid || localSources.some(m => m.sha256 === info.sha256)) continue;
@@ -578,7 +579,8 @@ function listNeuralModels({ payloadDir, userDataDir, gpuName = 'NVIDIA GeForce R
   const models = MODEL_DATABASE.map(entry => {
     const local = localSources.find(info => entry.sha256 && info.sha256 === entry.sha256);
     if (local) return asLocalModel(local, entry);
-    return { ...entry, availableOnDisk: false, filePath: null,
+    const downloadable=entry.id==='310.8.SF-v2';
+    return { ...entry, availableOnDisk: false, filePath: null, downloadable, downloadSize:downloadable?require('./runtime-catalog.json').packs.find(p=>p.id==='nr-3108').size:0,
       compatStatus: 'untested', compatBadge: '未导入',
       compatReason: '仅为历史目录记录；本地无匹配文件，未进行二进制校验。' };
   });

@@ -1,5 +1,15 @@
 # 0.1.0 源码开发与构建
 
+## 0.1.8 轻量打包补充
+
+0.1.8 将第三方运行库和插件改为首次使用时下载。发行包仅携带 `dist/runtime-bootstrap` 中的中文适配、预加载器和许可文件，以及 `dist/overlay` 中的 F8 桥接；不再将整个 `payload` 或 `addons` 目录打入程序。
+
+完整的 0.1.8 源码归档附带这些小组件。安装 npm 依赖后，`npm run build` 会先校验其指纹，再打包。`npm run build:portable` 只生成便携包；均不会自动重新采集或覆盖原生适配文件。日常源代码调试若要使用按需下载模式，可先设置环境变量 `DLSS5_LIGHTWEIGHT=1` 再运行 `npm start`。
+
+维护配套版本时，使用已验证的完整原生载荷运行 `python scripts/build-runtime-packs.py <输出目录>`，生成固定组件 ZIP、`src/core/runtime-catalog.json` 与 bootstrap。不要在组件原始文件发生变化后复用旧版本 URL；先校验并发布对应的独立组件资源集。此脚本不会修改现有游戏文件，也不会自动发布。
+
+以下内容记录 0.1.0 的离线完整载荷构建流程，不能直接用来制作 0.1.8 轻量发行包。
+
 本说明面向 Windows x64。普通用户直接使用 [0.1.0 发行包](https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/tag/v0.1.0)；运行发行包不需要安装开发环境。
 
 ## 代码与依赖
@@ -125,6 +135,20 @@ npx electron-builder --win portable nsis --x64 --publish never
 
 --publish never 用于只在本地构建。仓库中的 GitHub 发布配置不代表构建完成后可以省略人工核验。至少应检查版本和图标、资源是否齐全、程序能否启动、两个包内的核心文件、SHA-256 以及第三方许可证。
 
+0.1.1 起固定 electron-builder 26.15.3，并设置 portable.unpackDirName=true。这个版本的实际实现只有在该值为 true 时才使用每次启动独有的 NSIS $PLUGINSDIR；类型文档中关于 false 的描述与实现相反。不要按注释改成 false：固定解压目录会在重复启动、第二个实例退出时删除第一个实例仍需使用的面板插件。升级打包器后应重新运行实际双启动检查：
+
+~~~powershell
+node scripts/test-portable-isolation.cjs build-output/DLSS5-Swapper-Enhanced-0.1.1-Portable-x64.exe build-output/portable-isolation
+~~~
+
+检查使用隔离 TEMP，先保留第一个解压运行时，再启动并退出第二个运行时，验证两个目录不同、F8 插件仍可解析且各自退出后完成清理。不会启动管理器界面或修改游戏文件。
+
 软件版本配置位于 package.json / package-lock.json，独立更新仓库配置位于 package.json 的 distribution.releaseRepository。name: dlss5-swapper-enhanced 同时影响持久用户数据目录和桥接约定，修改时需同步处理迁移与原生编译配置。
 
 本说明描述源码开发入口和已验证资源的准备方式；未提供完整第三方 payload 的全自动重建，也不承诺不同机器构建得到与发行附件字节级相同的 EXE。
+
+## 便携版启动速度与目录隔离
+
+独立分支 0.1.7 的便携目标使用 `portable.useZip: true`。在本项目固定的 electron-builder 26.15.3 中，该选项走 `APP_DIR_64` / NSIS `File /r` 路径，使用非固实 zlib 逐文件压缩直接释放。不要把这个选项解释为更改发行文件扩展名：输出仍然是单个 EXE。
+
+`portable.unpackDirName: true` 必须一并保留。此固定版本的实际代码将它映射为每次启动专用的 `$PLUGINSDIR/app`；不要根据不同版本文档中的布尔描述改成共享目录。`scripts/test-portable-isolation.cjs` 会启动两次并检查第二个实例退出后，第一个实例的内置 F8 组件仍可读取，同时输出封装至探针就绪的耗时。

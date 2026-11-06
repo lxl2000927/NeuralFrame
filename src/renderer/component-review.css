@@ -1,4 +1,4 @@
-.component-inventory { border:1px solid var(--stroke); border-radius:14px; background:var(--panel); padding:18px; margin:0 0 20px; }
+.component-inventory { border:1px solid var(--stroke); border-radius:14px; background:var(--panel); padding:18px; margin:16px 0 0; }
 .component-heading,.component-lockbar { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .component-heading h3 { font-size:17px; margin:0 0 5px; }
 .component-heading button,.component-lockbar button { flex:none; }
