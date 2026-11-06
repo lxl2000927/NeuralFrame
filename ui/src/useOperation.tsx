@@ -11,7 +11,10 @@ type Prompt = {
   blocked?: boolean;
   resolve: (v: boolean) => void;
 };
-export function useOperation(onMessage: (s: string) => void) {
+export function useOperation(
+  onMessage: (s: string) => void,
+  onCompleted?: () => void,
+) {
   const running = useRef(false);
   const [busy, setBusy] = useState(false),
     [prompt, setPrompt] = useState<Prompt | null>(null),
@@ -125,6 +128,7 @@ export function useOperation(onMessage: (s: string) => void) {
       if (!result.ok)
         throw Error(result.message || result.code || "操作未完成");
       onMessage(result.recordWarning || "操作完成。");
+      onCompleted?.();
       return true;
     } catch (e) {
       onMessage(errorText(e));

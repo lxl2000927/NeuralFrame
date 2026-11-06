@@ -1,20 +1,31 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Gamepad2, X, LoaderCircle } from "lucide-react";
 import type { Game } from "./types";
+export { Select } from "./Select";
 export function Artwork({
   game,
   large = false,
+  poster = false,
 }: {
   game: Game;
   large?: boolean;
+  poster?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   const url = typeof game.poster === "string" ? game.poster : game.poster?.url;
   useEffect(() => setFailed(false), [url]);
   return (
-    <span className={`artwork ${large ? "large" : ""}`}>
+    <span
+      className={`artwork ${large ? "large" : ""} ${poster ? "poster" : ""}`}
+    >
       {url && !failed ? (
-        <img src={url} alt="" onError={() => setFailed(true)} />
+        <img
+          src={url}
+          alt=""
+          loading={poster ? "lazy" : "eager"}
+          decoding="async"
+          onError={() => setFailed(true)}
+        />
       ) : (
         <Gamepad2 aria-hidden="true" />
       )}
@@ -86,36 +97,5 @@ export function Modal({
       <div className="modal-body">{children}</div>
       {footer && <footer>{footer}</footer>}
     </dialog>
-  );
-}
-export function Select({
-  label,
-  value,
-  onChange,
-  options,
-  disabled = false,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: string[][];
-  disabled?: boolean;
-}) {
-  return (
-    <select
-      aria-label={label}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-    >
-      {!options.some(([id]) => id === value) && (
-        <option value={value}>{value}（当前配置）</option>
-      )}
-      {options.map(([id, text]) => (
-        <option key={id} value={id}>
-          {text}
-        </option>
-      ))}
-    </select>
   );
 }

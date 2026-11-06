@@ -11,6 +11,7 @@
   --text: #eee;
   --muted: #a6a6a6;
   --accent: #8bd529;
+  --accent-text: #9be344;
   --hover: #303030;
   --nav: 80px;
   color: var(--text);
@@ -27,6 +28,7 @@
   --text: #222;
   --muted: #62676b;
   --accent: #65a315;
+  --accent-text: #3e7000;
   --hover: #e9e9e9;
 }
 * {
@@ -189,7 +191,7 @@ small {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
-  padding-top: 8px;
+  padding-top: 0;
   min-height: 0;
 }
 .nav-item {
@@ -201,6 +203,21 @@ small {
   position: relative;
   padding: 8px 4px;
   font-size: 11px;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+.sidebar .nav-item:first-child {
+  flex: 0 0 56px;
+  min-height: 56px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  background: var(--header);
+}
+.sidebar .nav-item:first-child.active {
+  background: var(--selected);
 }
 .nav-item svg {
   width: 24px;
@@ -267,6 +284,17 @@ small {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+.page-slot {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.page-slot[hidden] {
+  display: none;
 }
 .page-scroll {
   overflow: auto;
@@ -528,21 +556,101 @@ small {
   align-items: center;
   text-align: right;
 }
-.setting-control select {
+.select-trigger {
   width: 100%;
   min-width: 0;
   max-width: 360px;
   height: 32px;
-  padding: 4px 28px 4px 10px;
+  min-height: 32px;
+  padding: 4px 10px;
   border: 1px solid #535353;
   border-radius: 4px;
   background: var(--bg);
   color: var(--text);
   font-size: 13px;
   text-overflow: ellipsis;
+  justify-content: space-between;
+  text-align: left;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
 }
-.setting-control select:disabled {
+.select-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-trigger > svg {
+  flex: none;
+  transition: transform 140ms ease;
+}
+.select-trigger[aria-expanded="true"] > svg {
+  transform: rotate(180deg);
+}
+.select-trigger:hover:enabled {
+  background: var(--hover);
+  border-color: #737373;
+}
+.select-trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+.select-trigger:focus:not(:focus-visible) {
+  outline: none;
+}
+.select-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.select-trigger:disabled {
   opacity: 0.5;
+}
+.select-popup {
+  position: fixed;
+  z-index: 1200;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 10px 24px #0004;
+  animation: menu-appear 100ms ease-out;
+}
+.select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+  user-select: none;
+  overflow-wrap: anywhere;
+}
+.select-option > span {
+  min-width: 0;
+}
+.select-option[aria-selected="true"] {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+}
+.select-option[data-active="true"] {
+  background: var(--hover);
+}
+.select-option[aria-selected="true"][data-active="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+@keyframes menu-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .setting-control .path {
   font-size: 11px;
@@ -824,7 +932,7 @@ pre {
 }
 .home-games {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(192px, 1fr));
   gap: 20px;
 }
 .home-games > button {
@@ -834,11 +942,65 @@ pre {
   overflow: hidden;
   text-align: left;
   background: var(--surface);
+  position: relative;
+  min-width: 0;
+  border-radius: 7px;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.home-games > button:hover:enabled,
+.home-games > button:focus-visible {
+  transform: translateY(-3px);
+  border-color: var(--accent);
+  box-shadow: 0 6px 18px #0003;
+  background: var(--surface);
 }
 .home-games .artwork {
   width: 100%;
-  height: 148px;
+  height: auto;
+  aspect-ratio: 2/3;
   border-radius: 0;
+}
+.home-games .artwork img {
+  object-fit: contain;
+  object-position: center;
+  transition: filter 160ms ease;
+}
+.home-games > button:hover img {
+  filter: brightness(1.06);
+}
+.home-games strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  min-height: 40px;
+  font-size: 14px;
+  line-height: 20px;
+}
+.home-games .card-open {
+  position: absolute;
+  bottom: 98px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #142000;
+  opacity: 0;
+  transform: translateX(-5px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+.home-games > button:hover .card-open,
+.home-games > button:focus-visible .card-open {
+  opacity: 1;
+  transform: none;
 }
 .home-games .artwork svg {
   width: 40px;
@@ -998,7 +1160,7 @@ pre {
     text-align: left;
     justify-content: flex-start;
   }
-  .setting-control select {
+  .setting-control .select-trigger {
     max-width: none;
   }
   .tabs {
@@ -1023,5 +1185,19 @@ pre {
 @media (prefers-reduced-motion: reduce) {
   .loading svg {
     animation: none;
+  }
+  .nav-item,
+  .select-trigger,
+  .select-trigger > svg,
+  .select-popup,
+  .home-games > button,
+  .home-games img,
+  .home-games .card-open {
+    transition: none;
+    animation: none;
+  }
+  .home-games > button:hover:enabled,
+  .home-games > button:focus-visible {
+    transform: none;
   }
 }

@@ -115,7 +115,7 @@ export function Settings({
           </div>
           <h2>关于 NeuralFrame</h2>
           <Row label="软件版本">
-            <span>0.1.0</span>
+            <span>{__APP_VERSION__}</span>
           </Row>
           <Row label="项目仓库">
             <button
@@ -137,8 +137,10 @@ export function Settings({
 export function History({
   message,
   ask,
+  active = true,
 }: {
   ask: (title: string, body: string, confirm?: string) => Promise<boolean>;
+  active?: boolean;
 } & Message) {
   const [rows, setRows] = useState<Record<string, unknown>[] | null>(null),
     [error, setError] = useState("");
@@ -151,8 +153,8 @@ export function History({
       })
       .catch((e) => setError(errorText(e)));
   useEffect(() => {
-    void load();
-  }, []);
+    if (active) void load();
+  }, [active]);
   return (
     <div className="page-scroll">
       <div className="section-toolbar">

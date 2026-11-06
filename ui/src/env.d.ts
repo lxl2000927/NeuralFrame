@@ -3,3 +3,4 @@ declare module "*.png" {
   export default url;
 }
 declare module "*.css";
+declare const __APP_VERSION__: string;

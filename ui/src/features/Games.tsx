@@ -40,6 +40,8 @@ type Props = {
   busy: boolean;
   run: Run;
   message: (s: string) => void;
+  active?: boolean;
+  refreshToken?: number;
 };
 export function Games(props: Props) {
   const [query, setQuery] = useState("");
@@ -97,6 +99,8 @@ function GameEditor({
   run,
   busy,
   message,
+  active = true,
+  refreshToken = 0,
 }: Props & { game: Game }) {
   const [tab, setTab] = useState("graphics"),
     [data, setData] = useState<{ details: Details; status: Status } | null>(
@@ -127,7 +131,7 @@ function GameEditor({
     return () => {
       active = false;
     };
-  }, [game.dir, revision]);
+  }, [game.dir, revision, refreshToken]);
   const base = data ? readDraft(data.status) : null,
     draft = drafts[game.dir] || base,
     changes = base && draft ? changedFields(base, draft) : [];
@@ -363,6 +367,7 @@ function GameEditor({
         )}
         {tab === "components" && (
           <GameComponents
+            key={refreshToken}
             dir={game.dir}
             run={run}
             busy={busy}
@@ -371,6 +376,7 @@ function GameEditor({
         )}
         {tab === "runtime" && (
           <RuntimePanel
+            active={active}
             dir={game.dir}
             onRuntime={setRuntime}
             message={message}
@@ -638,16 +644,22 @@ function RuntimePanel({
   dir,
   onRuntime,
   message,
+  active,
 }: {
   dir: string;
   onRuntime: (r: Runtime) => void;
   message: (s: string) => void;
+  active: boolean;
 }) {
   const [result, setResult] = useState<Runtime | null>(null),
     [busy, setBusy] = useState(false),
     [auto, setAuto] = useState(false),
     [now, setNow] = useState(Date.now());
   useEffect(() => {
+    if (!active) {
+      setBusy(false);
+      return;
+    }
     let alive = true,
       inFlight = false;
     const probe = async () => {
@@ -683,7 +695,7 @@ function RuntimePanel({
       if (timer) clearInterval(timer);
       clearInterval(clock);
     };
-  }, [dir, auto]);
+  }, [dir, auto, active]);
   const refresh = async () => {
     setBusy(true);
     try {

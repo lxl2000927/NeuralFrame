@@ -10,10 +10,12 @@ export function Library({
   run,
   busy,
   message,
+  refreshToken = 0,
 }: {
   run: Run;
   busy: boolean;
   message: (s: string) => void;
+  refreshToken?: number;
 }) {
   const [data, setData] = useState<LibraryData | null>(null),
     [error, setError] = useState(""),
@@ -39,7 +41,7 @@ export function Library({
     return () => {
       alive = false;
     };
-  }, [rev]);
+  }, [rev, refreshToken]);
   const refresh = () => setRev((v) => v + 1);
   return (
     <div className="page-scroll">

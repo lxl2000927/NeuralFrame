@@ -19,7 +19,7 @@ import { Artwork, Loading } from "./components";
 import { errorText } from "./domain";
 import { useOperation } from "./useOperation";
 import type { Draft, Game } from "./types";
-import mark from "../../assets/neuralframe/mark.png";
+import mark from "../../assets/neuralframe/mark-ui.png";
 const Games = lazy(() =>
   import("./features/Games").then((m) => ({ default: m.Games })),
 );
@@ -45,6 +45,8 @@ const nav = [
 ];
 export default function App() {
   const [page, setPage] = useState("games"),
+    [visited, setVisited] = useState(() => new Set(["games"])),
+    [refreshToken, setRefreshToken] = useState(0),
     [expanded, setExpanded] = useState(false),
     [games, setGames] = useState<Game[]>([]),
     [selected, setSelected] = useState(""),
@@ -54,12 +56,21 @@ export default function App() {
       localStorage.getItem("neuralframe.theme") === "light" ? "light" : "dark",
     ),
     [drafts, setDrafts] = useState<Record<string, Draft>>({});
-  const operation = useOperation(setNotice);
+  const operation = useOperation(setNotice, () =>
+    setRefreshToken((v) => v + 1),
+  );
+  const navigate = (id: string) => {
+    setVisited((previous) =>
+      previous.has(id) ? previous : new Set([...previous, id]),
+    );
+    setPage(id);
+  };
   const load = async () => {
     setLoading(true);
     try {
       const g = await getBridge().library();
       setGames(g);
+      setRefreshToken((v) => v + 1);
       // Covers are independent of the library. Limit background fetches and keep
       // the game controls usable while artwork arrives.
       const missing = g.filter((game) => !game.poster);
@@ -122,7 +133,7 @@ export default function App() {
   };
   const select = (dir: string) => {
     setSelected(dir);
-    setPage("games");
+    navigate("games");
   };
   return (
     <div className={`app-shell ${expanded ? "expanded" : ""}`}>
@@ -132,7 +143,7 @@ export default function App() {
       >
         <img src={mark} alt="" />
         <strong>NeuralFrame</strong>
-        <span>0.1.0</span>
+        <span>{__APP_VERSION__}</span>
         <div className="window-controls">
           <button aria-label="最小化" onClick={() => windowAction("minimize")}>
             <Minus size={15} />
@@ -151,7 +162,12 @@ export default function App() {
             className={`nav-item ${page === id ? "active" : ""} ${index === 4 ? "nav-bottom" : ""}`}
             key={id}
             aria-current={page === id ? "page" : undefined}
-            onClick={() => setPage(id)}
+            onClick={() => navigate(id)}
+            onPointerEnter={() => {
+              if (id === "games") void import("./features/Games");
+              else if (id === "library") void import("./features/Library");
+              else if (id !== "home") void import("./features/Utilities");
+            }}
           >
             <Icon />
             <span>{label}</span>
@@ -194,88 +210,113 @@ export default function App() {
           )}
         </div>
         <div className="page-content">
-          <Suspense fallback={<Loading />}>
-            {page === "games" &&
-              (loading && !games.length ? (
-                <Loading text="读取游戏库…" />
-              ) : (
-                <Games
-                  games={games}
-                  selected={selected}
-                  onSelect={setSelected}
-                  drafts={drafts}
-                  setDraft={(dir, draft) =>
-                    setDrafts((d) => ({ ...d, [dir]: draft }))
-                  }
-                  run={operation.run}
-                  busy={operation.busy}
-                  message={setNotice}
-                />
-              ))}
-            {page === "home" && (
-              <div className="page-scroll">
-                <div className="section-toolbar">
-                  <h1>游戏库</h1>
-                  <button onClick={() => setPage("games")}>
-                    查看全部
-                    <ArrowRight size={16} />
-                  </button>
-                </div>
-                <div className="home-games">
-                  {games.map((g) => (
-                    <button key={g.key} onClick={() => select(g.dir)}>
-                      <Artwork game={g} />
-                      <div>
-                        <strong>{g.name}</strong>
-                        <small>{g.launcher}</small>
+          {nav
+            .filter(({ id }) => visited.has(id))
+            .map(({ id }) => (
+              <section
+                className="page-slot"
+                key={id}
+                hidden={page !== id}
+                aria-label={`${nav.find((n) => n.id === id)?.label}页面`}
+              >
+                <Suspense fallback={<Loading />}>
+                  {id === "games" &&
+                    (loading && !games.length ? (
+                      <Loading text="读取游戏库…" />
+                    ) : (
+                      <Games
+                        games={games}
+                        selected={selected}
+                        onSelect={setSelected}
+                        drafts={drafts}
+                        setDraft={(dir, draft) =>
+                          setDrafts((d) => ({ ...d, [dir]: draft }))
+                        }
+                        run={operation.run}
+                        busy={operation.busy}
+                        message={setNotice}
+                        active={page === "games"}
+                        refreshToken={refreshToken}
+                      />
+                    ))}
+                  {id === "home" && (
+                    <div className="page-scroll">
+                      <div className="section-toolbar">
+                        <h1>游戏库</h1>
+                        <button onClick={() => navigate("games")}>
+                          查看全部
+                          <ArrowRight size={16} />
+                        </button>
                       </div>
-                    </button>
-                  ))}
-                </div>
-                {!games.length && (
-                  <p className="muted">
-                    添加一款游戏，开始配置神经渲染与帧生成。
-                  </p>
-                )}
-                <div className="home-tools">
-                  <button onClick={() => setPage("library")}>
-                    <Package />
-                    <span>
-                      <strong>组件库</strong>
-                      <small>查看组件版本和本地缓存</small>
-                    </span>
-                    <ArrowRight size={17} />
-                  </button>
-                  <button onClick={() => setPage("overlay")}>
-                    <Layers />
-                    <span>
-                      <strong>游戏内面板</strong>
-                      <small>快捷键与叠加层偏好</small>
-                    </span>
-                    <ArrowRight size={17} />
-                  </button>
-                </div>
-              </div>
-            )}
-            {page === "library" && (
-              <Library
-                run={operation.run}
-                busy={operation.busy}
-                message={setNotice}
-              />
-            )}{" "}
-            {page === "overlay" && <Overlay message={setNotice} />}{" "}
-            {page === "history" && (
-              <History message={setNotice} ask={operation.ask} />
-            )}{" "}
-            {page === "settings" && (
-              <Settings
-                message={setNotice}
-                theme={theme}
-                onTheme={changeTheme}
-              />
-            )}
-          </Suspense>
+                      <div className="home-games">
+                        {games.map((g) => (
+                          <button
+                            key={g.key}
+                            className="home-game-card"
+                            onClick={() => select(g.dir)}
+                          >
+                            <Artwork game={g} poster />
+                            <div>
+                              <strong>{g.name}</strong>
+                              <small>{g.launcher}</small>
+                            </div>
+                            <span className="card-open" aria-hidden="true">
+                              <ArrowRight size={18} />
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                      {!games.length && (
+                        <p className="muted">
+                          添加一款游戏，开始配置神经渲染与帧生成。
+                        </p>
+                      )}
+                      <div className="home-tools">
+                        <button onClick={() => navigate("library")}>
+                          <Package />
+                          <span>
+                            <strong>组件库</strong>
+                            <small>查看组件版本和本地缓存</small>
+                          </span>
+                          <ArrowRight size={17} />
+                        </button>
+                        <button onClick={() => navigate("overlay")}>
+                          <Layers />
+                          <span>
+                            <strong>游戏内面板</strong>
+                            <small>快捷键与叠加层偏好</small>
+                          </span>
+                          <ArrowRight size={17} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {id === "library" && (
+                    <Library
+                      run={operation.run}
+                      busy={operation.busy}
+                      message={setNotice}
+                      refreshToken={refreshToken}
+                    />
+                  )}{" "}
+                  {id === "overlay" && <Overlay message={setNotice} />}{" "}
+                  {id === "history" && (
+                    <History
+                      message={setNotice}
+                      ask={operation.ask}
+                      active={page === "history"}
+                    />
+                  )}{" "}
+                  {id === "settings" && (
+                    <Settings
+                      message={setNotice}
+                      theme={theme}
+                      onTheme={changeTheme}
+                    />
+                  )}
+                </Suspense>
+              </section>
+            ))}
         </div>
       </main>
       {notice && (

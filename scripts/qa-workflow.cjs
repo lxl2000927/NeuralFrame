@@ -1,12 +1,21 @@
 const {_electron:electron}=require('@playwright/test'),path=require('path'),assert=require('node:assert/strict');
 const root=path.resolve(__dirname,'..'),env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
 (async()=>{const app=await electron.launch({executablePath:path.join(root,'node_modules/electron/dist/electron.exe'),args:[path.join(root,'test/fixtures/neuralframe-flow-main.cjs')],env});try{
- const p=await app.firstWindow();await p.getByLabel('补帧倍率',{exact:true}).selectOption('x3');
+ const p=await app.firstWindow();await p.getByRole('combobox',{name:'补帧倍率',exact:true}).click();await p.getByRole('option',{name:'3×',exact:true}).click();
+ await p.getByRole('navigation').getByRole('button',{name:'首页',exact:true}).click();await p.getByRole('navigation').getByRole('button',{name:'游戏',exact:true}).click();
+ assert.equal(await p.getByRole('combobox',{name:'补帧倍率',exact:true}).getAttribute('data-value'),'x3');
+ let cached=await p.evaluate(()=>window.qa.audit());assert.equal(cached.detailReads,1);assert.equal(cached.statusReads,1);
  await p.getByRole('button',{name:'预览并应用',exact:true}).click();await p.getByRole('button',{name:'取消',exact:true}).click();
  let a=await p.evaluate(()=>window.qa.audit());assert.equal(a.prepared,0);assert.equal(a.applied,0);
  await p.getByRole('button',{name:'预览并应用',exact:true}).click();await p.getByRole('button',{name:'下载组件',exact:true}).click();await p.getByRole('heading',{name:'应用前变更预览'}).waitFor();await p.getByRole('button',{name:'取消',exact:true}).click();
  a=await p.evaluate(()=>window.qa.audit());assert.equal(a.prepared,1);assert.equal(a.applied,0);
  await p.getByRole('button',{name:'预览并应用',exact:true}).click();await p.getByRole('button',{name:'确认应用',exact:true}).click();await p.getByRole('status').filter({hasText:'操作完成'}).waitFor();
  a=await p.evaluate(()=>window.qa.audit());assert.equal(a.applied,1);assert.equal(a.prepared,1);assert.equal(a.requests.at(-1).token,'confirmed-plan');assert.equal(a.requests.at(-1).patch.mfgMode,'x3');assert.equal(a.requests.at(-1).patch.neuralMode,undefined);
- console.log('UI workflow passed: cancel preparation, cancel preview, confirmed token, preserve NR, reuse cache.');
+ await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].show());
+ await p.getByRole('tab',{name:'运行诊断',exact:true}).click();await p.waitForFunction(()=>window.qa.audit().runtimeReads>=1);
+ await p.getByLabel('自动刷新',{exact:true}).check();await p.waitForFunction(()=>window.qa.audit().runtimeReads>=2);
+ await p.getByRole('navigation').getByRole('button',{name:'首页',exact:true}).click();const paused=(await p.evaluate(()=>window.qa.audit())).runtimeReads;
+ await new Promise(resolve=>setTimeout(resolve,5600));assert.equal((await p.evaluate(()=>window.qa.audit())).runtimeReads,paused);
+ await p.getByRole('navigation').getByRole('button',{name:'游戏',exact:true}).click();await p.waitForFunction(n=>window.qa.audit().runtimeReads>n,paused);
+ console.log('UI workflow passed: cached navigation, preserved draft, cancel preparation, cancel preview, confirmed token, preserve NR, reuse cache, pause/resume hidden diagnostics.');
  }finally{await app.close()}})().catch(e=>{console.error(e);process.exitCode=1});
