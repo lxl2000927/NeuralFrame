@@ -11,7 +11,8 @@ import {
   X,
   Plus,
   RefreshCw,
-  PanelLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
   ArrowRight,
 } from "lucide-react";
 import { getBridge } from "./bridge";
@@ -47,7 +48,9 @@ export default function App() {
   const [page, setPage] = useState("games"),
     [visited, setVisited] = useState(() => new Set(["games"])),
     [refreshToken, setRefreshToken] = useState(0),
-    [expanded, setExpanded] = useState(false),
+    [expanded, setExpanded] = useState(
+      () => localStorage.getItem("neuralframe.sidebar") === "expanded",
+    ),
     [games, setGames] = useState<Game[]>([]),
     [selected, setSelected] = useState(""),
     [loading, setLoading] = useState(true),
@@ -126,6 +129,14 @@ export default function App() {
       .setTheme(value)
       .catch((e) => setNotice(errorText(e)));
   };
+  const toggleSidebar = () => {
+    const next = !expanded;
+    setExpanded(next);
+    localStorage.setItem(
+      "neuralframe.sidebar",
+      next ? "expanded" : "collapsed",
+    );
+  };
   const windowAction = (action: string) => {
     void getBridge()
       .window(action)
@@ -156,7 +167,7 @@ export default function App() {
           </button>
         </div>
       </header>
-      <nav className="sidebar" aria-label="主导航">
+      <nav className="sidebar" id="primary-navigation" aria-label="主导航">
         {nav.map(({ id, label, icon: Icon }, index) => (
           <button
             className={`nav-item ${page === id ? "active" : ""} ${index === 4 ? "nav-bottom" : ""}`}
@@ -169,17 +180,24 @@ export default function App() {
               else if (id !== "home") void import("./features/Utilities");
             }}
           >
-            <Icon />
+            <Icon aria-hidden="true" />
             <span>{label}</span>
           </button>
         ))}
         <button
-          className="nav-expand"
-          onClick={() => setExpanded((v) => !v)}
-          aria-label={expanded ? "收起导航" : "展开导航"}
+          className="nav-expand nav-item"
+          onClick={toggleSidebar}
+          aria-label={expanded ? "收起侧栏" : "展开侧栏"}
+          title={expanded ? "收起侧栏" : "展开侧栏"}
+          aria-expanded={expanded}
+          aria-controls="primary-navigation"
         >
-          <PanelLeft size={18} />
-          {expanded && <span>收起导航</span>}
+          {expanded ? (
+            <PanelLeftClose aria-hidden="true" />
+          ) : (
+            <PanelLeftOpen aria-hidden="true" />
+          )}
+          <span>{expanded ? "收起侧栏" : "展开侧栏"}</span>
         </button>
       </nav>
       <main className="app-content">

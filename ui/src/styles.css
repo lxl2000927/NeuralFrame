@@ -145,6 +145,7 @@ small {
   grid-template-columns: var(--nav) minmax(0, 1fr);
   grid-template-rows: 30px minmax(0, 1fr);
   background: var(--bg);
+  transition: grid-template-columns 180ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 .app-shell.expanded {
   --nav: 256px;
@@ -193,37 +194,47 @@ small {
   border-right: 1px solid var(--border);
   padding-top: 0;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg);
 }
 .nav-item {
-  min-height: 64px;
+  --item-height: 64px;
+  height: var(--item-height);
+  min-height: var(--item-height);
+  flex: 0 0 var(--item-height);
+  display: block;
   border: 0;
   border-radius: 0;
-  flex-direction: column;
-  gap: 4px;
   position: relative;
-  padding: 8px 4px;
+  padding: 0;
   font-size: 11px;
   transition:
     background-color 120ms ease,
     color 120ms ease;
 }
 .sidebar .nav-item:first-child {
-  flex: 0 0 56px;
-  min-height: 56px;
-  padding-top: 5px;
-  padding-bottom: 5px;
-  gap: 2px;
-  border-bottom: 1px solid var(--border);
-  background: var(--header);
+  --item-height: 56px;
 }
-.sidebar .nav-item:first-child.active {
-  background: var(--selected);
-}
-.nav-item svg {
+.nav-item > svg {
+  position: absolute;
+  left: 28px;
+  top: calc((var(--item-height) - 44px) / 2);
   width: 24px;
   height: 24px;
 }
-.nav-item.active {
+.nav-item > span {
+  position: absolute;
+  top: calc((var(--item-height) - 44px) / 2 + 28px);
+  left: 40px;
+  transform: translateX(-50%);
+  max-width: 72px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar .nav-item.active {
   background: var(--selected);
   color: var(--accent);
 }
@@ -239,25 +250,24 @@ small {
   margin-top: auto;
   border-top: 1px solid var(--border);
 }
-.nav-expand {
-  border: 0;
-  border-radius: 0;
-  min-height: 36px;
-  margin-top: 4px;
+.sidebar .nav-expand {
+  --item-height: 56px;
+  border-top: 1px solid var(--border);
   color: var(--muted);
 }
-.expanded .nav-item {
-  flex-direction: row;
-  justify-content: flex-start;
-  padding: 0 24px;
-  gap: 20px;
-  font-size: 14px;
-  min-height: 52px;
+.expanded .nav-item > svg {
+  top: calc((var(--item-height) - 24px) / 2);
 }
-.expanded .nav-expand {
-  justify-content: flex-start;
-  padding-left: 28px;
-  gap: 22px;
+.expanded .nav-item > span {
+  top: calc((var(--item-height) - 20px) / 2);
+  left: 72px;
+  transform: none;
+  max-width: calc(100% - 88px);
+  line-height: 20px;
+  font-size: 14px;
+}
+.nav-item:focus-visible {
+  outline-offset: -3px;
 }
 .app-content {
   min-height: 0;
@@ -932,8 +942,9 @@ pre {
 }
 .home-games {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(192px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 148px));
+  gap: 16px;
+  justify-content: start;
 }
 .home-games > button {
   padding: 0;
@@ -976,18 +987,22 @@ pre {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-  min-height: 40px;
-  font-size: 14px;
-  line-height: 20px;
+  min-height: 34px;
+  font-size: 13px;
+  line-height: 17px;
+}
+.home-games small {
+  font-size: 11px;
+  line-height: 16px;
 }
 .home-games .card-open {
   position: absolute;
-  bottom: 98px;
-  right: 12px;
+  bottom: 84px;
+  right: 10px;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--accent);
   color: #142000;
@@ -1007,10 +1022,10 @@ pre {
   height: 40px;
 }
 .home-games > button > div {
-  padding: 14px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 .home-tools {
   display: flex;
@@ -1076,24 +1091,6 @@ pre {
   }
 }
 @media (max-width: 960px) {
-  .app-shell.expanded {
-    --nav: 80px;
-  }
-  .expanded .nav-item {
-    flex-direction: column;
-    justify-content: center;
-    font-size: 11px;
-    padding: 8px 4px;
-    gap: 4px;
-    min-height: 64px;
-  }
-  .expanded .nav-expand span {
-    display: none;
-  }
-  .expanded .nav-expand {
-    justify-content: center;
-    padding: 0;
-  }
   .game-list,
   .expanded .game-list {
     width: 210px;
@@ -1186,7 +1183,10 @@ pre {
   .loading svg {
     animation: none;
   }
+  .app-shell,
   .nav-item,
+  .nav-item > span,
+  .nav-item > svg,
   .select-trigger,
   .select-trigger > svg,
   .select-popup,
