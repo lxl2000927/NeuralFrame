@@ -64,7 +64,7 @@ test('closing the window hides it to the tray by default, and Quit is the only w
 
   const menu = app.built.at(-1);
   assert.equal(menu.length, 3, 'Open, a separator, Quit');
-  assert.equal(menu[0].label, 'Open DLSS 5 Swapper');
+  assert.equal(menu[0].label, 'Open NeuralFrame');
   assert.equal(menu[2].label, 'Quit');
 
   // Quit sets the flag the close handler reads, so the next close is real.

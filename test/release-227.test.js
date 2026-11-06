@@ -32,10 +32,12 @@ test('a game folder Windows will not let us write to is refused in words, up fro
   assert.equal((read('src', 'renderer', 'i18n.js').match(/errNoWriteAccess: '/g) || []).length, 2, 'in English and Arabic');
 });
 
-test('every installed game has its read-only ReShade.ini cleared once per start (#155)', () => {
+test('browsing the library does not repair or modify game files', () => {
   const main = read('main.js');
-  assert.match(main, /function repairReadOnlyConfigs\(games\)/);
-  assert.match(main, /repairReadOnlyConfigs\(lastGames\);\s*return lastGames;/);
+  const library=main.slice(main.indexOf("ipcMain.handle('library'"),main.indexOf("ipcMain.handle('scan'"));
+  const details=main.slice(main.indexOf("ipcMain.handle('details'"),main.indexOf("ipcMain.handle('set-api-override'"));
+  assert.doesNotMatch(library, /repairReadOnlyConfigs\(lastGames\)/);
+  assert.doesNotMatch(details, /await makeReShadeConfigWritable/);
 });
 
 test('a report carries the store id the library already knew (#274)', () => {

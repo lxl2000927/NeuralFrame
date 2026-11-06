@@ -1,5 +1,6 @@
 node_modules/
 payload/
+payload-link-reference/
 addons/
 overlay-bin/
 dist/
@@ -15,3 +16,7 @@ logs/
 test-results/dx12-controlled-harness/
 test-results/user-data-sandbox/
 
+
+src/ui-dist/
+ui/.vite/
+qa-output/

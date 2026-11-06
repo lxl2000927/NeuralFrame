@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "release": "runtime-components-2026.11.06",
-  "repository": "lxl2000927/DLSS5-Swapper-Enhanced",
+  "repository": "lxl2000927/NeuralFrame",
   "packs": [
     {
       "id": "nr-3108",
@@ -45,7 +45,7 @@
       "archive": "nr-3108-69e628a6601a3259.zip",
       "size": 117682177,
       "sha256": "84d7de1e20120d51e5ddf22f232feebf4381c8d2930e3872b56c01c446cc4597",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/nr-3108-69e628a6601a3259.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/nr-3108-69e628a6601a3259.zip"
     },
     {
       "id": "sr-baseline",
@@ -89,7 +89,7 @@
       "archive": "sr-baseline-28584006a3298a7a.zip",
       "size": 31130094,
       "sha256": "21029b8c9567d6f5dbf44b1fb0e2be357de37c239b4418ffc562bb129b36a9f3",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/sr-baseline-28584006a3298a7a.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sr-baseline-28584006a3298a7a.zip"
     },
     {
       "id": "fg-baseline",
@@ -133,7 +133,7 @@
       "archive": "fg-baseline-3d1ae994a63a9664.zip",
       "size": 3738710,
       "sha256": "8c786ef91c8b151e1ea997c54340b52ccf31097dcbfaba1b51e5398b21f6e4b3",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/fg-baseline-3d1ae994a63a9664.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/fg-baseline-3d1ae994a63a9664.zip"
     },
     {
       "id": "sl-baseline",
@@ -227,7 +227,7 @@
       "archive": "sl-baseline-14d68ef83e6f5f60.zip",
       "size": 2067149,
       "sha256": "493cd93236b98ac63205c839dbcac8f50d554b342cffd6fedba30496a699cf4f",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/sl-baseline-14d68ef83e6f5f60.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sl-baseline-14d68ef83e6f5f60.zip"
     },
     {
       "id": "sr-modern",
@@ -271,7 +271,7 @@
       "archive": "sr-modern-bd946ff2791187d2.zip",
       "size": 45339665,
       "sha256": "21c08700ee6992774fa12cc5824c51a9211599498478dabd7579bfc346a3184e",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/sr-modern-bd946ff2791187d2.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sr-modern-bd946ff2791187d2.zip"
     },
     {
       "id": "fg-modern",
@@ -315,7 +315,7 @@
       "archive": "fg-modern-110edc44fa18cdf6.zip",
       "size": 3760776,
       "sha256": "48fb29919d8f63cfda72c114270a557a8c8ebc75ac87a61df3833626e780da9f",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/fg-modern-110edc44fa18cdf6.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/fg-modern-110edc44fa18cdf6.zip"
     },
     {
       "id": "sl-modern",
@@ -419,7 +419,7 @@
       "archive": "sl-modern-ba04234f2d6476ba.zip",
       "size": 4350749,
       "sha256": "21088e43fa3f209715f26047959712197ce28a0fd1724b5ea48cbc9e5ad8c657",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/sl-modern-ba04234f2d6476ba.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sl-modern-ba04234f2d6476ba.zip"
     },
     {
       "id": "rr-baseline",
@@ -463,7 +463,7 @@
       "archive": "rr-baseline-4bb19a0ca398f6aa.zip",
       "size": 21587466,
       "sha256": "6f8df4ceae93255849bf62e495295c5bcce8cfdc835142583805b29dee501cf4",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/rr-baseline-4bb19a0ca398f6aa.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/rr-baseline-4bb19a0ca398f6aa.zip"
     },
     {
       "id": "renodx-nr",
@@ -512,7 +512,7 @@
       "archive": "renodx-nr-06ea89ac69768601.zip",
       "size": 2416067,
       "sha256": "93e721b0c288934f2c888eaf08272075e9e350c4dea0e4ea125c76db0349f44d",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/renodx-nr-06ea89ac69768601.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/renodx-nr-06ea89ac69768601.zip"
     },
     {
       "id": "renodx-multipass",
@@ -556,7 +556,7 @@
       "archive": "renodx-multipass-d474c0fb39a03a47.zip",
       "size": 1245269,
       "sha256": "e03ad535fe96f42bb917d276c2c7ddbd36085b7eeaa3b10b38dd27f825001e87",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/renodx-multipass-d474c0fb39a03a47.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/renodx-multipass-d474c0fb39a03a47.zip"
     },
     {
       "id": "feeder",
@@ -855,7 +855,7 @@
       "archive": "feeder-c1ce58a1cc43a08a.zip",
       "size": 5155163,
       "sha256": "601651bb1098d539be5c11aab3291c9bbbb7b6655be05ff9e4ebd7094a0a32e3",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/feeder-c1ce58a1cc43a08a.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/feeder-c1ce58a1cc43a08a.zip"
     },
     {
       "id": "reshade",
@@ -919,7 +919,7 @@
       "archive": "reshade-cb61305a2f90baa2.zip",
       "size": 8718277,
       "sha256": "2fa30eb8a02d5bfdfa2856d4ebdf2d61bd5d1f655aa5db1036d9b4277abf6dc8",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/reshade-cb61305a2f90baa2.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/reshade-cb61305a2f90baa2.zip"
     },
     {
       "id": "mfg-renodx",
@@ -968,7 +968,7 @@
       "archive": "mfg-renodx-d34a562ee21c5e5f.zip",
       "size": 1838415,
       "sha256": "66354e61928059cfd7753c06eeddee2cf24fd05e1affc009fc2e5a8a4160d108",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/mfg-renodx-d34a562ee21c5e5f.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/mfg-renodx-d34a562ee21c5e5f.zip"
     },
     {
       "id": "mfg-universal",
@@ -1017,7 +1017,7 @@
       "archive": "mfg-universal-dd271afbb56e834f.zip",
       "size": 4980335,
       "sha256": "ce5c7a5021338d212919d058605472b52afe4c6920404e269a0a6636230c905a",
-      "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/releases/download/runtime-components-2026.11.06/mfg-universal-dd271afbb56e834f.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/mfg-universal-dd271afbb56e834f.zip"
     },
     {
       "id": "localization",

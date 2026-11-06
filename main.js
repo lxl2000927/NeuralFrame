@@ -31,6 +31,12 @@ async function managedReview(dir, request, work, token) {
   return reviews().run(dir,{...request,componentSelection:selected},()=>require('./src/core/component-deploy').managed(library,dir,selected,work),token);
 }
 const path = require('path');
+// Reuse the established cache, game list and version locks during the rebrand.
+// An isolated profile can be selected for QA without touching the user's files.
+if (typeof app.setPath === 'function') {
+  const profile = process.env.NEURALFRAME_USER_DATA || path.join(app.getPath('appData'), 'dlss5-swapper-enhanced');
+  app.setPath('userData', profile);
+}
 const { pathToFileURL, fileURLToPath } = require('url');
 const { paletteFromPixels, mergePalettes } = require('./src/core/palette');
 const crypto = require('crypto');
@@ -355,7 +361,7 @@ function posterUrl(game, state) {
 let tray = null;
 // The main process has no translations of its own, so the renderer hands these
 // over the way it already does for the game context menu.
-let trayLabels = { show: 'Open DLSS 5 Swapper', quit: 'Quit' };
+let trayLabels = { show: 'Open NeuralFrame', quit: 'Quit' };
 
 function showWindow() {
   if (!win || win.isDestroyed()) return;
@@ -381,7 +387,7 @@ function ensureTray() {
   // fallback is better than no tray at all.
   const icon = source.isEmpty() ? source : source.resize({ width: 16, height: 16, quality: 'good' });
   try { tray = new Tray(icon); } catch { return null; }
-  tray.setToolTip('DLSS 5 Swapper');
+  tray.setToolTip('NeuralFrame');
   tray.on('click', showWindow);
   tray.on('double-click', showWindow);
   buildTrayMenu();
@@ -405,11 +411,11 @@ const payloadMissing = () => missingPayload({
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 1040,
-    minHeight: 700,
-    backgroundColor: '#05070a',
+    width: 1440,
+    height: 900,
+    minWidth: 960,
+    minHeight: 640,
+    backgroundColor: '#191919',
     icon: path.join(__dirname, 'src', 'renderer', 'icon.png'),
     // The window draws its own title bar, so the frame comes off.
     frame: false,
@@ -421,7 +427,7 @@ function createWindow() {
       nodeIntegration: false
     }
   });
-  win.loadFile(path.join(__dirname, 'src', 'renderer', 'index.html'));
+  win.loadFile(path.join(__dirname, 'src', 'ui-dist', 'index.html'));
   win.once('ready-to-show', () => win.show());
   // Close quits by default in portable builds unless closeToTray is explicitly enabled
   win.on('close', (event) => {
@@ -442,7 +448,7 @@ function createWindow() {
 // it the window is filed under whatever launched it - "Electron" when run from
 // source - instead of under the app.
 
-app.setAppUserModelId('com.skyi7943.dlss5swapper.enhanced');
+app.setAppUserModelId('io.github.lxl2000927.neuralframe');
 
 // A second copy of the app is not just wasted memory: it writes its own
 // overlay endpoint over the first one's and listens on its own pipe, so the
@@ -1132,7 +1138,7 @@ ipcMain.handle('library', () => {
         ? state.scans[keyFor(g.dir)]
         : null
     }));
-  repairReadOnlyConfigs(lastGames);
+  // Browsing the library is read-only; repairs belong to explicit apply operations.
   return lastGames;
 });
 
@@ -1704,15 +1710,7 @@ ipcMain.handle('update-check', async () => {
 ipcMain.handle('details', async (_event, dir) => {
   const detailsPayload = payload();
   const scan = await scanGame(dir);
-  // Opening a game is a chance to undo the read-only ReShade.ini an install
-  // from before 2.2.2 left behind - the banner on #155 outlives an app update
-  // because only an install used to clear it.
-  if (scan.chosen) {
-    try {
-      const cleared = await makeReShadeConfigWritable(path.dirname(scan.chosen.path));
-      if (cleared.length) console.log('Cleared read-only:', cleared.join(', '), 'in', dir);
-    } catch { /* a game folder we cannot touch is not a reason to fail here */ }
-  }
+  // Opening game details must not change permissions or configuration files.
   const state = loadState();
   const hasNativeDlss = installRoutes.nativeDlssPresent(scan);
   const hasNativeUpscaler = installRoutes.nativeUpscalerPresent ? installRoutes.nativeUpscalerPresent(scan) : false;

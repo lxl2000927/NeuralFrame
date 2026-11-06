@@ -111,7 +111,7 @@ contextBridge.exposeInMainWorld('lab', {
   libraryCheck: () => ipcRenderer.invoke('library-check'),
   libraryDownload: (id) => ipcRenderer.invoke('library-download', id),
   libraryCancel: () => ipcRenderer.invoke('library-cancel'),
-  onLibraryProgress: (fn) => ipcRenderer.on('library-progress', (_e, progress) => fn(progress)),
+  onLibraryProgress: (fn) => { const handler=(_e,progress)=>fn(progress);ipcRenderer.on('library-progress',handler);return ()=>ipcRenderer.removeListener('library-progress',handler); },
   libraryImport: (component) => ipcRenderer.invoke('library-import', component),
   libraryApply: (dir, token) => ipcRenderer.invoke('library-apply', dir, token),
   libraryRollback: (dir, id, token) => ipcRenderer.invoke('library-rollback', dir, id, token),

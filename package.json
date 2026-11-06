@@ -1,13 +1,13 @@
 {
-  "name": "dlss5-swapper-enhanced",
-  "version": "0.1.8",
+  "name": "neuralframe",
+  "version": "0.1.0",
   "distribution": {
     "channel": "independent",
-    "releaseRepository": "lxl2000927/DLSS5-Swapper-Enhanced",
+    "releaseRepository": "lxl2000927/NeuralFrame",
     "upstreamVersion": "2.3.0",
     "upstreamRepository": "skyi7943-cmd/DLSS5-Swapper-Enhanced"
   },
-  "description": "DLSS 5 Neural Rendering & RTX 40 MFG x3/x4 Manager (Enhanced Edition with 8GB VRAM Optimization & Full Chinese In-Game Overlay)",
+  "description": "Neural rendering and frame generation manager",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -16,14 +16,18 @@
     "test:payload": "node scripts/test-feeder-payload.js",
     "test:optiscaler": "node scripts/test-optiscaler-payload.js",
     "payload": "node scripts/collect-payload.js",
-    "prebuild": "node scripts/verify-runtime-bootstrap.js",
+    "prebuild": "npm run build:ui && node scripts/verify-runtime-bootstrap.js",
     "build": "electron-builder --win",
     "build:linux": "electron-builder --linux AppImage deb",
     "icon": "electron scripts/make-icon.js",
     "build:portable": "electron-builder --win portable",
     "overlay:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-overlay.ps1",
     "overlay:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-overlay.ps1",
-    "prebuild:portable": "node scripts/verify-runtime-bootstrap.js"
+    "prebuild:portable": "npm run build:ui && node scripts/verify-runtime-bootstrap.js",
+    "dev:ui": "vite",
+    "check:ui": "tsc --noEmit",
+    "build:ui": "tsc --noEmit && vite build",
+    "prestart": "npm run build:ui"
   },
   "author": {
     "name": "lxl2000927",
@@ -31,23 +35,33 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced.git"
+    "url": "https://github.com/lxl2000927/NeuralFrame.git"
   },
-  "homepage": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced",
+  "homepage": "https://github.com/lxl2000927/NeuralFrame",
   "bugs": {
-    "url": "https://github.com/lxl2000927/DLSS5-Swapper-Enhanced/issues"
+    "url": "https://github.com/lxl2000927/NeuralFrame/issues"
   },
   "license": "MIT",
   "dependencies": {
     "extract-zip": "^2.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
     "electron": "^33.2.0",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "lucide-react": "^1.70.0",
+    "prettier": "^3.9.10",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
   },
   "build": {
-    "appId": "io.github.lxl2000927.dlss5swapper.enhanced",
-    "productName": "DLSS 5 Swapper Enhanced",
+    "appId": "io.github.lxl2000927.neuralframe",
+    "productName": "NeuralFrame",
     "files": [
       "main.js",
       "preload.js",
@@ -81,7 +95,7 @@
         "nsis",
         "portable"
       ],
-      "icon": "assets/app.ico"
+      "icon": "assets/neuralframe/app.ico"
     },
     "linux": {
       "target": [
@@ -91,19 +105,19 @@
       "category": "Game",
       "maintainer": "skyi7943-cmd",
       "icon": "app_iocn.png",
-      "artifactName": "DLSS5-Swapper-Enhanced-${version}-${arch}.${ext}"
+      "artifactName": "NeuralFrame-${version}-${arch}.${ext}"
     },
     "compression": "maximum",
     "publish": {
       "provider": "github",
       "owner": "lxl2000927",
-      "repo": "DLSS5-Swapper-Enhanced",
+      "repo": "NeuralFrame",
       "releaseType": "draft"
     },
     "portable": {
       "unpackDirName": true,
       "useZip": true,
-      "artifactName": "DLSS5-Swapper-Enhanced-${version}-Portable-x64.exe"
+      "artifactName": "NeuralFrame-${version}-Portable-x64.exe"
     },
     "nsis": {
       "oneClick": false,
@@ -111,17 +125,17 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "DLSS 5 Swapper Enhanced",
-      "installerIcon": "assets/app.ico",
-      "uninstallerIcon": "assets/app.ico",
-      "installerHeaderIcon": "assets/app.ico",
+      "shortcutName": "NeuralFrame",
+      "installerIcon": "assets/neuralframe/app.ico",
+      "uninstallerIcon": "assets/neuralframe/app.ico",
+      "installerHeaderIcon": "assets/neuralframe/app.ico",
       "deleteAppDataOnUninstall": false,
       "language": "2052",
       "installerLanguages": [
         "zh_CN",
         "en_US"
       ],
-      "artifactName": "DLSS5-Swapper-Enhanced-${version}-Setup-x64.exe",
+      "artifactName": "NeuralFrame-${version}-Setup-x64.exe",
       "include": "build/installer.nsh"
     }
   }
