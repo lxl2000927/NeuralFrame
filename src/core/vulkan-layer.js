@@ -25,19 +25,37 @@ function defaultRunner(file, args) {
 function readUsers(dir) {
   try {
     const data = JSON.parse(fs.readFileSync(path.join(dir, 'installs.json'), 'utf8'));
-    return Array.isArray(data.games) ? data.games.filter((item) => typeof item === 'string') : [];
-  } catch {
-    return [];
+    if (!Array.isArray(data.games) || !data.games.every(item => typeof item === 'string' && path.isAbsolute(item))) {
+      throw new Error('Invalid Vulkan layer ownership record');
+    }
+    return data.games;
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
   }
 }
 
 async function writeUsers(dir, games) {
-  await fs.promises.mkdir(dir, { recursive: true });
-  await fs.promises.writeFile(path.join(dir, 'installs.json'), JSON.stringify({ version: 1, games }, null, 2), 'utf8');
+  await require('./file-journal').atomicJson(path.join(dir, 'installs.json'), { version: 1, games });
 }
 
 function samePath(a, b) {
   return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+}
+
+const layerFiles = ['ReShade64.dll', 'ReShade64.json', 'ReShade32.dll', 'ReShade32.json', 'installs.json'];
+function checkOwnedTarget(info, targetDir) {
+  if (!info?.owned) return null;
+  if (info.owned !== true || typeof targetDir !== 'string' || !path.isAbsolute(targetDir) ||
+      typeof info.dir !== 'string' || !path.isAbsolute(info.dir) || !samePath(targetDir, info.dir) ||
+      (info.manifest != null && (typeof info.manifest !== 'string' || !path.isAbsolute(info.manifest) ||
+        !['ReShade64.json', 'ReShade32.json'].some(name => samePath(path.join(targetDir, name), info.manifest))))) {
+    throw Object.assign(new Error('Vulkan layer directory does not match this application profile'), { code: 'errUnsafeTarget' });
+  }
+  const dir = path.resolve(targetDir);
+  const {safePath} = require('./file-journal');
+  for (const name of layerFiles) safePath(path.dirname(dir), path.join(path.basename(dir), name));
+  return { ...info, dir };
 }
 
 async function existing(runner) {
@@ -58,7 +76,23 @@ async function register(options) {
   const ours = current && samePath(current, our64);
   if (current && !ours) return { manifest: current, owned: false, global: true };
 
+  const info = { manifest: our64, owned: true, global: true, dir: targetDir };
+  const commit = () => installLayerFiles(sourceDir, targetDir, gameDir, bitness, runner);
+  // Keep registry changes until every game-local stage and version override
+  // succeeded. The game manifest records the shared-layer owner first.
+  if (!require('./file-journal').deferExternal(gameDir, our64 + ':' + bitness, commit)) await commit();
+  return info;
+}
+
+async function installLayerFiles(sourceDir, targetDir, gameDir, bitness, runner) {
   await fs.promises.mkdir(targetDir, { recursive: true });
+  // Record the owner before the first shared write, so Restore can retry a
+  // registration interrupted after only one file or registry value.
+  const games = readUsers(targetDir);
+  if (!games.some(item => samePath(item, gameDir))) {
+    games.push(path.resolve(gameDir));
+    await writeUsers(targetDir, games);
+  }
   const names = bitness === 32
     ? ['ReShade64.dll', 'ReShade64.json', 'ReShade32.dll', 'ReShade32.json']
     : ['ReShade64.dll', 'ReShade64.json'];
@@ -75,27 +109,54 @@ async function register(options) {
     if (result.code !== 0) throw new Error(`Vulkan layer registration failed: ${result.stderr || result.stdout}`);
   }
 
-  const games = readUsers(targetDir);
-  if (!games.some((item) => samePath(item, gameDir))) games.push(path.resolve(gameDir));
-  await writeUsers(targetDir, games);
-  return { manifest: our64, owned: true, global: true, dir: targetDir };
 }
 
 async function detach(info, gameDir, runner = defaultRunner) {
   if (!info || !info.owned || !info.dir) return false;
-  const games = readUsers(info.dir).filter((item) => !samePath(item, gameDir));
-  await writeUsers(info.dir, games);
-  if (games.length) return false;
+  checkOwnedTarget(info, info.dir);
+  const users = readUsers(info.dir);
+  const games = users.filter((item) => !samePath(item, gameDir));
+  if (games.length === users.length) return false;
+  if (games.length) {
+    await writeUsers(info.dir, games);
+    return false;
+  }
 
   for (const name of ['ReShade64.json', 'ReShade32.json']) {
     const file = path.join(info.dir, name);
-    await runner('reg.exe', ['delete', KEY, '/v', file, '/f']);
+    const result = await runner('reg.exe', ['delete', KEY, '/v', file, '/f']);
+    if (result.code !== 0 && !await registryValueAbsent(runner, file)) {
+      throw new Error(`Vulkan layer removal failed: ${result.stderr || result.stdout || file}`);
+    }
   }
-  for (const name of ['ReShade64.dll', 'ReShade64.json', 'ReShade32.dll', 'ReShade32.json', 'installs.json']) {
-    try { await fs.promises.unlink(path.join(info.dir, name)); } catch {}
+  // Keep the last owner's record until all registry and file changes succeed,
+  // so a failed detach can retry while the application still knows its owner.
+  for (const name of layerFiles) {
+    try { await fs.promises.unlink(path.join(info.dir, name)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
-  try { await fs.promises.rmdir(info.dir); } catch {}
+  try { await fs.promises.rmdir(info.dir); }
+  catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error; }
   return true;
 }
 
-module.exports = { KEY, register, detach, existing, defaultRunner };
+// reg.exe reports both "missing" and "access denied" with exit code 1.
+// Query a readable parent to prove absence without parsing localized errors.
+async function registryValueAbsent(runner, file) {
+  let child;
+  for (let key = KEY; key.includes('\\'); key = key.slice(0, key.lastIndexOf('\\'))) {
+    const result = await runner('reg.exe', ['query', key]);
+    if (result.code === 0) {
+      const lines = result.stdout.split(/\r?\n/);
+      if (child) return !lines.some(line => line.trim().replace(/^HKEY_CURRENT_USER/i, 'HKCU').toLowerCase() === child.toLowerCase());
+      return !lines.some(line => {
+        const value = /^\s*(.+?)\s+REG_\w+\b/i.exec(line);
+        return value && samePath(value[1].trim(), file);
+      });
+    }
+    child = key;
+  }
+  return false;
+}
+
+module.exports = { KEY, register, detach, checkOwnedTarget, existing, defaultRunner };

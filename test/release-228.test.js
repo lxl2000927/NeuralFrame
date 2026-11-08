@@ -7,6 +7,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { writePe } = require('./fixtures/pe');
+const scanPath = require.resolve('../src/core/scan');
+const { scanGame } = require(scanPath);
+const originalScan = require.cache[scanPath];
 
 const root = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -38,9 +41,7 @@ function harness(t, game = {}) {
   fs.writeFileSync(ordinary, 'ordinary');
   fs.writeFileSync(multipass, 'multipass');
 
-  const scanPath = require.resolve('../src/core/scan');
   const applyPath = require.resolve('../src/core/apply');
-  const originalScan = require.cache[scanPath];
   delete require.cache[applyPath];
   const reshade = game.reshade || { installed: true, file: 'dxgi.dll', kind: 'proxy', version: '6.8.0', addonSupport: true };
   require.cache[scanPath] = {
@@ -52,8 +53,7 @@ function harness(t, game = {}) {
   };
   t.after(() => {
     delete require.cache[applyPath];
-    if (originalScan) require.cache[scanPath] = originalScan;
-    else delete require.cache[scanPath];
+    require.cache[scanPath] = originalScan;
   });
   const apply = require('../src/core/apply');
   const logs = [];
@@ -122,19 +122,6 @@ test('the overlay says which reason applies instead of blaming the route (#338)'
   assert.equal((i18n.match(/overlayNotForRoute: \(why, api\) =>/g) || []).length, 2, 'in English and Arabic');
   assert.equal((i18n.match(/multipassNext: \(dlss\) =>/g) || []).length, 2, 'in English and Arabic');
   assert.match(read('src', 'renderer', 'renderer.js'), /'overlayNotForRoute', 'multipassNext'/);
-});
-
-test('the card and My comments banners say "Show all reports"', () => {
-  const page = read('src', 'renderer', 'community.js');
-  assert.match(page, /id="communityGpuClear">\$\{esc\(text\(\)\.showAllReports\)\}/);
-  assert.match(page, /id="communityMineClear">\$\{esc\(text\(\)\.showAllReports\)\}/);
-  assert.equal((page.match(/showAllReports: '/g) || []).length, 2, 'in English and Arabic');
-});
-
-test('every report inside a card names its DirectX version (#337)', () => {
-  const page = read('src', 'renderer', 'community.js');
-  assert.match(page, /\$\{comment\.api \? `<span class="community-api-tag">\$\{esc\(String\(comment\.api\)\.toUpperCase\(\)\)\}<\/span>` : ''\}/);
-  assert.match(read('src', 'renderer', 'style.css'), /\.community-tags \.community-api-tag \{/);
 });
 
 const noReShade = { installed: false, file: null, kind: null, version: null, addonSupport: false };
@@ -211,28 +198,13 @@ test('a wrong checksum is never retried', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('nothing is asked of our server before Community is opened (#358)', () => {
-  const main = read('main.js');
-  assert.match(main, /const communityUsed = \(\) => loadState\(\)\.communityUsed === true;/);
-  assert.match(main, /if \(communityUsed\(\)\) startNotices\(\);/);
-  assert.match(main, /communityNotices !== false && communityUsed\(\)/);
-  assert.match(main, /if \(!communityUsed\(\)\) return \{ ok: false, error: 'community_opt_in'/);
-  assert.match(main, /ipcMain\.handle\('community-opt-in'/);
-  assert.equal((main.match(/^\s*startNotices\(\);$/gm) || []).length, 1, 'called only from the opt-in');
-  assert.match(read('preload.js'), /communityOptedIn: \(\) => ipcRenderer\.invoke\('community-opted-in'\)/);
-  assert.match(read('src', 'renderer', 'renderer.js'), /const opted = await window\.lab\.communityOptedIn\(\)/);
-  assert.match(read('src', 'renderer', 'community.js'), /render: async \(\.\.\.args\) => \{ await optIn\(\); return render\(\.\.\.args\); \}/);
-});
-
-test('a card closes when the dimmed area around it is clicked (#372)', () => {
-  assert.match(read('src', 'renderer', 'community.js'),
-    /addEventListener\('click', event => \{ if \(event\.target === \$\('communityCardDialog'\)\) closeCard\(\); \}\)/);
-});
-
-test('two builds of one game with the same executable name both stay (#355)', () => {
-  const scan = read('src', 'core', 'scan.js');
-  assert.match(scan, /const key = `\$\{name\}\|\$\{exe\.size\}\|\$\{exe\.dx12 \? 12 : 11\}`;/);
-  assert.match(scan, /if \(seen >= 2\) continue;/);
+test('two builds of one game with the same executable name both stay (#355)', async t => {
+  const dir = temp(t);
+  for (const [folder, text] of [['DX11','D3D11CreateDevice'],['DX12','D3D12CreateDevice']]) {
+    writePe(path.join(dir, folder, 'Game.exe'), {text, size: 131072});
+  }
+  const scan = await scanGame(dir);
+  assert.deepEqual(scan.exeCandidates.map(exe => exe.apiLabel).sort(), ['DirectX 11','DirectX 12']);
 });
 
 test('an emulator may take the multipass route, and is still recommended the Feeder (#359)', () => {
@@ -248,7 +220,9 @@ test('an emulator may take the multipass route, and is still recommended the Fee
 
 test('a safe graphics mode for windows that flicker (#365)', () => {
   const main = read('main.js');
-  assert.match(main, /if \(loadState\(\)\.safeGraphics === true\) app\.disableHardwareAcceleration\(\);/);
+  const beforeReady = main.slice(0, main.indexOf('app.whenReady()'));
+  assert.match(beforeReady, /safeGraphicsAtStartup = loadState\(\)\.safeGraphics === true;\s*if \(safeGraphicsAtStartup\) app\.disableHardwareAcceleration\(\);/);
+  assert.match(main, /safeGraphics: safeGraphicsAtStartup/);
   assert.match(main, /ipcMain\.handle\('set-safe-graphics'/);
   assert.match(main, /safeGraphics: state\.safeGraphics === true/);
   assert.match(read('preload.js'), /setSafeGraphics: \(enabled\) => ipcRenderer\.invoke\('set-safe-graphics', enabled\)/);

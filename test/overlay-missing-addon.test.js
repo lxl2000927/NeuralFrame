@@ -10,6 +10,25 @@ const { createOverlayLibrary } = require('../src/overlays');
 const { writePe } = require('./fixtures/pe');
 const gameOverlay = require('../src/game-overlay');
 
+test('developer files open the source tree in development and the shipped resources in a package', async () => {
+  const source = require.resolve('../src/overlay-ipc');
+  const resourcesPath = path.resolve('fixture-resources');
+  for (const isPackaged of [false, true]) {
+    const appRoot = isPackaged ? path.join(resourcesPath, 'app.asar') : path.dirname(path.dirname(source));
+    const context = { module: {}, require: require('node:module').createRequire(source),
+      __dirname: path.join(appRoot, 'src'), process: { resourcesPath } };
+    require('node:vm').runInNewContext(fs.readFileSync(source, 'utf8'), context);
+    const handlers = new Map();
+    let opened;
+    context.module.exports({
+      app: { isPackaged }, ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      shell: { openPath: async directory => { opened = directory; return ''; } }
+    });
+    assert.ok((await handlers.get('overlay-source')()).ok);
+    assert.equal(opened, path.join(isPackaged ? resourcesPath : appRoot, 'overlay'));
+  }
+});
+
 // The add-on the game loads is a file inside this app, and antivirus takes it:
 // reported as Trojan:Win32/Kepavll!rfn, a machine-learning verdict on an
 // unsigned native DLL. With the file gone the bridge still listened, so the
@@ -54,11 +73,28 @@ test('with the add-on in place nothing is claimed to be wrong', (t) => {
 test('an add-on left corrupt counts as missing, not as a dead service', (t) => {
   const { lib, root } = library(t, true);
   fs.writeFileSync(path.join(root, 'dlss5-lab-overlay.addon64'), 'not a PE any more');
-  let addon = false, addonFile = null;
-  try { const entry = lib.resolve('builtin'); addon = Boolean(entry.ready); addonFile = entry.file; }
-  catch { addon = false; }
-  assert.equal(addon, false);
-  assert.equal(addonFile, null);
+  const entry = lib.builtinStatus();
+  assert.equal(entry.ready, false);
+  assert.equal(entry.file, path.join(root, 'dlss5-lab-overlay.addon64'));
+  const libraryState = lib.list();
+  assert.equal(libraryState.overlays[0].ready, false);
+  assert.ok(libraryState.errors.length);
+});
+
+test('a damaged custom entry stays removable even with an unavailable built-in plugin', t => {
+  const {lib,builtin,root} = library(t,true);
+  const original = path.join(root,'custom.addon64');
+  fs.copyFileSync(builtin,original);
+  const entry = lib.add(original);
+  fs.appendFileSync(lib.resolve(entry.id).file, 'damaged');
+  fs.writeFileSync(builtin, 'damaged');
+  assert.equal(lib.list().overlays.find(x=>x.id===entry.id).ready,false);
+  assert.equal(lib.add(original).id, entry.id);
+  assert.equal(lib.list().overlays.find(x=>x.id===entry.id).ready,true);
+  fs.unlinkSync(lib.resolve(entry.id).file);
+  lib.remove(entry.id);
+  assert.ok(fs.existsSync(original));
+  assert.deepEqual(lib.list().overlays.map(x=>x.id), ['builtin']);
 });
 
 test('installing without the add-on says where the file went' , (t) => {

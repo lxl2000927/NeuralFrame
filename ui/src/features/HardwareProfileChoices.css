@@ -1,0 +1,38 @@
+.profile-picker .profile-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.profile-picker .profile-cards .profile-card {
+  justify-content: flex-start;
+  padding: 9px 12px;
+  gap: 3px;
+  background: linear-gradient(150deg, var(--surface), var(--bg));
+  box-shadow: inset 0 1px 0 var(--rim), 0 1px 2px var(--inset-edge);
+}
+.profile-picker .profile-card[aria-checked="true"] {
+  border-color: var(--accent);
+  background: linear-gradient(130deg, var(--selected) 45%, color-mix(in srgb, var(--accent) 14%, var(--surface)));
+}
+.profile-choice-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  width: 100%;
+}
+.profile-choice-heading strong { font-size: 15px; }
+.profile-picker .profile-card small { font-size: 13px; line-height: 1.45; }
+.profile-picker .profile-tag {
+  padding: 1px 7px;
+  border-radius: 12px;
+  background: var(--hover);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.profile-card[aria-checked="true"] .profile-tag { background: var(--surface); color: var(--accent-text); }
+.profile-picker .profile-detail {
+  margin: 0;
+  border: 0;
+  background: var(--bg);
+  box-shadow: inset 0 1px 3px var(--inset-edge);
+}
+.profile-values strong { margin-bottom: 3px; }
+.profile-values p { margin: 2px 0; font-size: 14px; overflow-wrap:anywhere; }

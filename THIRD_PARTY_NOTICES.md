@@ -1,5 +1,9 @@
 # Third-party notices
 
+NeuralFrame 0.1.0 derives from the MIT-licensed DLSS 5 Swapper code by Rakan Alkhaldi and the DLSS5-Swapper-Enhanced 2.3.0 fork by skyi7943-cmd. Their notices are retained in LICENSE. The desktop application uses Electron, React and Lucide icons. The native F8 bridge uses ReShade and Dear ImGui. Its distribution includes LICENSE, LICENSE-ReShade.md and LICENSE-ImGui.txt in resources/overlay.
+
+The desktop release includes the bootstrap and F8 bridge. References below to bundled rendering components describe the separately distributed runtime packs and the development payload. The exact file digests and pack versions used by this build are in src/core/runtime-catalog.json. Optional optical flow shaders come from [LumeniteFX](https://github.com/umar-afzaal/LumeniteFX).
+
 ## Chinese localization supplement 1 (2026-11-04)
 
 `overlay/zh-cn-extra.json` incorporates Simplified Chinese translations from
@@ -142,16 +146,16 @@ YaHei fallbacks. No font binaries are redistributed by this supplement.
 
 ## MFGAdaUnlock-RenoDx (Enhanced MFG Add-on)
 
-`renodx-mfgunlock.addon64` (v1.4.4, 2026-10-17) is bundled from:
-https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/v1.4.4
+The managed component pack contains `renodx-mfgunlock.addon64` (1.5.5).
+Upstream releases: https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases
 
 Licensed under the MIT License (Copyright (c) 2026 mavismmg). The full license
 text is included in `payload/enhanced/mfg/licenses/MFGAdaUnlock-RenoDx-LICENSE.txt`.
 
 ## MFG-Unlocker (RTXMFG Universal Unlocker)
 
-`MFGUnlocker.dll` / `MFGUnlocker.asi` (v1.5.0-hotfix.1, 2026-10-15) is bundled from:
-https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.5.0-hotfix.1
+The managed Universal component pack contains `MFGUnlocker.dll` (1.7.0).
+Upstream releases: https://github.com/dashdogy/MFG-Unlocker/releases
 
 Licensed under the MIT License (Copyright (c) 2026 dashdogy). The full license
 text is included in `payload/enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt`.

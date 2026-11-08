@@ -47,7 +47,12 @@ const virtual = {
   statSync: p => stats(entry(p)), lstatSync: p => stats(entry(p)),
   readFileSync(p, options) { const b = bytes(entry(p)); const enc = typeof options === 'string' ? options : options?.encoding; return enc ? b.toString(enc) : Buffer.from(b); },
   writeFileSync(p, data, options) { if (options?.flag === 'wx' && virtual.existsSync(p)) throw Object.assign(new Error(`EEXIST: ${p}`),{code:'EEXIST'}); put(p, { buffer: Buffer.from(data, typeof options === 'string' ? options : options?.encoding) }); },
-  copyFileSync(src, dest) { const e = entry(src); if (e.directory) throw failure('无法复制目录'); put(dest, { source: e.source, buffer: e.buffer, origin: e.origin || String(src) }); },
+  copyFileSync(src, dest, mode = 0) {
+    const e = entry(src);
+    if (e.directory) throw failure('无法复制目录');
+    if ((mode & native.constants.COPYFILE_EXCL) && virtual.existsSync(dest)) throw Object.assign(new Error(`EEXIST: ${dest}`), { code: 'EEXIST' });
+    put(dest, { source: e.source, buffer: e.buffer, origin: e.origin || String(src) });
+  },
   unlinkSync(p) { entry(p); put(p, null); },
   mkdirSync(p, options) {
     if (virtual.existsSync(p)) { if (!entry(p).directory) throw failure(`目标不是目录：${p}`); return; }

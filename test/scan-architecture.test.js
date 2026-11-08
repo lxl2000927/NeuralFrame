@@ -28,6 +28,40 @@ function minimalPe32(file, marker = null) {
   minimalPe(file, { bitness: 32, marker });
 }
 
+test('the saved executable survives same-name deduplication after an update', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-saved-copy-'));
+  t.after(() => fs.rmSync(dir, {recursive:true, force:true}));
+  const main = path.join(dir, 'Game.exe'), backupDir = path.join(dir, '_DLSS5_Backup');
+  const alternate = path.join(dir, 'Alternate', 'Game.exe'), third = path.join(dir, 'Another', 'Game.exe');
+  for (const file of [main, alternate, third]) minimalPe(file, {bitness:64, marker:'D3D12CreateDevice'});
+  // The alternate initially has a distinct size and appears in the ordinary picker.
+  fs.appendFileSync(alternate, 'different build');
+  assert.ok((await scanGame(dir)).exeCandidates.some(exe => exe.path === alternate));
+  fs.mkdirSync(backupDir);
+  const manifest = path.join(backupDir, 'manifest.json');
+  const save = exe => fs.writeFileSync(manifest, JSON.stringify({version:1,game:{exe},replaced:[],added:[]}));
+  save(path.relative(dir, alternate));
+  fs.copyFileSync(main, alternate);
+  const saved = await scanGame(dir);
+  assert.equal(saved.chosen.path, alternate);
+  assert.deepEqual(saved.exeCandidates.map(exe => exe.path), [main, alternate]);
+  save('../missing/Game.exe');
+  const normal = await scanGame(dir);
+  assert.deepEqual(normal.exeCandidates.map(exe => exe.path), [main]);
+  assert.equal(normal.chosen.path, main);
+  assert.equal((await scanGame(dir, alternate)).chosen.path, alternate);
+  fs.appendFileSync(alternate, 'B');
+  fs.appendFileSync(third, 'CCC');
+  const capped = await scanGame(dir);
+  assert.equal(capped.exeCandidates.length, 2);
+  const hidden = [alternate, third].find(file => !capped.exeCandidates.some(exe => exe.path === file));
+  save(path.relative(dir, hidden));
+  assert.equal((await scanGame(dir)).chosen.path, hidden);
+  fs.unlinkSync(alternate);
+  save(path.relative(dir, alternate));
+  assert.equal((await scanGame(dir)).chosen.path, main);
+});
+
 test('DX8 games, SWTOR x64 DX9 and unsupported DX10 retain their real API', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-legacy-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

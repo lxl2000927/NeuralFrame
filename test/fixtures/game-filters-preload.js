@@ -14,8 +14,6 @@ let historyRows = [];
 let historyFailure = false;
 let copiedText = null;
 let copyFailure = false;
-let nextMenuAction = null;
-let gameMenuCalls = [];
 let gameActionCalls = [];
 const apiOverrides = new Map();
 let detectedApi = { api: 'dxgi', apiLabel: 'DirectX 12', bitness: 64 };
@@ -37,7 +35,7 @@ const games = [
 }));
 games.push({ name: 'No 3D executable', dir: 'C:\\FixtureGames\\no-3d', launcher: 'My folders', cached: { ok: false, reason: 'no-graphics-exe' } });
 contextBridge.exposeInMainWorld('lab', {
-  communityNoticeSettings: async () => ({ on: false }),
+  optiscalerBuilds: async () => ({ builds: ['0.1.1.5-dlssnr'], current: '0.1.1.5-dlssnr' }),
   boot: async () => ({ lang: 'en', theme: 'light', version: 'test', groupGamesByStore }),
   artStatus: async () => ({ available: false }),
   library: async () => { libraryReads++; return games; },
@@ -52,23 +50,6 @@ contextBridge.exposeInMainWorld('lab', {
   copyText: async text => { if (copyFailure) return false; copiedText = text; return true; },
   testCopiedText: () => copiedText,
   testCopyFailure: value => { copyFailure = value; },
-  gameMenu: async (dir, options) => {
-    gameMenuCalls.push({ dir, options });
-    const selected = nextMenuAction;
-    nextMenuAction = null;
-    return selected;
-  },
-  communityProfile: async () => ({ name: 'Fixture', icon: 0, tag: 'test' }),
-  communitySaveProfile: async profile => ({ ok: true, profile: { ...profile, tag: 'test' } }),
-  communityDeleteMe: async () => ({ ok: true, result: { reports: 0, replies: 0 } }),
-  communityCards: async () => ({ ok: true, cards: [], total: 0 }),
-  communityCard: async () => ({ ok: false, error: 'not_found' }),
-  communityUpdates: async () => ({ ok: true, notModified: true }),
-  communityPrefill: async dir => ({ ok: true, prefill: { title: 'Fixture game', game: { title: 'Fixture game', exe: 'Game.exe' }, route: 'feeder', api: 'dx12', gpu: 'Fixture GPU', driver: '1.0', cpu: 'Fixture CPU', os: 'win32 test', app: 'test', dir } }),
-  communityReport: async () => ({ ok: true, result: { card: 'title:fixturegame', report: 1 } }),
-  communityReaction: async () => ({ ok: true }),
-  testMenuAction: value => { nextMenuAction = value; },
-  testMenuCalls: () => gameMenuCalls,
   testActionCalls: () => gameActionCalls,
   open: async dir => { gameActionCalls.push({ action: 'open', dir }); return ''; },
   openProject: async value => { projectLinks.push(value); return !projectLinkFailure; },
@@ -106,6 +87,7 @@ contextBridge.exposeInMainWorld('lab', {
     historyRows.push({ name: 'Euro Truck Simulator', dir, date: new Date().toISOString(), route, action: 'install', replaced: 1, added: 5 });
     return { ok: true, replaced: 1, added: 5 };
   },
+  restoreStatus: async () => ({canRestore: Boolean(installedRoute)}),
   restoreGame: async dir => {
     gameActionCalls.push({ action: 'restore', dir });
     historyRows.push({ name: 'Euro Truck Simulator', dir, date: new Date().toISOString(), route: installedRoute, action: 'restore', replaced: 1, added: 5 });

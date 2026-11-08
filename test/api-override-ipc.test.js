@@ -23,6 +23,7 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   function load() {
     const handlers = new Map();
     const stubs = {
+      './src/overlay-preferences': { read: () => ({enabled:false}) },
       // This unit isolates route choice; preview/token behavior has its own
       // real-installer coverage in component-review.test.js.
       './src/core/component-review': { ComponentReview: class { run(_dir, _request, work) { return work(); } } },
@@ -30,7 +31,8 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
         ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
         shell: { openExternal: async url => { if (failOpen) throw new Error('browser unavailable'); opened.push(url); } } },
       './src/core/scan.js': { scanGame: async () => scan },
-      './src/core/compatibility': { assertSafeTarget() {}, hasAntiCheat: () => false, targetIssue: () => null },
+      './src/core/game-inspection': { GameInspection: class { async run() { return { scan, status: { ok: true } }; } invalidate() {} } },
+      './src/core/compatibility': { assertSafeTarget() {}, antiCheatDetails: () => ({ antiCheatWarning: false, antiCheatComponents: [] }), hasAntiCheat: () => false, targetIssue: () => null },
       './src/core/install-guards': { assertGameClosed: async () => {} },
       './src/core/runtime-components.js': { missingVCRuntime: () => [], ensureLumenite: async () => null, ensureDgVoodoo: async () => 'fixture' },
       './src/core/backend-manager': { readManifest: () => old, install: async config => {
@@ -49,6 +51,9 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   const details = () => handlers.get('details')(event, game);
   const choose = value => handlers.get('set-api-override')(event, game, exes[0].path, value);
   const install = (value, route) => handlers.get('install')(event, game, exes[0].path, route, value);
+  const vanished = await handlers.get('install')(event, game, path.join(game, 'Removed.exe'), 'native', 'd3d12');
+  assert.equal(vanished.code, 'errSelectedExeMissing');
+  assert.equal(installs.length, 0);
   assert.equal((await details()).exes[0].apiOverride, 'auto');
   assert.equal((await choose('d3d11')).ok, true);
   assert.equal(installs.length, 0, 'changing preference never installs');
@@ -64,7 +69,20 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   assert.equal((await install('d3d12')).ok, true);
   assert.equal(installs.at(-1).apiLabel, 'DirectX 12');
   assert.equal(installs.at(-1).route, 'native');
-  assert.equal((await install('vulkan', 'native')).ok, true);
+  const applied = installs.length;
+  for (const route of ['native', 'renodx', 'unknown']) {
+    const rejected = await install('vulkan', route);
+    assert.equal(rejected.code, 'errSelectedRouteUnavailable');
+    assert.match(rejected.message, /刷新/);
+  }
+  assert.equal((await install('opengl', 'optiscaler')).code, 'optiUnsupported');
+  const nativeDll = scan.primaryDlss;
+  scan.primaryDlss = null;
+  assert.equal((await install('d3d12', 'optiscaler')).code, 'optiNeedsDlss');
+  scan.primaryDlss = nativeDll;
+  assert.equal(installs.length, applied, 'an unavailable explicit route must never reach deployment');
+  // Older callers may leave the route unset. An empty selection also uses the recommendation.
+  for (const route of [null, '', 'feeder']) assert.equal((await install('vulkan', route)).ok, true);
   assert.equal(installs.at(-1).api, 'vulkan');
   assert.equal(installs.at(-1).route, 'feeder');
   old = { route: 'native', game: { exe: 'Game.exe', api: 'dxgi' } };

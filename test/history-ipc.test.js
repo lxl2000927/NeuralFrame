@@ -18,12 +18,16 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
   const game = path.join(root, 'game');
   fs.mkdirSync(game);
   const target = { path: path.join(game, 'Game.exe'), rel: 'Game.exe', bitness: 64, api: 'dxgi', apiLabel: 'DirectX 12' };
+  require('./fixtures/pe').writePe(target.path);
   let old = null, failInstall = false, failRestore = false, cancel = false, copied = null;
   let protectedTarget = false, scanFails = false;
   let antiCheatResponse = 0;
   const riskDialogs = [], installedConfigs = [];
+  const riskTitles = ['zh','en'].map(language =>
+    require('../src/shared/anti-cheat-warning').dialogOptions(language, game, target.path).title);
   let menuItems;
   const stubs = {
+    './src/overlay-preferences': { read: () => ({ enabled: false }) },
     // Fake installers here mutate test counters rather than files; isolate
     // them from filesystem simulation. The real review flow is tested separately.
     './src/core/component-review': { ComponentReview: class { run(_dir, _request, work) { return work(); } } },
@@ -35,7 +39,7 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
       } },
       ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
       dialog: { showMessageBox: async (_window, options) => {
-        if (/anti-cheat|مكافحة الغش/.test(options.title)) {
+        if (riskTitles.includes(options.title)) {
           riskDialogs.push(options);
           return { response: antiCheatResponse };
         }
@@ -74,7 +78,8 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
   vm.runInContext(`payload = () => ({ source: { feeder: { ok32: true, ok64: true } } }); companionAddons = () => [];`, context);
   const event = { sender: { send() {} } };
   for (const route of ['native', 'native', 'feeder', 'optiscaler']) {
-    assert.equal((await handlers.get('install')(event, game, target.path, route, 'dxgi')).ok, true);
+    const result = await handlers.get('install')(event, game, target.path, route, 'dxgi');
+    assert.equal(result.ok, true, route + ': ' + JSON.stringify(result));
   }
   assert.equal(handlers.get('history')().rows.length, 4, 'no renderer.touch call needed');
   failInstall = true;
@@ -92,7 +97,8 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
   assert.equal(riskDialogs.length, 3);
   antiCheatResponse = 1; cancel = false;
   for (const route of ['native', 'feeder', 'optiscaler']) {
-    assert.equal((await handlers.get('install')(event, game, target.path, route, 'dxgi')).ok, true);
+    const result = await handlers.get('install')(event, game, target.path, route, 'dxgi');
+    assert.equal(result.ok, true, route + ': ' + JSON.stringify(result));
     assert.equal(installedConfigs.at(-1).antiCheatAcknowledged, true);
   }
   assert.equal(handlers.get('history')().rows.length, 7);
@@ -102,6 +108,7 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
   assert.equal(riskDialogs.length, 7);
   // Restore still works for protected games even if scanning crashes or the
   // executable has disappeared. It uses the backup/journal, not PE detection.
+  fs.unlinkSync(target.path);
   scanFails = true;
   failRestore = true;
   assert.equal((await handlers.get('restore')(event, game)).ok, false);

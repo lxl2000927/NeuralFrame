@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const manager = require('../src/core/backend-manager');
+const journal = require('../src/core/file-journal');
 const core = require('../src/core/apply');
 const layer = require('../src/core/vulkan-layer');
 const { writePe } = require('./fixtures/pe');
@@ -56,6 +57,27 @@ test('Vulkan Feeder install/reinstall/restore keeps DXVK files intact for x86 an
     const config = { gameDir, exePath, bitness, api: 'vulkan', apiLabel: 'Vulkan', route: 'feeder', source,
       registryRunner: runner, vulkanLayerTarget: path.join(root, 'registered-layer'),
       setupRunner: async () => { throw new Error('No external installer should run'); } };
+    if (bitness === 64) {
+      await assert.rejects(journal.group(gameDir, async () => {
+        const active = await manager.install(config);
+        assert.equal(active.vulkanLayer.owned, true);
+        assert.equal(values.size, 0);
+        assert.equal(fs.existsSync(path.join(config.vulkanLayerTarget, 'ReShade64.dll')), false);
+        throw Error('final component verification failed');
+      }), /final component verification failed/);
+      assert.equal(manager.readManifest(gameDir), null);
+      assert.equal(fs.existsSync(path.join(gameDir, 'dlss5-feed.addon64')), false);
+      assert.equal(fs.existsSync(journal.pendingPath(gameDir)), false);
+
+      const denied = async (exe, args) => args[0] === 'add'
+        ? { code: 1, stderr: 'registry write denied' } : runner(exe, args);
+      await assert.rejects(manager.install({ ...config, registryRunner: denied }), { code: 'errBackendRecovery' });
+      assert.equal(manager.readManifest(gameDir).vulkanLayer.owned, true);
+      assert.equal(JSON.parse(fs.readFileSync(journal.pendingPath(gameDir))).phase, 'external-commit');
+      assert.equal(await manager.restore(gameDir, undefined, undefined, { vulkanLayerTarget: config.vulkanLayerTarget }), true);
+      assert.equal(fs.existsSync(path.join(config.vulkanLayerTarget, 'ReShade64.dll')), false);
+      assert.equal(manager.readManifest(gameDir), null);
+    }
     for (let repeat = 0; repeat < 2; repeat++) {
       const manifest = await manager.install(config);
       assert.equal(manifest.game.api, 'vulkan');
@@ -74,7 +96,7 @@ test('Vulkan Feeder install/reinstall/restore keeps DXVK files intact for x86 an
       assert.equal(fs.existsSync(path.join(layerHome, bitness === 32 ? 'VkLayer_feed_vk32.dll' : 'VkLayer_feed_vk.dll')), true);
       assert.ok(manifest.added.some(item => item.includes('dlss5-feed-vk-layer')), 'and it is tracked for restore');
     }
-    assert.equal(await manager.restore(gameDir), true);
+    assert.equal(await manager.restore(gameDir, undefined, undefined, {vulkanLayerTarget: config.vulkanLayerTarget}), true);
     for (const [file, bytes] of originals) assert.deepEqual(fs.readFileSync(file), bytes);
     assert.equal(values.size, 0);
     assert.equal(fs.existsSync(path.join(core.backupRoot(gameDir), 'manifest.json')), false);

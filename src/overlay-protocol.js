@@ -52,6 +52,9 @@ module.exports.status = value => {
   if (value.badge !== undefined) {
     if (typeof value.badge !== 'boolean') throw Error('Invalid badge state');
     result.badge = value.badge;
+    // These builds intercept command 50 for the status card before ReShade
+    // sees it. Home still exposes the original effect control.
+    result.tools = result.tools.filter(tool => tool.id !== 50);
   }
   if (value.nrTools !== undefined) {
     if (!Array.isArray(value.nrTools) || ![11, 15].includes(value.nrTools.length) || typeof value.nrAvailable !== 'boolean' || typeof value.nrEnabled !== 'boolean' || typeof value.nrReason !== 'string' || value.nrReason.length > 160) throw Error('Invalid RenoDX status');
@@ -90,7 +93,7 @@ module.exports.command = (status, c) => {
   const t = c.id >= 301 ? status.feedPresent && status.feedTools?.find(t=>t.id===c.id) : c.id === 200 && status.nrTools ? { kind: 1, min: 0, max: 1, available: true } :
     // The card is answered by the add-on itself and needs no consumer, so
     // it stays reachable even when nothing is connected to drive.
-    c.id === 50 ? { kind: 1, min: 0, max: 1, available: true } :
+    c.id === 50 && status.badge !== undefined ? { kind: 1, min: 0, max: 1, available: true } :
     c.id >= 101 ? status.nrAvailable && status.nrTools?.find(t => t.id === c.id) :
     c.id === 0 ? { kind: 3, min: 0, max: 1, available: true } : status.tools.find(t => t.id === c.id);
   if (!t?.available || c.kind !== t.kind || c.value < t.min || c.value > t.max || (t.kind === 4 ? !Number.isInteger(c.value) : t.kind !== 0 && c.value !== 0 && c.value !== 1)) throw Error('Unsupported command');

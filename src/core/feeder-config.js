@@ -61,6 +61,16 @@ function mergeNamedList(value, required, nameOf = (item) => item) {
   return [...required, ...kept].join(',');
 }
 
+function setEarlyAddon(text, addon, enabled) {
+  const current = getIni(text, 'ADDON', 'LoadFromDllMain') || '';
+  const entries = current ? current.split(',') : [];
+  const matches = item => item.trim().replace(/^\.[\\/]/, '').toLowerCase() === addon.toLowerCase();
+  const present = entries.some(matches);
+  if (enabled === present) return text;
+  const next = enabled ? [...entries, addon] : entries.filter(item => !matches(item));
+  return setIni(text, 'ADDON', 'LoadFromDllMain', next.join(','));
+}
+
 // ReShade Setup 6.8 may seed recursive paths as `Shaders\**\**`. Windows
 // rejects the unresolved wildcard directory with ERROR_INVALID_NAME (123), so
 // the runtime sees no effects even though every .fx file is present. Always
@@ -221,7 +231,7 @@ function readText(file) {
 }
 
 module.exports = {
-  getIni, setIni, configureGameReShade, configureHostReShade,
+  getIni, setIni, setEarlyAddon, configureGameReShade, configureHostReShade,
   configurePreset, configureFeed, configureDgVoodoo, presetPath, readText,
   configureSearchPath, configureConsumer
 };

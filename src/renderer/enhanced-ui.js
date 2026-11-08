@@ -684,11 +684,9 @@
     const sheet = document.getElementById('sheet');
     if (!sheet || !dir || !root.lab?.enhancedStatus) return;
 
-    // 隐藏原版遗留的重复英文安装栏与废弃社区按钮，汉化底部日志工具按钮
+    // 隐藏原版遗留的重复英文安装栏，汉化底部日志工具按钮
     const legacyActions = sheet.querySelector('.sheet-body .sheet-actions');
     if (legacyActions) legacyActions.style.display = 'none';
-    const shareBtn = sheet.querySelector('#shareResult');
-    if (shareBtn) shareBtn.style.display = 'none';
     const copyBtn = sheet.querySelector('#copyJob');
     if (copyBtn) copyBtn.textContent = '📋 复制日志';
     const diagBtn = sheet.querySelector('#saveDiag');

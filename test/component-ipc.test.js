@@ -2,6 +2,45 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('fs'),path=require('path'),os=require('os'),vm=require('vm');
 const {createRequire}=require('module');
 const {writePe}=require('./fixtures/pe');
+
+test('component browsers share reads during update checks and wait for committed game writes', async () => {
+  const main = path.resolve(__dirname, '../main.js');
+  const realRequire = createRequire(main);
+  const handlers = new Map();
+  const electron = {app:{setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>os.tmpdir()},
+    ipcMain:{handle:(name, handler)=>handlers.set(name, handler)}};
+  const context = vm.createContext({require: name=>name === 'electron' ? electron : realRequire(name), __dirname:path.dirname(main), process, Buffer, console});
+  vm.runInContext(fs.readFileSync(main, 'utf8'), context, {filename:main});
+  let finishCheck, finishRead, finishWrite, reads = 0, invalidations = 0;
+  context.library = { list: async () => {
+    reads++;
+    if (reads === 1) await new Promise(resolve => { finishRead = resolve; });
+    return {ok:true};
+  }};
+  context.updater = { status: () => ({}), check: () => new Promise(resolve => { finishCheck = resolve; }) };
+  context.runtime = { list: () => [] };
+  context.inspector = { invalidate() { invalidations++; } };
+  vm.runInContext('unifiedComponents=library; componentUpdates=updater; runtimeCache=runtime; gameInspection=inspector', context);
+  const list = () => handlers.get('library-components')();
+  const checked = handlers.get('library-check')();
+  const first = list(), same = list();
+  assert.equal(reads, 1);
+  finishRead();
+  assert.ok((await first).ok && (await same).ok);
+  assert.equal(invalidations, 0);
+  finishCheck({ok:true});
+  await checked;
+  const write = vm.runInContext('exclusiveMutation', context)(() => new Promise(resolve => { finishWrite = resolve; }));
+  const waiting = list();
+  assert.equal(reads, 1);
+  context.library.initialized = true;
+  assert.equal((await list()).ok, true, 'a seeded global list stays readable during the write');
+  finishWrite({ok:true});
+  assert.equal((await waiting).ok, true);
+  await write;
+  assert.equal(reads, 3);
+  assert.equal(invalidations, 1);
+});
 test('real main IPC previews before install, records only committed work, enforces tokens and persisted lock',async t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'component-ipc-')),game=path.join(root,'Game');fs.mkdirSync(game);
  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));

@@ -72,6 +72,16 @@ const nrStatus = (effect) => ({
   nrTools: Array.from({ length: 15 }, (_, i) => nrTool(i, { effect }))
 });
 
+test('a shader control cannot operate the status card on builds which reserve the same ID', () => {
+  const shader = {id:50, kind:0, effect:'test.fx', name:'Strength', min:0,max:1,step:.01,value:.5,available:true};
+  const old = protocol.status({epoch:1, effects:true, tools:[shader]});
+  assert.equal(old.tools[0].id, 50);
+  assert.doesNotThrow(()=>protocol.command(old,{epoch:1,id:50,kind:0,value:.75}));
+  const current = protocol.status({epoch:1,effects:true,badge:false,tools:[shader]});
+  assert.deepEqual(current.tools,[]);
+  assert.throws(()=>protocol.command(current,{epoch:1,id:50,kind:0,value:.75}), /Unsupported/);
+});
+
 test('either consumer may fill the panel block, and nothing else may', () => {
   for (const effect of ['RenoDX v4.7', 'RenoDX v4.7']) {
     const out = protocol.status(nrStatus(effect));

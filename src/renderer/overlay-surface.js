@@ -1,9 +1,28 @@
-'use strict';
-window.mountOverlayPanel(document.getElementById('panel'));
-window.mountOverlayLive(document.getElementById('panel'));
-window.overlayRuntime.onPreferences(value=>{
- const root=document.getElementById('panel');window.applyOverlayTheme(root,value);
- const k=value.hotkey.key,name=k>=112?`F${k-111}`:({32:'Space',33:'PageUp',34:'PageDown',35:'End',37:'Left',38:'Up',39:'Right',40:'Down',45:'Insert',46:'Delete'}[k]||String.fromCharCode(k));
- root.dataset.overlayHotkey=[value.hotkey.mods&1?'Ctrl':'',value.hotkey.mods&2?'Alt':'',value.hotkey.mods&4?'Shift':'',name].filter(Boolean).join(' + ');
- const footer=root.querySelector('.ol-live-hotkey');if(footer)footer.textContent=`${root.dataset.overlayHotkey} 显示／隐藏 · 拖动标题栏移动 · 右下角缩放 · Home 高级菜单`;
+import { setLanguage, t } from '../../ui/src/i18n';
+import { keyLabel } from '../../ui/src/overlay-hotkey';
+
+const root = document.getElementById('panel');
+let language = 'zh';
+const cache = new Map();
+// The native surface receives frequent telemetry with the same labels.
+function translate(text) {
+  if (language !== 'en' || !/[\u3400-\u9fff]/.test(text)) return text;
+  if (!cache.has(text)) {
+    if (cache.size >= 512) cache.clear();
+    cache.set(text, t(text));
+  }
+  return cache.get(text);
+}
+const redraw = window.mountOverlayLive(root, { translate });
+window.overlayRuntime.onPreferences(value => {
+  window.applyOverlayTheme(root, value);
+  root.dataset.overlayHotkey = keyLabel(value.hotkey);
+  const next = value.language === 'en' ? 'en' : 'zh';
+  if (next !== language) {
+    language = next;
+    setLanguage(next, false);
+    redraw();
+  }
+  const footer = root.querySelector('.ol-live-hotkey');
+  if (footer) footer.textContent = translate(`${root.dataset.overlayHotkey} 显示／隐藏 · 拖动标题栏移动 · 右下角缩放 · Home 高级菜单`);
 });

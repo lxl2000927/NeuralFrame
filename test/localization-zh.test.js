@@ -9,15 +9,6 @@ test('Chinese root catalog covers every English key and preserves argument count
   if(typeof en==='function') assert.equal(zh.length,en.length,key);
  }
 });
-for(const name of ['community','chat'])test(`${name} Chinese catalog has all fields and function signatures`,()=>{
- const source=read(`src/renderer/${name}.js`),start=source.indexOf('  const L = '),end=source.indexOf('\n  };',start)+5;
- const english=vm.runInNewContext(source.slice(start,end)+'; L.en');
- const check=(en,zh,prefix)=>{for(const [key,value]of Object.entries(en)){
-  assert.notEqual(zh[key],undefined,`${prefix}.${key}`);assert.equal(typeof zh[key],typeof value,`${prefix}.${key}`);
-  if(typeof value==='function')assert.equal(zh[key].length,value.length,`${prefix}.${key}`);
-  else if(value&&typeof value==='object')check(value,zh[key],`${prefix}.${key}`);
- }};check(english,ctx.window.zhCNSections[name],name);
-});
 test('native translation placeholders preserve type, width, precision and order',()=>{
  const entries=JSON.parse(read('overlay/zh-cn-extra.json'));
  const specs=s=>[...s.matchAll(/%(?:%|[-+ #0]*(?:\*|\d+)?(?:\.(?:\*|\d*))?(?:hh|ll|I32|I64|[hlLjzt])?[diuoxXfFeEgGaAcspn])/g)].map(m=>m[0]).filter(s=>s!=='%%');

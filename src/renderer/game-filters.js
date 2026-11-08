@@ -13,6 +13,7 @@
   };
   const isInstalled = (game, newDlss) => {
     const scan = game && game.cached;
+    if (scan && scan.managed) return true;
     if (scan && scan.optiscaler) return true;
     return Boolean(scan && scan.addon && (
       scan.bitness === 32 || (scan.dlss && newDlss && scan.dlss === newDlss)

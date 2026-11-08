@@ -50,9 +50,10 @@
   'Select a CLOSED offline test game with ReShade add-on support':'选择已关闭且支持 ReShade 插件的离线测试游戏',
   'Windows game executable':'Windows 游戏可执行文件',
   'Overlay test — not a DLSS installation':'叠加层测试（此操作仅安装叠加层）',
-  'Confirm the game is closed and already uses ReShade with add-on support. Keep DLSS 5 Swapper open while testing the built-in overlay.':'请确认游戏已关闭，并已安装支持插件的 ReShade。测试内置叠加层时，请保持 DLSS 5 Swapper 开启。',
+  'Confirm that the game is closed and uses ReShade with add-on support.':'请确认游戏已关闭，并已安装支持插件的 ReShade。',
   'Only a uniquely named overlay add-on is copied next to this executable. No existing DLLs or configuration files are replaced by installation. No Vulkan registry changes. Avoid online / anti-cheat games.':'只会在此可执行文件旁复制一个名称独立的叠加层插件，不替换现有 DLL 或配置文件，不修改 Vulkan 注册表。请避免用于联网或带反作弊的游戏。',
-  "This overlay automatically connects through an undocumented, exact-build v4.7 adapter that temporarily redirects its UI dispatch. This may be incompatible with other add-ons. RenoDX itself saves settings you change. This is not NVIDIA's official SDK or overlay.":'此叠加层通过针对特定 v4.7 构建的非公开适配器自动连接，并临时重定向界面调用，可能与其他插件不兼容。你更改的设置由 RenoDX 自身保存。此组件不是 NVIDIA 官方 SDK 或叠加层。',
+  'Keep NeuralFrame open to use the built-in panel. It connects to supported RenoDX and Feeder builds. RenoDX saves the settings you change.':'使用内置面板时请保持 NeuralFrame 运行。面板会连接受支持的 RenoDX 和 Feeder 构建，更改的设置由 RenoDX 保存。',
+  'This external add-on provides its own controls.':'此外部插件使用自己的控制面板。',
   'Install test overlay':'安装测试叠加层','Is the test game closed?':'测试游戏已关闭吗？',
   'Remove only the unchanged overlay this app copied. Keep ReShade, DLSS, presets, and every original file.':'仅移除本软件复制且未被修改的叠加层文件，保留 ReShade、DLSS、预设和所有原始文件。',
   'Remove test overlay':'移除测试叠加层'

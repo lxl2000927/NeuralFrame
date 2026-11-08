@@ -88,3 +88,90 @@ test('a live manifest is still the one that is used', async (t) => {
   // And it is retired under the one name the recovery looks for.
   assert.ok(fs.readdirSync(backup).some((name) => /^manifest\.json\.done-\d+$/.test(name)));
 });
+
+test('archived recovery preserves a newer game DLL and unlisted user settings', async t => {
+  const { dir } = retiredInstall(t);
+  const dll = path.join(dir, 'dxgi.dll');
+  const ini = path.join(dir, 'ReShade.ini');
+  writePe(dll, { version: [7, 0, 0, 0] });
+  const gameUpdate = fs.readFileSync(dll);
+  fs.writeFileSync(ini, 'new user preset');
+  await apply.restore(dir);
+  assert.deepEqual(fs.readFileSync(dll), gameUpdate);
+  assert.equal(fs.readFileSync(ini, 'utf8'), 'new user preset');
+  assert.equal(apply.recoverableManifest(dir), null, 'a size change alone must not re-enable restore');
+
+  writePe(dll, { version: [6, 8, 0, 0] });
+  assert.ok(apply.recoverableManifest(dir), 'recorded installed version also identifies a residual without an added plugin');
+  await apply.restore(dir);
+  assert.equal(fs.readFileSync(dll, 'utf8'), 'the original dxgi');
+});
+
+test('restore IPC previews and confirms retired records after an executable disappears', async t => {
+  const { createRequire } = require('node:module');
+  const vm = require('node:vm');
+  const { hasBackup } = require('../src/core/game-menu');
+  const { dir } = retiredInstall(t);
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'restore-ipc-profile-'));
+  t.after(() => fs.rmSync(profile, { recursive: true, force: true }));
+  const exe = path.join(dir, 'Game.exe');
+  fs.unlinkSync(exe);
+  const main = path.resolve(__dirname, '../main.js');
+  const realRequire = createRequire(main);
+  const handlers = new Map(), guards = [], jobs = [];
+  const stubs = {
+    electron: {
+      app: { setAppUserModelId() {}, whenReady: () => ({then() {}}), on() {}, getPath: () => profile },
+      ipcMain: { handle: (name, fn) => handlers.set(name, fn) }
+    },
+    './src/core/install-guards': { assertGameClosed: async (dir, exe) => guards.push({dir, exe}) }
+  };
+  vm.runInNewContext(fs.readFileSync(main, 'utf8'), {
+    require: name => stubs[name] || realRequire(name), __dirname: path.dirname(main), process, Buffer, console
+  }, { filename: main });
+  const event = { sender: {send: (_channel, job) => jobs.push(job)} };
+  const restore = token => handlers.get('restore')(event, dir, token);
+  const status = () => handlers.get('restore-status')(event, dir);
+  const diagnostics = async () => (await require('../src/core/combined-manager').inspectCombinedStatus(dir, {
+    detectedHardware: {gpu: {name: 'NVIDIA GeForce RTX 4070 Laptop GPU', driver: '617.42'}},
+    payloadDir: path.join(profile, 'payload'), userDataDir: profile
+  })).diagnostics.coExecution.backupCheck;
+  assert.equal((await diagnostics()).badge, '可从历史备份恢复');
+  const plan = await restore();
+  assert.ok(plan.preview, JSON.stringify(plan));
+  assert.equal(hasBackup(dir), true);
+  assert.equal(status().canRestore, true);
+  const relevant = plan.preview.rows.filter(row => row.action !== 'keep').map(row => [row.rel, row.action]);
+  assert.deepEqual(relevant, [['dxgi.dll', 'replace'], ['renodx-dlss5.addon64', 'remove']]);
+  assert.ok(fs.existsSync(path.join(dir, 'renodx-dlss5.addon64')));
+  assert.equal(jobs.length, 0);
+
+  const result = await restore(plan.preview.token);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(guards.length >= 2 && guards.every(call => call.dir === dir && call.exe === exe));
+  assert.ok(jobs.some(job => job.code === 'restoreRecovered'));
+  assert.equal(fs.readFileSync(path.join(dir, 'dxgi.dll'), 'utf8'), 'the original dxgi');
+  assert.equal(fs.readFileSync(path.join(dir, 'untouched.txt'), 'utf8'), 'the player put this here');
+  assert.equal(fs.existsSync(path.join(dir, 'renodx-dlss5.addon64')), false);
+  const row = handlers.get('history')().rows.find(row => row.action === 'restore' && !row.imported);
+  assert.deepEqual(row.files.map(f => [f.rel, f.action]), [['dxgi.dll', 'restore'], ['renodx-dlss5.addon64', 'remove']]);
+  assert.equal(hasBackup(dir), false);
+  assert.equal(status().canRestore, false);
+  assert.equal((await restore()).code, 'errNoBackup');
+  assert.equal((await diagnostics()).badge, '原版纯净状态 (无需还原)');
+
+  const owned = apply.beginManifest(dir, exe, 'vulkan');
+  const shared = path.join(profile, 'reshade-vulkan');
+  const neighbor = shared + '-unrelated';
+  fs.mkdirSync(neighbor);
+  fs.writeFileSync(path.join(neighbor, 'ReShade64.dll'), 'foreign');
+  owned.vulkanLayer = { owned: true, dir: neighbor };
+  await apply.saveActiveManifest(dir, owned);
+  assert.equal((await restore()).code, 'errUnsafeTarget');
+  assert.equal(fs.readFileSync(path.join(neighbor, 'ReShade64.dll'), 'utf8'), 'foreign');
+  owned.vulkanLayer.dir = shared;
+  await apply.saveActiveManifest(dir, owned);
+  const safe = await restore();
+  assert.ok(safe.preview, JSON.stringify(safe));
+  assert.equal((await restore(safe.preview.token)).ok, true);
+});

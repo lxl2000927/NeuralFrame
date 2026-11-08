@@ -99,6 +99,22 @@ test('ARC Raiders and detected anti-cheat require per-attempt consent, not a har
   }
 });
 
+test('game notes identify local anti-cheat components without naming one from the game title alone', t => {
+  const dir = temp(t);
+  const exe = writePe(path.join(dir, 'Client/Binaries/Win64/Game.exe'));
+  assert.deepEqual(compatibility.antiCheatDetails(dir, exe), { antiCheatWarning: false, antiCheatComponents: [] });
+  fs.writeFileSync(path.join(dir, 'HoYoKProtect.sys'), '');
+  const ace = path.join(path.dirname(exe), 'AntiCheatExpert');
+  fs.mkdirSync(ace);
+  fs.writeFileSync(path.join(ace, 'ACE-CORE.sys'), '');
+  assert.deepEqual(compatibility.antiCheatDetails(dir, exe), {
+    antiCheatWarning: true, antiCheatComponents: ['HoYoKProtect', 'AntiCheatExpert']
+  });
+  const knownGame = path.join(dir, 'ARC Raiders');
+  fs.mkdirSync(knownGame);
+  assert.deepEqual(compatibility.antiCheatDetails(knownGame), { antiCheatWarning: true, antiCheatComponents: [] });
+});
+
 test('anti-cheat consent does not bypass independent mod-manager or file-conflict protection', async t => {
   const dir = temp(t);
   const exePath = writePe(path.join(dir, 'Stock Game/SkyrimSE.exe'));

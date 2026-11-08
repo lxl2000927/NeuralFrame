@@ -13,6 +13,8 @@ const { createRequire } = require('module');
 // one's result and a card came back empty until it was scanned again.
 test('concurrent scans both survive in the saved library', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'swapper-state-race-'));
+  // A library created before its first scan may contain preferences only.
+  fs.writeFileSync(path.join(root, 'library.json'), JSON.stringify({ lang: 'en' }));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const main = path.resolve(__dirname, '../main.js');
   const realRequire = createRequire(main);
@@ -49,6 +51,7 @@ test('concurrent scans both survive in the saved library', async (t) => {
 
   const saved = JSON.parse(fs.readFileSync(path.join(root, 'library.json'), 'utf8'));
   const dirs = Object.values(saved.scans).map(row => row.dir).sort();
+  assert.equal(saved.lang, 'en');
   assert.deepEqual(dirs, [fast, slow], 'both scan results must be in the file');
 });
 

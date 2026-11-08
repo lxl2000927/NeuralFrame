@@ -7,7 +7,7 @@ const protocol = require('./overlay-protocol');
 const preferences=require('./overlay-preferences');
 const { ipcMain } = require('electron');
 
-module.exports = async function startOverlayBridge({ BrowserWindow, userData, idleTakeoverMs = 5000 }) {
+module.exports = async function startOverlayBridge({ BrowserWindow, userData, language = () => 'zh', idleTakeoverMs = 5000 }) {
   const token = crypto.randomBytes(16).toString('hex');
   const endpoint = path.join(userData, 'overlay-bridge.endpoint');
   // The add-on composes the same name from LAB_OVERLAY_PROFILE (see
@@ -22,12 +22,16 @@ module.exports = async function startOverlayBridge({ BrowserWindow, userData, id
   // How long an unreachable game may hold the single connection.
   const IDLE_TAKEOVER_MS = idleTakeoverMs;
   let server = null;
-  let runtimeStatus = null, commandTime = 0, commandCount = 0;
+  let runtimeStatus = null, session = 0, commandTime = 0, commandCount = 0;
   const win = new BrowserWindow({ show: false, width: protocol.WIDTH, height: 900, transparent: true, frame: false,
     webPreferences: { preload: path.join(__dirname, '../overlay-preload.js'), offscreen: true, contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false, spellcheck: false } });
-  const preferenceChanged=(dir,value)=>{if(dir===userData&&!closed&&!win.isDestroyed())win.webContents.send('lab-overlay-preferences',value);};
+  const preferenceChanged = (dir, value) => {
+    if (dir === userData && !closed && !win.isDestroyed())
+      win.webContents.send('lab-overlay-preferences', { ...value, language: language() });
+  };
+  const refreshPreferences = () => preferenceChanged(userData, preferences.read(userData));
   const control = (event, command) => {
-    if (closed || !client || event.sender !== win.webContents) return;
+    if (closed || !client || !runtimeStatus || command?.session !== session || event.sender !== win.webContents) return;
     if (Date.now() - commandTime > 1000) { commandTime = Date.now(); commandCount = 0; }
     if (++commandCount > 240) return;
     try { client.write(protocol.command(runtimeStatus, command)); } catch(error) { console.warn('Lab overlay command rejected:',error.message); }
@@ -50,6 +54,16 @@ module.exports = async function startOverlayBridge({ BrowserWindow, userData, id
     client.inFlight = true;
     client.sequence = latest.readUInt32LE(8);
     client.write(latest);
+  }
+  function disconnectClient() {
+    client = null;
+    runtimeStatus = null;
+    latest = null;
+    commandCount = 0;
+    if (!closed && !win.isDestroyed()) {
+      win.webContents.sendInputEvent({ type: 'mouseUp', x: -1, y: -1, button: 'left', clickCount: 1 });
+      win.webContents.send('lab-overlay-status', null);
+    }
   }
   // The panel is a fixed 534-pixel surface on the other side of the pipe, but
   // an offscreen window paints at the display's scale factor: measured here,
@@ -87,7 +101,7 @@ module.exports = async function startOverlayBridge({ BrowserWindow, userData, id
   win.on('closed', close);
   try {
   await win.loadFile(path.join(__dirname, 'renderer/overlay-panel.html'));
-  win.webContents.send('lab-overlay-preferences',preferences.read(userData));
+  refreshPreferences();
   preferences.events.on('change',preferenceChanged);
   const height = Math.ceil(await win.webContents.executeJavaScript(`document.querySelector('#panel').getBoundingClientRect().height`));
   if (height < 1 || height > protocol.MAX_HEIGHT) { win.destroy(); throw Error('Overlay panel height exceeds its bounded surface'); }
@@ -106,22 +120,20 @@ module.exports = async function startOverlayBridge({ BrowserWindow, userData, id
     if (client) {
       if (Date.now() - (client.lastSeen || 0) < IDLE_TAKEOVER_MS) { socket.destroy(); return; }
       const abandoned = client;
-      client = null;
+      disconnectClient();
       abandoned.destroy();
     }
     client = socket;
+    session++;
     socket.lastSeen = Date.now();
     let pending = Buffer.alloc(0), lastInput = Date.now(), count = 0, mouseDown = false;
     socket.on('error', () => {});
     socket.on('close', () => {
       if (client !== socket) return;
-      client = null; runtimeStatus = null;
-      if (!win.isDestroyed()) {
-        win.webContents.sendInputEvent({ type: 'mouseUp', x: -1, y: -1, button: 'left', clickCount: 1 });
-        win.webContents.send('lab-overlay-status', null);
-      }
+      disconnectClient();
     });
     socket.on('data', data => {
+      if (client !== socket) return;
       socket.lastSeen = Date.now();
       try {
         if (pending.length + data.length > 128000) throw Error('Input limit');
@@ -133,7 +145,7 @@ module.exports = async function startOverlayBridge({ BrowserWindow, userData, id
             if (pending.length < 8 + length) break;
             runtimeStatus = protocol.status(JSON.parse(pending.toString('utf8', 8, 8 + length)));
             pending = pending.subarray(8 + length);
-            win.webContents.send('lab-overlay-status', runtimeStatus);
+            win.webContents.send('lab-overlay-status', { ...runtimeStatus, session });
             continue;
           }
           if (pending.length < 20) break;
@@ -180,5 +192,5 @@ module.exports = async function startOverlayBridge({ BrowserWindow, userData, id
     endpoint,
     pipeName
   });
-  return { window: win, endpoint, pipeName, state, getFrame: () => latest, getStatus:()=>runtimeStatus, close };
+  return { window: win, endpoint, pipeName, state, getFrame: () => latest, getStatus:()=>runtimeStatus, refreshPreferences, close };
 };

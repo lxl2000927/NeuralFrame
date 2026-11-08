@@ -1,0 +1,6 @@
+/* Only the isolated desktop preview expands the showcase, never the game HUD. */
+.ol-thumbnail .ol-panes { height:680px; overflow:hidden; }
+.ol-preview-views { display:flex; gap:10px; margin:14px 0 8px; }
+.ol-preview-views button { flex:1; min-width:0; padding:10px; border:1px solid #475367; border-radius:4px; background:#18212d; color:#b8c6d7; font:13px 'Segoe UI','Microsoft YaHei',sans-serif; cursor:pointer; }
+.ol-preview-views button[aria-pressed=true] { border-color:var(--ol-accent); color:var(--ol-bright); background:color-mix(in srgb,var(--ol-accent) 12%,#18212d); }
+.ol-preview-views button:focus-visible { outline:2px solid var(--ol-accent); outline-offset:2px; }

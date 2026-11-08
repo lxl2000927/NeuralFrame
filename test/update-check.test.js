@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
+const { EventEmitter } = require('node:events');
 const { createRequire } = require('module');
 
 // The update lookup runs in the main process against the real GitHub endpoint.
@@ -31,7 +32,9 @@ function load(t, { version = '2.2.1', fetchImpl, channel = 'upstream', releaseRe
   };
   const context = vm.createContext({
     require: name => stubs[name] || realRequire(name),
-    __dirname: path.dirname(main), process, Buffer, console, setTimeout, clearTimeout,
+    __dirname: path.dirname(main),
+    process: Object.assign(new EventEmitter(), { env: process.env, platform: process.platform }),
+    Buffer, console, setTimeout, clearTimeout,
     AbortSignal,
     fetch: async (...args) => { calls.count++; return fetchImpl(...args); }
   });
@@ -65,13 +68,32 @@ test('a newer release is reported, an older or equal one is not', async (t) => {
   }
 });
 
-test('the lookup happens once per launch', async (t) => {
+test('automatic checks reuse the launch result', async (t) => {
   const { handlers, calls } = load(t, { fetchImpl: async () => release('v9.0.0') });
   const first = await handlers.get('update-check')();
   const second = await handlers.get('update-check')();
   assert.equal(first.newer, true);
   assert.deepEqual(second, first);
   assert.equal(calls.count, 1, 'the answer is kept for the session');
+});
+
+test('manual checks retry an offline result and share an in-flight release query', async t => {
+  let online = false, tag = 'v2.2.2';
+  const {handlers, calls} = load(t, {fetchImpl: async () => {
+    if (!online) throw Error('offline');
+    return release(tag);
+  }});
+  const check = handlers.get('update-check');
+  assert.equal((await check()).latest, null);
+  online = true;
+  const [first, second] = await Promise.all([check({}, true), check({}, true)]);
+  assert.equal(first.latest, '2.2.2');
+  assert.deepEqual(first, second);
+  assert.equal(calls.count, 2);
+  tag = 'v2.2.3';
+  assert.equal((await check({}, true)).latest, '2.2.3');
+  assert.equal((await check()).latest, '2.2.3');
+  assert.equal(calls.count, 3);
 });
 
 test('being offline, rate-limited or blocked says nothing at all', async (t) => {

@@ -11,12 +11,12 @@ const catalog = require('./runtime-catalog.json');
 const error = message => Object.assign(new Error(message), {code:'errRuntimeComponents'});
 const nonempty = value => value !== undefined && value !== 'off';
 
-function requiredPacks({kind, config = {}, route, mfgRoute, target = {}, scan = {}, repairNeural = false, customModel = false} = {}) {
+function requiredPacks({kind, config = {}, route, mfgRoute, target = {}, scan = {}, customModel = false} = {}) {
   if (kind === 'restore') return [];
   const ids = new Set();
   const modern = config.runtimeStack === 'oct2026-310.9.16' || (!config.runtimeStack && config.hardwareProfile === 'rtx50_desktop');
   const stack = modern ? 'modern' : 'baseline';
-  const nr = kind === 'install' || nonempty(config.neuralMode) || repairNeural;
+  const nr = kind === 'install' || nonempty(config.neuralMode);
   const mfg = kind === 'enhanced' && nonempty(config.mfgMode) && target.bitness !== 32 && ['dxgi','vulkan'].includes(target.api || 'dxgi') && !['DirectX 10','DirectX 11'].includes(target.apiLabel);
   if(nr || mfg) ids.add('localization');
   if (nr) {
@@ -137,7 +137,7 @@ class RuntimePayload {
     }} finally {await handle.close();}
     if(count!==p.size || sha.digest('hex')!==p.sha256)throw error('组件下载不完整或 SHA-256 不匹配，请重试。');
     this.checkCancelled();this.onProgress({stage:'verify',id:p.id,name:p.name,loaded:count,total:p.size});
-    const extracted=safe(temp,'__unpacked');await fs.promises.mkdir(extracted);await unpack(archive,extracted);
+    const extracted=safe(temp,'__unpacked');await fs.promises.mkdir(extracted);await unpack(archive,extracted,this.controller.signal);
     if(!await this.complete(extracted,p))throw error('组件压缩包内容与固定清单不一致');
     for(const f of p.files) await this.copy(safe(extracted,f.path),safe(temp,f.path));
     await fs.promises.rm(archive,{force:true});await fs.promises.rm(extracted,{recursive:true,force:true});

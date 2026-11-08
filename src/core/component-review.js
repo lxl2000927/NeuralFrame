@@ -34,9 +34,10 @@ class ComponentReview {
     return data;
   }
   async save(dir, record) { await journal.atomicJson(this.file(dir), record); }
-  async inventory(dir) {
+  async inventory(dir, inspectFile = diskInfo, recoveredManifest) {
     if (!path.isAbsolute(dir) || !fs.existsSync(dir)) throw err('errUnsafeTarget', '无效的游戏目录');
-    const scan = await scanGame(dir), manifest = readManifest(dir), record = this.read(dir);
+    const scan = await scanGame(dir), record = this.read(dir);
+    const manifest = recoveredManifest === undefined ? readManifest(dir) : recoveredManifest;
     const files = new Map();
     const add = rel => { const file = journal.safePath(dir, rel); files.set(key(file), file); };
     for (const item of [...(scan.dlssFiles || []), ...(scan.streamlineFiles || []), ...(scan.upscalerFiles || [])]) add(path.relative(dir, item.path));
@@ -52,7 +53,7 @@ class ComponentReview {
     }
     const rows = [];
     for (const file of files.values()) {
-      const rel = path.relative(dir, file), info = diskInfo(file), receipt = record.receipts[rel];
+      const rel = path.relative(dir, file), info = inspectFile(file), receipt = record.receipts[rel];
       const original = (manifest?.replaced || []).find(r => r.rel.toLowerCase() === rel.toLowerCase());
       let backup = null;
       if (original) {
@@ -74,12 +75,12 @@ class ComponentReview {
       sharedNames.add('ReShade64.dll'); sharedNames.add('ReShade32.dll');
     }
       for (const name of sharedNames) {
-        const file = journal.safePath(sharedRoot,name), info = diskInfo(file), pin = record.lock?.sharedFiles?.[file];
+        const file = journal.safePath(sharedRoot,name), info = inspectFile(file), pin = record.lock?.sharedFiles?.[file];
         if (!info && !pin) continue;
         rows.push({rel:file,scope:'shared',name,category:'共享 Vulkan 图层',...info,present:!!info,loaded:'unknown',source:'管理器共享组件；可能供多个游戏使用',lockState:pin?(pin.sha256===info?.sha256?'match':'drift'):null});
       }
     rows.sort((a, b) => a.category.localeCompare(b.category) || a.rel.localeCompare(b.rel));
-    return { ok: true, dir, rows, lock: record.lock, lastApplied: record.lastApplied || null };
+    return { ok: true, dir, exePath: scan.chosen?.path, rows, lock: record.lock, lastApplied: record.lastApplied || null };
   }
   async setLock(dir, enabled) {
     if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) throw err('errUnsafeTarget', '无效的游戏目录');
@@ -92,7 +93,7 @@ class ComponentReview {
       record.lock = { at: new Date().toISOString(), files, sharedFiles, configuration: record.lastApplied?.request || null };
     } else record.lock = null;
     await this.save(dir, record);
-    this.pending.clear();
+    for (const [id, plan] of this.pending) if (plan.dir === key(dir)) this.pending.delete(id);
     return { ok: true, lock: record.lock };
   }
   assertUnlockedWithin(directory) {
@@ -102,22 +103,31 @@ class ComponentReview {
       const parent = path.dirname(dir); if (parent === dir) break; dir = parent;
     }
   }
-  lockConflicts(dir, rows, request) {
+  lockConflicts(dir, rows, request, inspectFile = diskInfo) {
     const lock = this.read(dir).lock;
     const conflicts = [];
     // A shared Vulkan DLL must also respect locks belonging to other games.
-    if (fs.existsSync(this.root)) for (const name of fs.readdirSync(this.root).filter(n=>/^[a-f0-9]{64}\.json$/.test(n))) {
-      const record = JSON.parse(fs.readFileSync(path.join(this.root,name),'utf8'));
+    const sharedRoot = path.join(path.dirname(this.root), 'reshade-vulkan');
+    const sharedChanges = rows.filter(row => row.scope === 'shared' && row.action !== 'keep' &&
+      key(path.dirname(row.rel)) === key(sharedRoot) && /^ReShade(32|64)\.dll$/i.test(path.basename(row.rel)));
+    if (sharedChanges.length && fs.existsSync(this.root)) for (const name of fs.readdirSync(this.root).filter(n=>/^[a-f0-9]{64}\.json$/.test(n))) {
+      let record;
+      try {
+        record = JSON.parse(fs.readFileSync(path.join(this.root,name),'utf8'));
+        if (!record || record.version !== 1 || path.basename(this.file(record.dir)) !== name || !record.receipts) throw Error();
+      } catch {
+        throw err('errComponentRecord', '无法核实共享 Vulkan 组件的版本锁定，请检查组件记录。');
+      }
       if (!record.lock || (request.kind==='restore' && key(record.dir)===key(dir))) continue;
       for (const [file,pin] of Object.entries(record.lock.sharedFiles || {})) {
-        const row = rows.find(r=>r.scope==='shared' && key(r.rel)===key(file));
+        const row = sharedChanges.find(r=>key(r.rel)===key(file));
         if (row && row.after?.sha256!==pin.sha256) conflicts.push(`${file}：受 ${path.basename(record.dir)} 的共享组件锁保护`);
       }
     }
     if (!lock || request.kind === 'restore') return conflicts;
-    for (const [file,pin] of Object.entries(lock.sharedFiles || {})) if(diskInfo(file)?.sha256!==pin.sha256) conflicts.push(`${file}：共享组件已偏离锁定版本`);
+    for (const [file,pin] of Object.entries(lock.sharedFiles || {})) if(inspectFile(file)?.sha256!==pin.sha256) conflicts.push(`${file}：共享组件已偏离锁定版本`);
     for (const [rel, expected] of Object.entries(lock.files)) {
-      const now = diskInfo(journal.safePath(dir, rel));
+      const now = inspectFile(journal.safePath(dir, rel));
       if (now?.sha256 !== expected.sha256) conflicts.push(`${rel}：磁盘文件已偏离锁定版本`);
       const planned = rows.find(row => row.scope === 'game' && row.rel.toLowerCase() === rel.toLowerCase());
       if (planned && planned.after?.sha256 !== expected.sha256) conflicts.push(`${rel}：本次操作会更换或移除锁定版本`);
@@ -130,20 +140,41 @@ class ComponentReview {
     const { state, result } = await preview.simulate(work);
     if (result?.ok === false) throw err(result.code || 'errPreview', result.message || result.code || '无法生成预览');
     const rows = [], internal = [];
+    // A confirmation runs a fresh plan. Share file fingerprints only within this pass.
+    const fingerprints = new Map();
+    const inspectFile = file => {
+      const id = key(file);
+      if (!fingerprints.has(id)) fingerprints.set(id, diskInfo(file));
+      return fingerprints.get(id);
+    };
     for (const [k, file] of state.touched) {
       const next = state.entries.get(k);
       if (next?.directory || (!next && fs.existsSync(file) && fs.statSync(file).isDirectory())) continue;
       const rel = path.relative(dir, file), scope = rel && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel) ? 'game' : 'shared';
       if (scope === 'game' && (/^_DLSS5_Backup[\\/]/i.test(rel) || /^\.dlss5_write_test_/.test(path.basename(rel)))) { internal.push(rel); continue; }
-      const before = diskInfo(file);
+      const before = inspectFile(file);
       if (!before && !next) continue;
-      const after = next ? next.buffer ? { sha256: hash(next.buffer), size: next.buffer.length, version: null } : diskInfo(next.source) : null;
+      const after = next ? next.buffer ? { sha256: hash(next.buffer), size: next.buffer.length, version: null } : inspectFile(next.source) : null;
       const action = !before ? 'add' : !after ? 'remove' : before.sha256 === after.sha256 ? 'keep' : 'replace';
       rows.push({ rel: scope === 'game' ? rel : file, scope, category: category(file), action, before, after, source: next?.origin || (next?.buffer ? '管理器生成的配置' : next?.source) || null });
     }
     // Include existing components deliberately left alone (e.g. the game's
     // own Streamline ABI), not just files that happened to receive a write.
-    const inventory = await this.inventory(dir);
+    let recoveredManifest;
+    const pendingFile = journal.pendingPath(dir);
+    if (request.kind === 'restore' && state.entries.get(key(pendingFile)) === null && fs.existsSync(pendingFile)) {
+      // The disk still holds the interrupted write. Use the manifest validated
+      // by the simulated restore; a rolled-back first install can yield null.
+      recoveredManifest = result?.inventoryManifest;
+      if (recoveredManifest === undefined) {
+        const recovery = await preview.simulate(async () => {
+          await journal.recover(dir);
+          return readManifest(dir);
+        });
+        recoveredManifest = recovery.result;
+      }
+    }
+    const inventory = await this.inventory(dir, inspectFile, recoveredManifest);
     for (const row of inventory.rows) {
       const planned = rows.find(r => r.scope === row.scope && r.rel.toLowerCase() === row.rel.toLowerCase());
       if (planned) planned.backup = row.backup || (row.present && planned.action === 'replace' ? { version: row.version, create: true } : null);
@@ -153,9 +184,17 @@ class ComponentReview {
       }
     }
     rows.sort((a, b) => a.rel.localeCompare(b.rel));
-    const conflicts = this.lockConflicts(dir, rows, request);
-    const signature = hash(JSON.stringify({ request, rows: rows.map(r => [r.rel, r.action, r.before?.sha256, r.after?.sha256, r.source]), externalSteps: state.externalSteps }));
-    return { rows, conflicts, signature, lock: this.read(dir).lock, externalSteps: state.externalSteps, internalFiles: new Set(internal).size };
+    const conflicts = this.lockConflicts(dir, rows, request, inspectFile);
+    // Classic Install already shows a native warning. The other deployment routes
+    // share their existing confirmation dialog with the game-specific notice.
+    let antiCheat;
+    if (['enhanced', 'component-update', 'component-rollback'].includes(request.kind) &&
+        rows.some(row => row.scope === 'game' && (row.action === 'add' || row.action === 'replace'))) {
+      const details = require('./compatibility').antiCheatDetails(dir, inventory.exePath);
+      if (details.antiCheatWarning) antiCheat = { components: details.antiCheatComponents.sort() };
+    }
+    const signature = hash(JSON.stringify({ request, rows: rows.map(r => [r.rel, r.action, r.before?.sha256, r.after?.sha256, r.source]), externalSteps: state.externalSteps, antiCheat }));
+    return { rows, conflicts, signature, lock: this.read(dir).lock, externalSteps: state.externalSteps, internalFiles: new Set(internal).size, antiCheat };
   }
   async run(dir, request, work, token) {
     if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) throw err('errUnsafeTarget', '无效的游戏目录');

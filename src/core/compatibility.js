@@ -25,10 +25,18 @@ function managedModRoot(gameDir, exePath) {
   }
   return null;
 }
-function hasAntiCheat(gameDir, exePath) {
+function antiCheatDetails(gameDir, exePath, directoryCache = new Map()) {
   const dirs = [gameDir, ...(exePath ? [path.dirname(exePath)] : [])];
-  return dirs.some(dir => /(?:^|[\\/])arc[ _-]?raiders(?:[\\/]|$)/i.test(dir)) ||
-    dirs.some(dir => guards.antiCheatPresent(dir));
+  const components = new Set();
+  for (const dir of dirs) {
+    if (!directoryCache.has(dir)) directoryCache.set(dir, guards.antiCheatComponents(dir));
+    for (const name of directoryCache.get(dir)) components.add(name);
+  }
+  const knownGame = dirs.some(dir => /(?:^|[\\/])arc[ _-]?raiders(?:[\\/]|$)/i.test(dir));
+  return { antiCheatWarning: components.size > 0 || knownGame, antiCheatComponents: [...components] };
+}
+function hasAntiCheat(gameDir, exePath) {
+  return antiCheatDetails(gameDir, exePath).antiCheatWarning;
 }
 function targetIssue(gameDir, exePath) {
   // Anti-cheat is a user-acknowledged risk, not a compatibility hard block.
@@ -93,4 +101,4 @@ function assertLoaderCompatible(config, manifest) {
     throw problem('errLoaderConflict', path.relative(gameDir, file));
   }
 }
-module.exports = { targetIssue, hasAntiCheat, oldShaderCompiler, assertSafeTarget, assertAntiCheatConsent, assertLoaderCompatible, managedModRoot };
+module.exports = { targetIssue, antiCheatDetails, hasAntiCheat, oldShaderCompiler, assertSafeTarget, assertAntiCheatConsent, assertLoaderCompatible, managedModRoot };

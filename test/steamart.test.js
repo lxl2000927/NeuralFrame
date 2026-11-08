@@ -36,6 +36,17 @@ test('Star Rail aliases use the official listing artwork without a wrong Steam m
   }
 });
 
+test('home tiles prefer catalog banners and fall back to a landscape Steam capsule', () => {
+  const [banner, fallback] = art.tileUrls('鸣潮', null);
+  assert.match(banner, /^https:\/\/img\.nvidiagrid\.net\/apps\/[^/]+\/CN\/TV_BANNER_/);
+  assert.match(fallback, /3513350\/capsule_616x353\.jpg$/);
+  assert.match(art.tileUrls('Honkai: Star Rail', null)[0], /\/CN\/TV_BANNER_/);
+  assert.deepEqual(art.tileUrls('鸣潮', '431960'), [
+    'https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/431960/capsule_616x353.jpg'
+  ]);
+  assert.deepEqual(art.tileUrls('Unlisted local game', null), []);
+});
+
 test('cache retries empty and deleted artwork while preserving existing images on upgrade', () => {
   const onDisk = value => value === 'good';
   const now = 100000000;

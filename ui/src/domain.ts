@@ -1,4 +1,16 @@
-import type { Draft, Status } from "./types";
+import type { Draft, Game, Status } from "./types";
+export function groupByLauncher(games: Game[], grouped: boolean) {
+  if (!grouped) return [{ name: "", games }];
+  const groups = new Map<string, Game[]>();
+  for (const game of games) {
+    const list = groups.get(game.launcher);
+    if (list) list.push(game);
+    else groups.set(game.launcher, [game]);
+  }
+  return Array.from(groups, ([name, games]) => ({ name, games }))
+    .sort((a, b) => Number(b.name === "Steam") - Number(a.name === "Steam"));
+}
+
 export const profiles = [
   ["rtx40_laptop", "RTX 40 笔记本"],
   ["rtx40_desktop", "RTX 40 桌面显卡"],
@@ -13,7 +25,7 @@ export function readDraft(status: Status): Draft {
     mfgMode: fg?.mode || "off",
     hardwareProfile: status.hardwareProfile || "rtx40_laptop",
     runtimeStack:
-      nr?.configuredRuntimeStack || nr?.runtimeStack || "baseline-310.9.1",
+      status.configuredRuntimeStack || nr?.configuredRuntimeStack || (nr?.runtimeVersion && nr.runtimeStack) || defaultStack(status.hardwareProfile),
     hdrCompatibility: fg?.settings?.qualityGuardMode === 2,
   };
 }
@@ -22,7 +34,18 @@ export function changedFields(base: Draft, draft: Draft) {
     (k) => base[k] !== draft[k],
   );
 }
-export function applyPatch(base: Draft, draft: Draft): Partial<Draft> {
+export function defaultStack(profile?: string) {
+  return profile === "rtx50_desktop" ? "oct2026-310.9.16" : "baseline-310.9.1";
+}
+export function neuralChoice(draft: Draft, mode: string) {
+  const legacy = "310.8.0-RTX40";
+  return {
+    neuralMode: mode,
+    neuralModelId: mode === "legacy" ? legacy
+      : mode === "latest_compatible" && draft.neuralModelId === legacy ? "310.8.SF-v2" : draft.neuralModelId,
+  };
+}
+export function applyPatch(base: Draft, draft: Draft, scope: "changed" | "neural" | "mfg" | "both" = "changed"): Partial<Draft> {
   if (
     !["off", "legacy", "latest_compatible"].includes(draft.neuralMode) ||
     !["off", "x2", "x3", "x4"].includes(draft.mfgMode) ||
@@ -31,6 +54,14 @@ export function applyPatch(base: Draft, draft: Draft): Partial<Draft> {
   )
     throw Error("此组件配置包含尚不支持的值，请重新选择。");
   const fields = changedFields(base, draft);
+  if (scope !== "changed") {
+    return {
+      hardwareProfile: draft.hardwareProfile,
+      runtimeStack: draft.runtimeStack,
+      ...(scope !== "mfg" ? { neuralMode: draft.neuralMode, neuralModelId: draft.neuralModelId } : {}),
+      ...(scope !== "neural" ? { mfgMode: draft.mfgMode, hdrCompatibility: draft.hdrCompatibility } : {}),
+    };
+  }
   if (!fields.length) throw Error("没有待应用的修改。");
   const patch: Partial<Draft> = { hardwareProfile: draft.hardwareProfile };
   if (
@@ -50,11 +81,12 @@ export function applyPatch(base: Draft, draft: Draft): Partial<Draft> {
   }
   if (
     fields.some((k) =>
-      ["mfgMode", "hdrCompatibility", "hardwareProfile"].includes(k),
+      ["mfgMode", "hdrCompatibility", "hardwareProfile", "runtimeStack"].includes(k),
     ) &&
     (draft.mfgMode !== "off" || fields.includes("mfgMode"))
   ) {
     patch.mfgMode = draft.mfgMode;
+    patch.runtimeStack = draft.runtimeStack;
     patch.hdrCompatibility = draft.hdrCompatibility;
   }
   if (!patch.neuralMode && !patch.mfgMode)
@@ -62,5 +94,5 @@ export function applyPatch(base: Draft, draft: Draft): Partial<Draft> {
   return patch;
 }
 export const errorText = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
+  (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
 export const size = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;

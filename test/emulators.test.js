@@ -24,6 +24,7 @@ test('known emulator folders are valid install targets with renderer choices', a
   const fixtures = [
     ['duckstation-qt-x64-ReleaseLTCG.exe', 'duckstation', 'dxgi', ['dxgi', 'vulkan', 'opengl']],
     ['rpcs3.exe', 'rpcs3', 'vulkan', ['vulkan', 'opengl']],
+    ['Play.exe', 'play', 'vulkan', ['vulkan', 'opengl']],
     ['pcsx2-qt.exe', 'pcsx2', 'dxgi', ['dxgi', 'vulkan', 'opengl']],
     ['melonDS.exe', 'melonds', 'opengl', ['opengl']]
   ];
@@ -41,4 +42,22 @@ test('known emulator folders are valid install targets with renderer choices', a
       assert.equal(scan.emulator.key, key);
     });
   }
+});
+
+test('Play.exe uses its DirectX renderer unless the executable identifies the Play! emulator', async t => {
+  const { writePe } = require('./fixtures/pe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-play-exe-'));
+  t.after(() => fs.rmSync(dir, {recursive:true, force:true}));
+  const file = writePe(path.join(dir, 'Play.exe'), {text:'D3D12CreateDevice', version:[1,0,0,0]});
+  const game = await scanGame(dir);
+  assert.equal(game.chosen.apiLabel, 'DirectX 12');
+  assert.equal(game.emulator, null);
+
+  // The fixture reserves a 64-byte version resource starting at offset 0x300.
+  const exe = fs.readFileSync(file);
+  exe.write('Play!', 0x320, 'utf16le');
+  fs.writeFileSync(file, exe);
+  const emulator = await scanGame(dir);
+  assert.equal(emulator.emulator.key, 'play');
+  assert.deepEqual(emulator.chosen.apiChoices.map(choice => choice.api), ['vulkan','opengl']);
 });

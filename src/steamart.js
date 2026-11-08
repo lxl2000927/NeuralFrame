@@ -51,6 +51,28 @@ const KNOWN_GAMES = [
 ];
 const knownGame = name => KNOWN_GAMES.find(game => game.aliases.some(alias => norm(cleanName(alias)) === norm(cleanName(name))));
 
+// Localized 16:9 TV banners from NVIDIA's application catalog, keyed by Steam ID.
+const tvBanners = {
+  '3513350': '891174c3-61a5-4b20-a3a1-adc85985708e/CN/TV_BANNER_01_9a39cc89-fe1e-416c-9658-585ab6f61528.jpg',
+  '2277560': 'f02ad372-a767-436b-b4ec-6ef01405abe7/ZZ/TV_BANNER_01_668f5c55-1375-4524-91a3-e63befd72d03.jpg',
+  '1623730': 'a6c2a87a-b97a-4626-ab23-aa5883cfaed3/ZZ/TV_BANNER_01_4d81b04b-b675-4a34-a173-2339cf576de7.jpg',
+  '292030': '368d3f86-5c63-4f9c-be03-193188752472/ZZ/TV_BANNER_01_95f8e52c-30b0-4dfb-bc45-536ffbbadf97.jpg',
+  '2622380': '41884d9f-6eab-4e65-b316-bb6def389077/ZZ/TV_BANNER_01_a61c67d5-0097-4c87-b436-ae00146314cb.jpg',
+  '526870': 'cf1db184-f223-45ab-8360-ae044bb17572/ZZ/TV_BANNER_01_134e69a4-9a9d-4d62-a0a4-5cffa12fed00.jpg',
+  '1245620': '039f2f6f-a4c7-46ee-b557-059b0b5b55fa/ZZ/TV_BANNER_01_5f16a392-14c1-40f3-9c52-d774493a9571.jpg',
+};
+
+function tileUrls(name, appid) {
+  const known = !appid && knownGame(String(name || ''));
+  const id = appid || known?.appid;
+  const banner = known?.name === 'Honkai: Star Rail'
+    ? 'f66d19a8-4d80-406f-b1f0-075ff5e9b51c/CN/TV_BANNER_01_1dcd57ae-1156-412f-b8f4-b3111c165cf4.jpg'
+    : tvBanners[id];
+  const urls = banner ? [`https://img.nvidiagrid.net/apps/${banner};f=webp;q=85;w=960`] : [];
+  if (/^\d+$/.test(String(id))) urls.push(asset(id, 'capsule_616x353.jpg'));
+  return urls;
+}
+
 // A search for "Control" happily returns "Star Control", so the closest title
 // wins rather than the first row.
 function pick(rows, query) {
@@ -176,4 +198,4 @@ async function download(url, dest) {
 // Nothing to configure, so it is always on.
 const available = () => true;
 
-module.exports = { available, look, download, cleanName, pick };
+module.exports = { available, look, download, cleanName, pick, tileUrls };

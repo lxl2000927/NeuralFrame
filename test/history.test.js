@@ -133,3 +133,58 @@ test('a failed clear keeps persisted and pending history and removes the tempora
   assert.equal(store.pending.size, 0);
   assert.deepEqual(store.list(), []);
 });
+
+test('file details and applied configuration survive restart and distinguish restore from install', t => {
+  const { root, store, file } = fixture(t);
+  const data = {
+    ...manifest(), hardwareProfile: 'rtx40_laptop',
+    neuralRendering: { mode: 'latest_compatible', modelId: '310.8.SF-v2' },
+    mfg: { mode: 'x3' },
+    replaced: [{ rel: 'bin/nvngx_dlss.dll', oldVersion: '310.5.0.0', newVersion: '310.9.1.0' }],
+    added: ['bin/renodx.addon64']
+  };
+  const installed = store.record(root, data, 'install');
+  const restored = store.record(root, data, 'restore');
+  const records = new HistoryStore(file).list();
+  assert.deepEqual(records.find(r => r.id === installed.id).files, [
+    { rel: 'bin/nvngx_dlss.dll', action: 'replace', before: '310.5.0.0', after: '310.9.1.0' },
+    { rel: 'bin/renodx.addon64', action: 'add' }
+  ]);
+  assert.deepEqual(records.find(r => r.id === restored.id).files, [
+    { rel: 'bin/nvngx_dlss.dll', action: 'restore', before: '310.9.1.0', after: '310.5.0.0' },
+    { rel: 'bin/renodx.addon64', action: 'remove' }
+  ]);
+  assert.deepEqual(records[0].configuration, { hardwareProfile: 'rtx40_laptop', neuralMode: 'latest_compatible', neuralModelId: '310.8.SF-v2', mfgMode: 'x3' });
+});
+
+test('old counts-only audit records are retained without fabricated file details', t => {
+  const { root, file } = fixture(t);
+  const old = { id: 'old', dir: root, date: '2026-09-01T18:00:00.000Z', action: 'install', replaced: 2, added: 8 };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(old) + '\n');
+  assert.deepEqual(new HistoryStore(file).list(), [old]);
+});
+
+test('a damaged detail or JSON line cannot crash other entries and clearing dismisses the warning', t => {
+  const { root, store, file } = fixture(t);
+  const saved = store.record(root, manifest(), 'install');
+  fs.appendFileSync(file, JSON.stringify({...saved, id:'bad-file', files:[null]}) + '\n{partial\n');
+  const warnings = [];
+  assert.deepEqual(store.list([], error => warnings.push(error.message)).map(row => row.id), [saved.id]);
+  assert.equal(warnings.length, 1);
+  store.clear();
+  assert.deepEqual(store.list([], () => assert.fail('old warnings survived clear')), []);
+});
+
+test('history keeps independently applied stacks, HDR input policy and restore hash direction', t => {
+  const { root, store } = fixture(t);
+  const data = {...manifest(), neuralRendering:{runtimeStack:'baseline-310.9.1'},
+    mfg:{mode:'x3', runtimeStack:'oct2026-310.9.16', backend:'renodx-mfgunlock', hdrCompatibility:false},
+    replaced:[{rel:'provider.dll', beforeHash:'original', afterHash:'installed'}]};
+  const restored = store.record(root, data, 'restore');
+  assert.equal(restored.configuration.neuralRuntimeStack, 'baseline-310.9.1');
+  assert.equal(restored.configuration.mfgRuntimeStack, 'oct2026-310.9.16');
+  assert.equal(restored.configuration.qualityGuardMode, '0');
+  assert.equal(restored.files[0].beforeHash, 'installed');
+  assert.equal(restored.files[0].afterHash, 'original');
+});

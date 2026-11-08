@@ -681,9 +681,8 @@
   border-color: #ef4444;
 }
 
-/* 隐藏游戏抽屉底部原版遗留的重复英文按钮栏 (Install DLSS 5 / Restore originals) 与废弃社区按钮 (Add to community-tested games) */
+/* 隐藏游戏抽屉底部原版遗留的重复英文按钮栏 (Install DLSS 5 / Restore originals) */
 #sheet .sheet-actions,
-#sheet #shareResult,
 #sheet .gp-actions #doInstall,
 #sheet .gp-actions #doRestore {
   display: none !important;

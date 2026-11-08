@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('./preview-fs').fs;
+const replaceFile = require('./replace-file');
 const path = require('path');
 const extractZip = require('extract-zip');
 const pe = require('./pe');
@@ -187,7 +188,7 @@ async function retireForwarder(manifest, gameDir, exeDir, log) {
   if (!fs.existsSync(file)) return;
   const rel = await trackBeforeWrite(manifest, gameDir, file, { kind: 'optiscaler' });
   await saveActiveManifest(gameDir, manifest);
-  await fs.promises.chmod(file, 0o666).catch(() => {});
+  await replaceFile.makeWritable(file).catch(() => {});
   await fs.promises.unlink(file);
   log({ code: 'forwarderRetired', params: { rel } });
 }

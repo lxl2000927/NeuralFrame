@@ -22,15 +22,27 @@ function queryProcesses(executables) {
 function readTail(file) {
   let fd;
   try {
-    const stat = fs.statSync(file);
-    if (!stat.isFile()) return null;
     fd = fs.openSync(file,'r');
-    const n = Math.min(stat.size,MAX_LOG); let offset = stat.size-n;
-    const buf=Buffer.alloc(n);fs.readSync(fd,buf,0,n,offset);
-    // Never parse a truncated first line or a partly-written last JSON object.
-    let text=buf.toString('utf8'); if(offset) { const cut=buf.indexOf(10)+1; text=buf.subarray(cut).toString('utf8');offset+=cut; }
-    const head=Buffer.alloc(Math.min(stat.size,4096));fs.readSync(fd,head,0,head.length,0);
-    return {file,text,head:head.toString('utf8'),size:stat.size,mtime:stat.mtimeMs,birth:stat.birthtimeMs,offset};
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return null;
+    // One preceding byte tells us if the bounded tail starts on a line.
+    const n = Math.min(stat.size, MAX_LOG + 1);
+    let offset = stat.size - n;
+    let bytes = Buffer.alloc(n);
+    if (fs.readSync(fd, bytes, 0, n, offset) !== n) return null;
+    if (stat.size > MAX_LOG) {
+      const newline = bytes.indexOf(10);
+      const skip = newline < 0 ? n : newline + 1;
+      bytes = bytes.subarray(skip);
+      offset += skip;
+    }
+    const head = Buffer.alloc(Math.min(stat.size, 4096));
+    if (fs.readSync(fd, head, 0, head.length, 0) !== head.length) return null;
+    return {
+      file, bytes, offset, head: head.toString('utf8'), size: stat.size,
+      mtime: stat.mtimeMs, birth: stat.birthtimeMs, fileId: `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`,
+      get text() { return bytes.toString('utf8'); }
+    };
   } catch { return null; } finally { if(fd!==undefined)fs.closeSync(fd); }
 }
 function lineTime(line, fileTime) {
@@ -44,27 +56,39 @@ function lineTime(line, fileTime) {
 }
 function logEvents(log, proc, now, previous) {
   const start=ms(proc.startedAt);
-  if(log.mtime<start-2000 || log.mtime>now+2000) return [];
+  if(!Number.isFinite(start) || log.mtime<start || log.mtime>now+2000) return [];
   // Clock-only logs need a current startup marker or a new file. Otherwise
   // accept only bytes observed being appended during this exact PID session.
-  const init=log.head.split(/\r?\n/).find(s=>/Initializing.*ReShade|ReShade.*initialized|RTXMFG build=/i.test(s));
+  const head=log.head.slice(0, log.head.lastIndexOf('\n') + 1);
+  const init=head.split(/\r?\n/).find(s=>/Initializing.*ReShade|ReShade.*initialized|RTXMFG build=/i.test(s));
   const initTime=init?lineTime(init,log.mtime):null;
-  const session=log.birth>=start-2000 || (initTime!==null && initTime>=start-2000);
-  let text=log.text;
-  let delta=false;
-  if(!session && previous && previous.size<log.size && previous.mtime<log.mtime && previous.size>=log.offset) {
-    // Byte offsets, not JS string indexes (logs may contain Chinese).
-    text=Buffer.from(log.text).subarray(previous.size-log.offset).toString('utf8');
-    if(!previous.complete)text=text.slice(text.indexOf('\n')+1);delta=true;
-  }
-  return text.split(/\r?\n/).flatMap(line=>{
-    if(!line.trim())return [];
+  const session=log.birth>=start || (initTime!==null && initTime>=start);
+  const bytes = log.bytes ?? Buffer.from(log.text);
+  const events = [];
+  let begin = 0, newline;
+  while ((newline = bytes.indexOf(10, begin)) >= 0) {
+    const from = log.offset + begin;
+    const line = bytes.toString('utf8', begin, newline).replace(/\r$/, '');
+    begin = newline + 1;
+    if (!line.trim()) continue;
+    // The line must have started after our first probe and finished after
+    // the previous one. A partial old-PID line can finish during this PID.
+    const appended = previous && from >= previous.baseline && log.offset + begin > previous.size;
     const dated=/\b20\d\d-\d\d-\d\d[T ]\d\d:/.test(line);
-    if(!session && !delta && !dated) return [];
-    const at=lineTime(line,log.mtime) ?? (delta?log.mtime:null);
-    if(at===null || at<start-2000 || at>now+2000) return [];
-    return [{line,at,file:log.file}];
-  });
+    if(!session && !appended && !dated) continue;
+    const at=lineTime(line,log.mtime) ?? (appended?log.mtime:null);
+    if(!Number.isFinite(at) || at<start || at>now+2000) continue;
+    events.push({line,at,file:log.file});
+  }
+  return events;
+}
+function continuesLog(log, previous) {
+  if (!previous || previous.fileId !== log.fileId || previous.size > log.size || previous.mtime > log.mtime) return false;
+  // A truncate-and-rewrite can grow past the old length between two probes.
+  // Keep history only when the new read still contains the previous ending.
+  const end = previous.size - log.offset;
+  if (end < previous.anchor.length) return false;
+  return log.bytes.subarray(end - previous.anchor.length, end).equals(previous.anchor);
 }
 function parseEvents(events, now) {
   let nr=null,mfg=null,requested=null;
@@ -90,9 +114,11 @@ function parseEvents(events, now) {
     else if(/DLSSNR.*initialized|CreateFeature.*18.*succeeded|NR runtime loaded/i.test(s)) note(e,'nr','initialized','神经运行库已初始化','尚未收到成功执行帧的证据。');
     // These are provider counts, not an "effective request" or a configured multiplier.
     const frames=s.match(/mfgunlock: slDLSSGGetState reports\s+(\d+)\s+frame/i) || s.match(/DLSS-G state sample: frames presented since prior query=(\d+)/i);
-    if(frames) note(e,'mfg',+frames[1]>=2?'active':'idle',+frames[1]>=2?`提供程序已呈现 ${frames[1]} 帧`:'当前未观察到补帧',`DLSS-G 在两次状态查询之间报告 ${frames[1]} 帧；这不是显示器实测帧率，也不单独证明固定倍率。`,{providerPresentations:+frames[1]});
-    if(frames && /status=[1-9]\d*/i.test(s))note(e,'mfg','error','帧生成报告错误','该呈现采样同时带有非零运行状态。');
-    if(/mfgunlock: slDLSSGGetState runtime status is 0x[1-9a-f]/i.test(s)) note(e,'mfg','error','帧生成报告错误','DLSS-G 返回非零运行状态，请查看原始证据。');
+    const code = s.match(/\bstatus\s*=\s*(0x[\da-f]+|\d+)\b/i);
+    if(frames && code && Number(code[1]) !== 0)note(e,'mfg','error','帧生成报告错误','该呈现采样同时带有非零运行状态。');
+    else if(frames) note(e,'mfg',+frames[1]>=2?'active':'idle',+frames[1]>=2?`提供程序已呈现 ${frames[1]} 帧`:'当前未观察到补帧',`DLSS-G 在两次状态查询之间报告 ${frames[1]} 帧；这不是显示器实测帧率，也不单独证明固定倍率。`,{providerPresentations:+frames[1]});
+    const runtimeError = s.match(/mfgunlock: slDLSSGGetState runtime status is (0x[\da-f]+)\b/i);
+    if(runtimeError && Number(runtimeError[1]) !== 0) note(e,'mfg','error','帧生成报告错误','DLSS-G 返回非零运行状态，请查看原始证据。');
     const req=s.match(/(?:ForceMultiplier|requested multiplier|Effective request)\s*[:=]\s*(\d+)x?/i);
     if(req) requested=+req[1];
   }
@@ -105,7 +131,7 @@ function parseEvents(events, now) {
 function parseMfgStatus(log, proc, now) {
   if(!log || log.size>MAX_LOG || log.mtime<ms(proc.startedAt) || now-log.mtime>FRESH_MS || log.mtime>now+2000)return null;
   let s;try{s=JSON.parse(log.text);}catch{return null;}
-  if(Number(s.pid)!==proc.pid)return null;
+  if(!s || Number(s.pid)!==proc.pid)return null;
   const birth=log.text.match(/"processBirth"\s*:\s*"?(\d+)/)?.[1];
   if(birth && proc.processBirth && birth!==proc.processBirth)return null;
   const extra={at:log.mtime,source:log.file,requestedMultiplier:Number(s.multiplier)||null,appliedMultiplier:Number(s.appliedMultiplier)||null,pending:s.pending===true,
@@ -113,12 +139,22 @@ function parseMfgStatus(log, proc, now) {
   if(s.restartRequired || s.streamlineRebuildRequired)return state('restart','需要重启游戏','插件明确报告重建或重启请求。',extra);
   if(s.getStateSeen && (s.getStateResult!==0 || s.dlssgStatus!==0))return state('error','帧生成报告错误','DLSS-G 状态调用或运行状态返回错误。',extra);
   if(s.applied===true && s.appliedFrameGenerationOn===false)return state('off','帧生成已关闭','插件确认当前应用的帧生成开关为关闭。',extra);
-  if(s.getStateSeen===true && s.getStateResult===0 && s.dlssgStatus===0 && Number.isFinite(s.stateSampleAgeMs) && s.stateSampleAgeMs+now-log.mtime<=FRESH_MS && s.stateSampleAgeMs>=0) {
-    const count=Number(s.actualFramesPresented);
+  const sampleAt = log.mtime - s.stateSampleAgeMs;
+  if(s.getStateSeen===true && s.getStateResult===0 && s.dlssgStatus===0 && Number.isFinite(s.stateSampleAgeMs) &&
+      s.stateSampleAgeMs>=0 && now-sampleAt<=FRESH_MS && sampleAt>=ms(proc.startedAt)-2000 &&
+      Number.isSafeInteger(s.actualFramesPresented) && s.actualFramesPresented>=0) {
+    const count=s.actualFramesPresented;
+    extra.at=sampleAt;
     extra.providerPresentations=count;
     // Applied multiplier is the accepted request. Keep separate from provider output.
-    if(s.fpsSampleAgeMs+now-log.mtime<=FRESH_MS && s.fpsSampleWindowMs>0) {
-      extra.sourceFps=s.realFpsMilli/1000;extra.reportedOutputFps=s.dlssFpsMilli/1000;
+    if(Number.isFinite(s.fpsSampleAgeMs) && s.fpsSampleAgeMs>=0 && s.fpsSampleAgeMs+now-log.mtime<=FRESH_MS &&
+        s.fpsSampleWindowMs>0 && Number.isFinite(s.realFpsMilli) && s.realFpsMilli>=0 &&
+        Number.isFinite(s.dlssFpsMilli) && s.dlssFpsMilli>=0) {
+      const fpsAt = log.mtime - s.fpsSampleAgeMs;
+      if (fpsAt >= ms(proc.startedAt) - 2000) {
+        extra.fpsAt = fpsAt;
+        extra.sourceFps=s.realFpsMilli/1000;extra.reportedOutputFps=s.dlssFpsMilli/1000;
+      }
     }
     return state(count>=2?'active':'idle',count>=2?`帧生成生效 · 提供程序 ${count} 帧`:'当前未观察到补帧',`已应用请求 ${s.appliedMultiplier || '—'}×；提供程序呈现 ${count} 帧${s.pending?'，新倍率请求仍在等待应用':''}。`,extra);
   }
@@ -136,7 +172,7 @@ function moduleState(runtime, file) {
 class RuntimeStatus {
   constructor({scanGame,query=queryProcesses,clock=Date.now,temp=os.tmpdir()}={}) {
     this.scan=scanGame || require('./scan').scanGame;this.query=query;this.clock=clock;this.temp=temp;
-    this.history=new Map();this.cache=new Map();this.scans=new Map();this.inflight=new Map();
+    this.history=new Map();this.cache=new Map();this.scans=new Map();this.inflight=new Map();this.ambiguousLogs=new Map();
   }
   inspect(dir) {
     if(typeof dir!=='string' || !path.isAbsolute(dir))return Promise.reject(Error('无效的游戏目录'));
@@ -156,8 +192,22 @@ class RuntimeStatus {
     const now=this.clock(),found=(answer.processes||[]).filter(p=>executables.some(e=>key(e)===key(p.exe)));
     if(answer.unsupported)return this.empty('unreadable','系统暂不支持','当前检测仅支持 Windows 游戏进程。');
     if(!found.length)return this.empty(answer.unreadable?.length?'unreadable':'stopped',answer.unreadable?.length?'无法确认游戏进程':'游戏未运行',answer.unreadable?.length?'发现同名进程，但系统不允许读取路径；请让管理器与游戏使用相同权限后刷新。':'启动此游戏并进入实际场景，再点击检测。');
-    if(found.length>1)return this.empty('ambiguous','检测到多个游戏进程','同一游戏有多个实例；关闭多余实例后刷新，避免混用不同进程的证据。');
-    const proc=found[0],modules=proc.modules||[],session=`${proc.pid}:${proc.startedAt}:${key(proc.exe)}`;
+    const root = key(dir);
+    const unidentified = (answer.unreadable || []).some(p => found.some(known =>
+      p.pid !== known.pid && String(p.name).toLowerCase() === path.basename(known.exe).toLowerCase()));
+    if (found.length > 1 || unidentified) {
+      // Remember the overlap even after one instance exits. Untagged lines
+      // written before the next unambiguous probe cannot identify their PID.
+      this.ambiguousLogs.set(root, null);
+      if (this.ambiguousLogs.size > 32) this.ambiguousLogs.delete(this.ambiguousLogs.keys().next().value);
+      return found.length > 1
+        ? this.empty('ambiguous','检测到多个游戏进程','同一游戏有多个实例；关闭多余实例后刷新，避免混用不同进程的证据。')
+        : this.empty('ambiguous','另有同名进程无法确认路径','有同名进程的路径不可读，共用的游戏日志无法区分实例；关闭多余实例或以相同权限重新检测。');
+    }
+    const proc=found[0],modules=proc.modules||[],session=`${proc.pid}:${proc.processBirth || proc.startedAt}:${key(proc.exe)}`;
+    if (this.ambiguousLogs.get(root) === null) this.ambiguousLogs.set(root, now);
+    const logCutoff = this.ambiguousLogs.get(root) || 0;
+    if (ms(proc.startedAt) > logCutoff) this.ambiguousLogs.delete(root);
     const folders=[path.dirname(proc.exe),dir,path.join(path.dirname(proc.exe),'host64')];
     const files=new Map();for(const folder of folders)for(const name of [...logs,'RTXMFG-Universal.status.json'])files.set(key(path.join(folder,name)),path.join(folder,name));
     // RTXMFG 1.7 may publish diagnostics in per-executable temporary folders.
@@ -168,17 +218,22 @@ class RuntimeStatus {
     for(const file of files.values()) {
       const log=readTail(file);if(!log)continue;
       if(/status\.json$/i.test(file)){const status=parseMfgStatus(log,proc,now);if(status)statuses.push(status);else warnings.push(`${path.basename(file)}：旧状态、不同进程或缺少有效会话信息，已忽略。`);continue;}
-      const hk=session+'|'+key(file),prev=this.history.get(hk);
+      const hk=session+'|'+key(file),last=this.history.get(hk);
+      const prev=continuesLog(log,last)?last:null;
       const fresh=logEvents(log,proc,now,prev);
-      const retained=log.size>=(prev?.size||0)?(prev?.events||[]):[];
+      const retained=prev?.events||[];
       const combined=[...new Map([...retained,...fresh].filter(e=>/telemetry.*nr\[|NR-VERDICT|0xbad00001|not supported|unsupported GPU|Failed to load nvngx_dlssnr|NR_LAB_READBACK|initialized|CreateFeature.*18|NR runtime loaded|slDLSSGGetState|DLSS-G state sample|ForceMultiplier|requested multiplier|Effective request/i.test(e.line)).map(e=>[`${e.at}:${e.line}`,e])).values()].slice(-40);
-      events.push(...combined);this.history.set(hk,{size:log.size,mtime:log.mtime,complete:log.text.endsWith('\n'),events:combined});
+      events.push(...combined.filter(e => e.at > logCutoff));
+      this.history.set(hk,{fileId:log.fileId, size:log.size, mtime:log.mtime, baseline:prev?.baseline ?? log.size,
+        anchor:Buffer.from(log.bytes.subarray(-64)), events:combined});
       if(log.mtime<ms(proc.startedAt))warnings.push(`${path.basename(file)}：早于本次启动，已忽略。`);
     }
     while(this.history.size>150)this.history.delete(this.history.keys().next().value);
     const parsed=parseEvents(events,now),has=regex=>modules.some(m=>regex.test(m.name));
     const fallback=(loaded)=>proc.moduleError?state('unreadable','模块读取受限','游戏进程存在，但系统不允许枚举模块；请使用相同权限运行管理器与游戏。'):loaded?state('loaded','已加载，等待运行证据','模块已进入游戏；当前插件尚未提供可确认成功执行的新遥测。进入实际场景后刷新；仅加载 DLL 不代表生效。'):state('not_loaded','未发现运行模块','系统模块表未发现对应运行库 / 插件。检查是否安装到实际游戏 EXE 目录；手动映射的插件需以日志为准。');
-    const mfg=statuses.sort((a,b)=>b.at-a.at)[0] || parsed.mfg || fallback(has(/nvngx_dlssg|renodx-mfg|MFGUnlock/i));
+    if (parsed.mfg) statuses.push(parsed.mfg);
+    const observed = statuses.filter(s => s.state !== 'waiting' && s.state !== 'stale');
+    const mfg=(observed.length ? observed : statuses).sort((a,b)=>b.at-a.at)[0] || fallback(has(/nvngx_dlssg|renodx-mfg|MFGUnlock/i));
     const nr=parsed.nr || fallback(has(/nvngx_dlssnr|renodx-dlss|dlss5-feed/i));
     return {ok:true,checkedAt:now,processState:'running',process:proc,modules,nr,mfg,warnings:[...new Set(warnings)].slice(0,8),evidence:parsed.evidence,requestedMultiplier:mfg.requestedMultiplier||parsed.requested};
   }

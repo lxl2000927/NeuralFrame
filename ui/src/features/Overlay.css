@@ -1,0 +1,222 @@
+.overlay-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.overlay-head h2 { margin: 0; }
+.overlay-beta {
+  margin-inline-start: 4px;
+  vertical-align: middle;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.overlay-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.overlay-switch {
+  font-size: 12px;
+  padding: 8px 0;
+  margin-right: 6px;
+}
+.overlay-install-hint {
+  font-size: 12px;
+  margin: 4px 0 14px;
+}
+.overlay-status {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--panel-edge);
+  background: var(--panel-fill), var(--surface);
+  box-shadow: var(--panel-shadow);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.overlay-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8a96a3;
+  flex: none;
+}
+.overlay-status[data-state="error"] i {
+  background: #e67e71;
+}
+.overlay-status[data-state="ready"] i {
+  background: #d5ae59;
+}
+.overlay-status[data-state="connected"] i {
+  background: var(--accent);
+}
+.overlay-status small {
+  display: block;
+  color: var(--muted);
+}
+/* 主题变量与卡片外壳：对齐 renderer/overlay-controls.css + overlay-lab.css */
+[data-overlay-theme] {
+  --ol-accent: #8bc400;
+  --ol-soft: #8bc40025;
+  --ol-back: #111a10;
+  --ol-bright: #c2ec66;
+}
+[data-overlay-theme="blue"] {
+  --ol-accent: #4aa8ee;
+  --ol-soft: #4aa8ee25;
+  --ol-back: #0d1724;
+  --ol-bright: #91d1ff;
+}
+[data-overlay-theme="purple"] {
+  --ol-accent: #b45dea;
+  --ol-soft: #b45dea25;
+  --ol-back: #1b1127;
+  --ol-bright: #ddb0ff;
+}
+.overlay-themes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  margin: 18px 0 28px;
+  align-items: start;
+}
+.overlay-theme-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ol-accent, var(--border));
+  border-radius: var(--radius-lg);
+  background: var(--ol-back, var(--surface));
+  box-shadow: var(--panel-shadow);
+}
+.overlay-theme-card.selected {
+  border-color: var(--ol-accent, var(--theme-accent));
+  box-shadow: 0 0 0 1px var(--ol-accent, var(--theme-accent)), var(--floating-shade);
+}
+.overlay-theme-bottom {
+  margin-top: auto;
+  padding: 14px 18px 18px;
+  border-top: 1px solid #ffffff18;
+  color: #dce3e9;
+}
+.overlay-theme-bottom h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+  color: var(--ol-bright, #dce3e9);
+}
+.overlay-theme-bottom .inline-actions {
+  flex-wrap: wrap;
+}
+.overlay-theme-bottom button {
+  flex: 1;
+  padding: 12px 5px;
+}
+.overlay-theme-bottom .icon-button {
+  flex: 0 0 34px;
+}
+.overlay-theme-bottom button[aria-pressed="true"] {
+  color: var(--ol-bright, var(--theme-accent));
+  border-color: var(--ol-accent, var(--theme-accent));
+  background: color-mix(in srgb, var(--ol-accent) 14%, var(--ol-back));
+}
+.overlay-preview-stage {
+  position: relative;
+  width: 100%;
+  max-width: 534px;
+  margin: 0 auto;
+  overflow: hidden;
+  background: transparent;
+}
+.overlay-preview-stage iframe {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 534px;
+  border: 0;
+  transform-origin: top left;
+  color-scheme: dark;
+}
+.overlay-preview-stage.is-thumbnail {
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+}
+.overlay-builtin,
+.overlay-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.overlay-builtin small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+  font-size: 12px;
+}
+.overlay-entry > div {
+  min-width: 0;
+}
+.overlay-entry p {
+  margin: 6px 0;
+}
+.overlay-entry button {
+  flex-shrink: 0;
+}
+.overlay-key-capture {
+  display: block;
+  width: 100%;
+  padding: 24px;
+  font-size: 22px;
+  letter-spacing: 0.5px;
+}
+.overlay-custom-fields {
+  display: flex;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.overlay-custom-fields label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+}
+.overlay-custom-fields label:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.overlay-custom-fields input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+}
+.overlay-custom-fields input[type="color"] {
+  width: 54px;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+@media (max-width: 1150px) {
+  .overlay-themes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .overlay-entry {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 760px) {
+  .overlay-themes { grid-template-columns:minmax(0,1fr); }
+  .overlay-toolbar > button { flex:1 1 auto; }
+  .overlay-toolbar > .overlay-switch { flex-basis:100%; }
+}

@@ -14,7 +14,7 @@ out.mkdir(parents=True, exist_ok=True)
 bootstrap = source / 'dist/runtime-bootstrap'
 bootstrap.mkdir(parents=True, exist_ok=True)
 release = 'runtime-components-2026.11.06'
-repo = 'lxl2000927/DLSS5-Swapper-Enhanced'
+repo = json.loads((source / 'package.json').read_text(encoding='utf-8'))['distribution']['releaseRepository']
 groups = {}
 
 def add(key, name, component, version, paths, bundled=False):

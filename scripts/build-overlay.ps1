@@ -4,7 +4,7 @@ $appRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 # The add-on reads its endpoint, hotkey file and pipe name from this %APPDATA%
 # folder. It must match the app's userData directory or the overlay loads in the
 # game and then waits for a bridge that is writing somewhere else.
-$overlayProfile = (Get-Content -LiteralPath (Join-Path $appRoot 'package.json') -Raw | ConvertFrom-Json).name
+$overlayProfile = (Get-Content -LiteralPath (Join-Path $appRoot 'package.json') -Raw | ConvertFrom-Json).distribution.userDataDirectory
 if ($overlayProfile -notmatch '^[a-z0-9-]+$') { throw 'Unsupported application profile name.' }
 # The SDK and compiler normally sit in tools/ here; a checkout that shares one
 # toolchain with a sibling project is searched second.

@@ -55,7 +55,7 @@
   --slow: .6s;
 
   color-scheme: dark;
-  /* The classic variables still feed a few shared widgets (dialogs, chat, the
+  /* The classic variables still feed a few shared widgets (dialogs, the
      overlay page). They are re-pointed at this palette so those inherit the
      skin instead of theme 1's. */
   --bg-1: var(--ink);
@@ -558,10 +558,6 @@
 :root[data-skin="two"] .emu-note { border-radius: 14px; border: 1px solid var(--hair-soft); background: var(--surface); color: var(--muted); }
 :root[data-skin="two"] .emu-note.anti-cheat-warning,
 :root[data-skin="two"] .emu-note.compatibility-warning { border-color: rgba(236, 95, 100, .4); background: rgba(236, 95, 100, .1); }
-:root[data-skin="two"] .sheet-community { border: none; background: none; padding: 0; margin: 0; gap: 10px; }
-:root[data-skin="two"] .sheet-community header b { font-size: 17px; font-weight: 720; }
-/* Until the community answers, that card has nothing in it and is not shown. */
-:root[data-skin="two"] .t2-card:has(> .sheet-community[hidden]) { display: none; }
 
 /* the folder is read after the page is already up, so the page shows its own
    shape while it waits rather than a spinner */
@@ -607,7 +603,7 @@
 :root[data-skin="two"] .t2-palette-foot { display: flex; gap: 16px; padding: 11px 18px; border-top: 1px solid var(--hair-soft); font-size: 11.5px; color: var(--dim); }
 :root[data-skin="two"] .t2-empty { padding: 26px; text-align: center; color: var(--dim); font-size: 13px; }
 
-/* ========================= settings, dialogs, chat ======================== */
+/* ========================= settings and dialogs ======================== */
 :root[data-skin="two"] .set-row { padding: 18px 0; border-color: var(--hair-soft); }
 :root[data-skin="two"] .set-row .k { font-size: 14px; font-weight: 680; }
 :root[data-skin="two"] .set-row .v { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
@@ -617,11 +613,6 @@
   box-shadow: 0 10px 22px -12px var(--lime);
 }
 :root[data-skin="two"] .setting-switch[aria-checked="true"] .knob { background: #fff; }
-:root[data-skin="two"] .community-card { border-radius: 20px; border-color: var(--hair); }
-:root[data-skin="two"] .community-card:hover { transform: translateY(-5px); border-color: color-mix(in srgb, var(--accent) 40%, var(--hair)); }
-:root[data-skin="two"] .community-dialog { border-radius: var(--r-xl); border-color: var(--hair); box-shadow: 0 50px 110px -34px rgba(0, 0, 0, .9); }
-:root[data-skin="two"] .community-dialog::backdrop { background: rgba(3, 6, 11, .66); backdrop-filter: blur(10px); }
-:root[data-skin="two"] .chat-shell { border-radius: var(--r-xl); border: 1px solid var(--hair); background: linear-gradient(180deg, var(--panel), var(--panel-2)); backdrop-filter: blur(18px); box-shadow: var(--shadow); }
 :root[data-skin="two"] .ol-dialog { border-radius: var(--r-lg); border: 1px solid var(--hair); background: var(--panel); backdrop-filter: blur(20px); }
 
 /* ========================= view transitions =============================== */
@@ -1352,8 +1343,7 @@
 :root[data-skin="two"] .badge.dx12 { background: var(--t2-accent); border-color: transparent; color: var(--accent-ink); }
 :root[data-skin="two"] .tools { z-index: 6; top: 9px; inset-inline-end: 9px; }
 
-:root[data-skin="two"] .game-filters,
-:root[data-skin="two"] .community-filters {
+:root[data-skin="two"] .game-filters {
   padding: 12px;
   gap: 8px;
   border: 1px solid var(--t2-line);
@@ -1570,12 +1560,7 @@
 :root[data-skin="two"] .set-row { padding: 20px 0; border-color: var(--t2-line); }
 :root[data-skin="two"] .setting-switch { border-radius: 5px; background: var(--t2-canvas-2); }
 :root[data-skin="two"] .setting-switch[aria-checked="true"] { background: var(--t2-accent); box-shadow: none; }
-:root[data-skin="two"] .community-card,
-:root[data-skin="two"] .community-dialog,
-:root[data-skin="two"] .chat-shell,
 :root[data-skin="two"] .ol-dialog { border-radius: 12px; border-color: var(--t2-line); background: var(--t2-panel); box-shadow: none; backdrop-filter: none; }
-:root[data-skin="two"] .community-card:hover { transform: translateY(-2px); border-color: var(--t2-line-strong); }
-:root[data-skin="two"] .community-dialog::backdrop { background: color-mix(in oklab, var(--t2-canvas) 82%, transparent); backdrop-filter: blur(4px); }
 
 /* view transitions: a directional cut, then content settles into place */
 ::view-transition-old(root) { animation: t2-cut-out .18s cubic-bezier(.4,0,1,1) both; }
@@ -1593,7 +1578,6 @@
 
 @starting-style {
   :root[data-skin="two"] .t2-palette-box { opacity: 0; transform: translateY(-14px); }
-  :root[data-skin="two"] .community-dialog[open] { opacity: 0; transform: translateY(12px) scale(.985); }
 }
 
 @media (max-width: 1180px) {
@@ -1768,33 +1752,6 @@
 }
 :root[data-skin="two"] .t2-studio-head .t2-live.is-ready { color: var(--t2-accent); }
 :root[data-skin="two"] .t2-studio-head .t2-live i { width: 7px; height: 7px; background: currentColor; }
-
-/* Community arrives asynchronously as a compact signal strip. */
-:root[data-skin="two"] .t2-signal-slot {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  align-items: center;
-  gap: 16px;
-  min-height: 82px;
-  padding: 14px 18px;
-  border-block: 1px solid var(--t2-line);
-  background: color-mix(in oklab, var(--t2-panel) 72%, transparent);
-}
-:root[data-skin="two"] .t2-signal-slot:has(.sheet-community[hidden]) { display: none; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community {
-  display: grid;
-  grid-template-columns: minmax(170px, .7fr) minmax(220px, 1.3fr);
-  align-items: center;
-  gap: 8px 24px;
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community header { grid-row: 1 / span 2; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community header b { font-size: 14px; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community-routes { grid-row: 1; grid-column: 2; display: flex; gap: 18px; flex-wrap: wrap; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community-route { gap: 8px; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community-route > span:first-child { min-width: auto; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community > p { grid-column: 2; }
 
 /* Main setup stage: a numbered rail beside one uninterrupted form surface. */
 :root[data-skin="two"] .t2-config-stage {
@@ -2039,14 +1996,12 @@
 @container detail (max-width: 720px) {
   :root[data-skin="two"] .t2-detail-studio { grid-template-columns: 1fr; }
   :root[data-skin="two"] .t2-studio-head,
-  :root[data-skin="two"] .t2-signal-slot,
   :root[data-skin="two"] .t2-config-stage,
   :root[data-skin="two"] .t2-inspector,
   :root[data-skin="two"] .t2-file-drawer,
   :root[data-skin="two"] .t2-console,
   :root[data-skin="two"] .t2-command-rail { grid-column: 1; }
   :root[data-skin="two"] .t2-studio-head,
-  :root[data-skin="two"] .t2-signal-slot,
   :root[data-skin="two"] .t2-config-stage,
   :root[data-skin="two"] .t2-inspector,
   :root[data-skin="two"] .t2-file-drawer,
@@ -2080,14 +2035,12 @@
   :root[data-skin="two"] .t2-detail-studio,
   :root[data-skin="two"] .t2-about-stage { grid-template-columns: 1fr; }
   :root[data-skin="two"] .t2-studio-head,
-  :root[data-skin="two"] .t2-signal-slot,
   :root[data-skin="two"] .t2-config-stage,
   :root[data-skin="two"] .t2-inspector,
   :root[data-skin="two"] .t2-file-drawer,
   :root[data-skin="two"] .t2-console,
   :root[data-skin="two"] .t2-command-rail { grid-column: 1; }
   :root[data-skin="two"] .t2-studio-head,
-  :root[data-skin="two"] .t2-signal-slot,
   :root[data-skin="two"] .t2-config-stage,
   :root[data-skin="two"] .t2-inspector,
   :root[data-skin="two"] .t2-file-drawer,
@@ -2097,154 +2050,6 @@
   :root[data-skin="two"] .t2-command-rail .sheet-actions { width: 100%; }
   :root[data-skin="two"] .t2-command-rail .btn-install { flex: 1; }
   :root[data-skin="two"] .t2-about-metrics { grid-row: auto; }
-}
-
-/* Community signal — one quiet hierarchy instead of a loose data row. */
-:root[data-skin="two"] .t2-signal-slot {
-  position: relative;
-  grid-template-columns: 118px minmax(0, 1fr);
-  min-height: 118px;
-  gap: 0;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--t2-line);
-  border-radius: 12px;
-  background: var(--t2-panel);
-}
-:root[data-skin="two"] .t2-signal-slot::before {
-  content: "";
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: 0;
-  width: 3px;
-  background: var(--t2-accent);
-  transform: scaleY(.38);
-  transform-origin: center;
-  transition: transform .42s var(--detail-spring);
-}
-:root[data-skin="two"] .t2-signal-slot:hover::before { transform: scaleY(1); }
-:root[data-skin="two"] .t2-signal-slot > .t2-section-code {
-  height: 100%;
-  display: flex;
-  align-items: flex-end;
-  padding: 18px 16px;
-  border-inline-end: 1px solid var(--t2-line);
-  background: var(--t2-canvas-2);
-  line-height: 1.55;
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(190px, .72fr) minmax(360px, 1.45fr) auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  gap: 8px 22px;
-  padding: 18px 20px;
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community header { display: contents; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community header b {
-  grid-column: 1;
-  grid-row: 1;
-  align-self: end;
-  color: var(--t2-type);
-  font-size: 15px;
-  font-weight: 690;
-  letter-spacing: -.025em;
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community-status {
-  grid-column: 1;
-  grid-row: 2;
-  justify-self: start;
-  padding: 5px 8px;
-  border: 1px solid color-mix(in oklab, currentColor 34%, transparent);
-  border-radius: 5px;
-  background: transparent;
-  font: 760 9px/1 ui-monospace, monospace;
-  letter-spacing: .08em;
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community header .ghost {
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  min-width: 108px;
-  min-height: 42px;
-  margin: 0;
-  justify-self: end;
-  border-radius: 7px;
-  color: var(--t2-type-2);
-  background: var(--t2-canvas-2);
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community-routes {
-  grid-column: 2;
-  grid-row: 1;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(110px, 1fr));
-  gap: 7px;
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community-route {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(3, auto);
-  grid-template-rows: auto auto;
-  align-items: center;
-  justify-content: start;
-  gap: 6px 10px;
-  min-height: 52px;
-  padding: 8px 10px;
-  border: 1px solid var(--t2-line);
-  border-radius: 7px;
-  background: var(--t2-canvas-2);
-  font: 670 10px/1 ui-monospace, monospace;
-  transition: transform .24s var(--detail-spring), border-color .18s ease, background .18s ease;
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community-route:hover {
-  transform: translateY(-2px);
-  border-color: var(--t2-line-strong);
-  background: var(--surface-2);
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community-route > span:first-child {
-  grid-column: 1 / -1;
-  min-width: 0;
-  color: var(--t2-type-2);
-  font-weight: 720;
-  white-space: nowrap;
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community-route i {
-  width: 6px;
-  height: 6px;
-  margin-inline-end: 4px;
-}
-:root[data-skin="two"] .t2-signal-slot .sheet-community > p {
-  grid-column: 2;
-  grid-row: 2;
-  color: var(--t2-type-3);
-  font: 600 10px/1.3 ui-monospace, monospace;
-}
-
-@container detail (max-width: 900px) {
-  :root[data-skin="two"] .t2-signal-slot { grid-template-columns: 1fr; }
-  :root[data-skin="two"] .t2-signal-slot > .t2-section-code {
-    height: auto;
-    align-items: center;
-    padding: 11px 16px;
-    border-inline-end: 0;
-    border-bottom: 1px solid var(--t2-line);
-  }
-  :root[data-skin="two"] .t2-signal-slot .sheet-community {
-    grid-template-columns: minmax(170px, .7fr) minmax(0, 1.3fr) auto;
-    padding: 15px 16px;
-  }
-  :root[data-skin="two"] .t2-signal-slot .sheet-community-routes { grid-template-columns: repeat(3, minmax(96px, 1fr)); }
-}
-@media (max-width: 900px) {
-  :root[data-skin="two"] .t2-signal-slot .sheet-community {
-    grid-template-columns: 1fr auto;
-    gap: 12px;
-  }
-  :root[data-skin="two"] .t2-signal-slot .sheet-community header b { grid-column: 1; grid-row: 1; }
-  :root[data-skin="two"] .t2-signal-slot .sheet-community-status { grid-column: 1; grid-row: 2; }
-  :root[data-skin="two"] .t2-signal-slot .sheet-community header .ghost { grid-column: 2; grid-row: 1 / span 2; }
-  :root[data-skin="two"] .t2-signal-slot .sheet-community-routes { grid-column: 1 / -1; grid-row: 3; }
-  :root[data-skin="two"] .t2-signal-slot .sheet-community > p { grid-column: 1 / -1; grid-row: 4; }
 }
 
 /* ===========================================================================
@@ -2554,28 +2359,8 @@
   letter-spacing: .02em;
   text-transform: none;
 }
-
-/* Community summary: compact, aligned and subordinate to setup. */
-:root[data-skin="two"] .t2-signal-slot {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  min-height: 106px;
-  grid-template-columns: 128px minmax(0, 1fr);
-  overflow: hidden;
-  border: 1px solid var(--apple-hairline);
-  border-radius: var(--apple-radius-md);
-  background: var(--apple-material);
-  box-shadow: inset 0 1px rgba(255,255,255,.035);
-}
-:root[data-skin="two"] .t2-signal-slot::before { width: 4px; border-radius: 0 99px 99px 0; }
-:root[data-skin="two"] .t2-signal-slot > .t2-section-code { padding: 19px; background: rgba(255,255,255,.018); }
-:root[data-skin="two"] .t2-signal-slot .sheet-community { padding: 16px 20px; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community header b { font-size: 15px; font-weight: 650; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community-status,
 :root[data-skin="two"] .t2-route-readout,
 :root[data-skin="two"] .t2-drawer-head b { border-radius: 999px; font-family: "SF Pro Text", "Segoe UI Variable Text", sans-serif; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community-route { border-radius: 12px; background: rgba(255,255,255,.024); font-family: "SF Pro Text", "Segoe UI Variable Text", sans-serif; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community header .ghost { border-radius: 999px; background: rgba(255,255,255,.035); }
 
 /* Setup is a form surface, not a dashboard chart. */
 :root[data-skin="two"] .t2-config-stage {
@@ -2730,7 +2515,6 @@
 @container detail (max-width: 820px) {
   :root[data-skin="two"] .t2-detail-studio { grid-template-columns: 1fr; }
   :root[data-skin="two"] .t2-studio-head,
-  :root[data-skin="two"] .t2-signal-slot,
   :root[data-skin="two"] .t2-config-stage,
   :root[data-skin="two"] .t2-inspector,
   :root[data-skin="two"] .t2-file-drawer,
@@ -2751,7 +2535,6 @@
   :root[data-skin="two"] .t2-tabs { position: sticky; top: 8px; z-index: 18; margin: 12px 0; }
   :root[data-skin="two"] .t2-panel { overflow: visible; padding-bottom: 30px; mask-image: none; }
   :root[data-skin="two"] .t2-studio-head { align-items: flex-start; flex-direction: column; }
-  :root[data-skin="two"] .t2-signal-slot { grid-template-columns: 1fr; }
   :root[data-skin="two"] .t2-about-stage { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-transparency: reduce) {
@@ -3004,7 +2787,6 @@
   background: #101710;
   color: var(--prism-line-hot);
 }
-:root[data-skin="two"] .t2-signal-slot,
 :root[data-skin="two"] .t2-config-stage,
 :root[data-skin="two"] .t2-inspector,
 :root[data-skin="two"] .t2-file-drawer,
@@ -3014,11 +2796,7 @@
   background: var(--prism-1);
   box-shadow: 0 14px 32px rgba(0,0,0,.13), inset 0 1px rgba(255,255,255,.035);
 }
-:root[data-skin="two"] .t2-signal-slot { min-height: 100px; }
-:root[data-skin="two"] .t2-signal-slot > .t2-section-code { background: #0d120e; }
-:root[data-skin="two"] .t2-signal-slot .sheet-community-route,
 :root[data-skin="two"] .t2-metric { border-color: var(--prism-line); border-radius: 9px; background: var(--prism-2); }
-:root[data-skin="two"] .t2-signal-slot .sheet-community-route:hover,
 :root[data-skin="two"] .t2-metric:hover { transform: translateY(-2px); background: var(--prism-3); border-color: color-mix(in oklab, var(--prism-line-hot) 45%, var(--prism-line)); }
 :root[data-skin="two"] .t2-config-content .exe-select,
 :root[data-skin="two"] .t2-config-content .install-options select {
@@ -3235,7 +3013,6 @@
   gap: 14px 18px;
   padding: 0;
 }
-:root[data-skin="two"]:has(#overlay:not(.hidden)) .t2-signal-slot { display: none; }
 :root[data-skin="two"]:has(#overlay:not(.hidden)) .t2-studio-head {
   grid-column: 1;
   grid-row: 1;
@@ -3503,16 +3280,12 @@
   transition: background .16s ease, width .16s ease;
 }
 :root[data-skin="two"] .gp-dots i.on { width: 18px; border-radius: 3px; background: var(--gp-text); }
-:root[data-skin="two"] .gp-signal {
+:root[data-skin="two"] .gp-rating {
   display: inline-flex; align-items: center; gap: 9px; padding: 8px 14px; border-radius: 999px;
   border: 1px solid var(--gp-hair-2); background: rgba(14, 18, 24, .72); backdrop-filter: blur(10px);
   font-size: 12px; font-weight: 600; color: var(--gp-muted);
 }
-:root[data-skin="two"] .gp-signal svg { color: var(--gp-green); }
-:root[data-skin="two"] .gp-signal-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gp-green); box-shadow: 0 0 8px var(--gp-green); }
-:root[data-skin="two"] .gp-signal[data-state="mixed"] .gp-signal-dot { background: #e0a33c; box-shadow: 0 0 8px #e0a33c; }
-:root[data-skin="two"] .gp-signal[data-state="broken"] .gp-signal-dot { background: #e2565b; box-shadow: 0 0 8px #e2565b; }
-:root[data-skin="two"] .gp-signal-sep { width: 1px; height: 13px; background: var(--gp-hair-2); }
+:root[data-skin="two"] .gp-rating svg { color: var(--gp-green); }
 
 /* --------------------------------------------------------------- workspace */
 :root[data-skin="two"] .gp-work {
@@ -3688,10 +3461,6 @@
   margin-inline-start: auto; flex: none; padding: 5px 11px; border-radius: 999px;
   font-size: 11px; font-weight: 660; color: var(--gp-green); background: var(--gp-green-soft);
 }
-:root[data-skin="two"] .gp-community { margin: 0; }
-:root[data-skin="two"] .gp-community:not([hidden]) {
-  border-radius: 14px; border: 1px solid var(--gp-hair); background: var(--gp-card); padding: 20px 22px;
-}
 
 /* the masthead of the app itself, to the same drawing */
 :root[data-skin="two"] .t2-bar {
@@ -3712,12 +3481,6 @@
 :root[data-skin="two"] .toolbar .pill { height: 36px; border-radius: 10px; background: transparent; border-color: transparent; }
 :root[data-skin="two"] .toolbar .round:hover,
 :root[data-skin="two"] .toolbar .pill:hover { background: rgba(255, 255, 255, .06); border-color: transparent; }
-:root[data-skin="two"] .t2-avatar {
-  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .05); color: #b9c4d2;
-  transition: border-color .16s ease, color .16s ease;
-}
-:root[data-skin="two"] .t2-avatar:hover { color: #fff; border-color: rgba(255, 255, 255, .28); }
 
 
 /* --- the page sits under the masthead, and the masthead keeps the drawing's

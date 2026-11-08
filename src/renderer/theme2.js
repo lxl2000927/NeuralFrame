@@ -35,7 +35,6 @@
     file: '<path d="M14 3v5h5"/><path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8z"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>',
     restore: '<path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v4h4"/>',
-    user: '<circle cx="12" cy="9" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3.2 9h17.6M3.2 15h17.6"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/>',
     grid: '<rect x="3.5" y="4" width="7" height="7" rx="1.6"/><rect x="13.5" y="4" width="7" height="7" rx="1.6"/><rect x="3.5" y="13" width="7" height="7" rx="1.6"/><rect x="13.5" y="13" width="7" height="7" rx="1.6"/>',
     list: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>'
@@ -72,17 +71,6 @@
     const tools = q('.toolbar');
     if (tools) bar.appendChild(tools);
     q('#t2Search').onclick = () => openPalette();
-    // The drawing ends the masthead with a person; it opens the page where a
-    // name and an avatar are actually set.
-    if (!q('#t2Avatar')) {
-      const avatar = document.createElement('button');
-      avatar.id = 't2Avatar';
-      avatar.type = 'button';
-      avatar.className = 't2-avatar';
-      avatar.innerHTML = icon(ICONS.user, 17);
-      avatar.onclick = () => show('settings');
-      q('.toolbar')?.insertBefore(avatar, q('#winMin'));
-    }
     // The drawing marks the language with a globe; the button itself is the
     // app's own, so only the mark is added.
     const lang = q('#langBtn');
@@ -349,10 +337,7 @@
               <div class="gp-dots">${shots.map((one, index) => `<i class="${index ? '' : 'on'}" data-shot="${index}"></i>`).join('')}</div>
               <button class="gp-arrow" data-step="1" aria-label="${esc(t('t2Move'))}">${icon(ICONS.next, 14)}</button>
             </div>` : ''}
-            <div class="gp-signal" id="gpSignal">
-              <span class="gp-signal-dot"></span>${esc(t('t2Signal'))}
-              ${art && art.rating ? `<span class="gp-signal-sep"></span>${icon(ICONS.star, 13)}${esc(String(art.rating))}/100` : ''}
-            </div>
+            ${art && art.rating ? `<span class="gp-rating">${icon(ICONS.star, 13)}${esc(String(art.rating))}/100</span>` : ''}
           </div>
         </header>
 
@@ -397,7 +382,6 @@
                 <span class="gp-head-icon">${icon(ICONS.clock, 16)}</span>
                 <h2>${esc(t('sheetActivity'))}</h2>
                 <div class="gp-acts">
-                  <button class="gp-act accent" id="shareResult">${window.communityUi?.reportFor?.(dir) ? t('menuCommunityEdit') : t('menuCommunity')}</button>
                   <button class="gp-act" id="copyJob"${jobLines.length ? '' : ' disabled'}>${icon(ICONS.copy, 14)}${t('copyLog')}</button>
                   <button class="gp-act" id="saveDiag">${icon(ICONS.download, 14)}${t('saveDiagnostics')}</button>
                 </div>
@@ -444,8 +428,6 @@
                   </button>`).join('')}
               </div>
             </section>` : ''}
-
-            <div class="gp-community" id="sheetCommunity" hidden></div>
           </aside>
         </div>
       </div>`;
@@ -494,19 +476,6 @@
       }
     }
 
-    // The community answer arrives after the page does; the mark in the
-    // masthead follows whatever it says.
-    const box = q('#sheetCommunity'), signal = q('#gpSignal');
-    if (box && signal) {
-      const follow = () => {
-        const status = box.querySelector('.sheet-community-status');
-        signal.dataset.state = status ? [...status.classList].find((one) => one !== 'sheet-community-status') || '' : '';
-      };
-      new MutationObserver(follow).observe(box, { childList: true, subtree: true });
-      follow();
-    }
-    // The page keeps the drawing's own neutral ground; the artwork colours the
-    // masthead and nothing else.
   }
 
   function tintFromCover() {
@@ -569,7 +538,7 @@
     const tools = q('.toolbar');
     if (tools && bar && bar.contains(tools)) q('.main')?.prepend(tools);
     bar?.remove(); dock?.remove(); closePalette();
-    q('#t2Avatar')?.remove(); q('.t2-globe')?.remove();
+    q('.t2-globe')?.remove();
     q('#t2View')?.remove();
     const rail = q('#view-games .game-filters');
     const head = q('.games-heading');

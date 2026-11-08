@@ -1,7 +1,8 @@
 {
   "name": "neuralframe",
-  "version": "0.1.2",
+  "version": "0.1.0",
   "distribution": {
+    "userDataDirectory": "dlss5-swapper-enhanced",
     "channel": "independent",
     "releaseRepository": "lxl2000927/NeuralFrame",
     "upstreamVersion": "2.3.0",
@@ -11,8 +12,10 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test --test-concurrency=1 test/*.test.js",
-    "test:ui": "electron scripts/test-game-filters-ui.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js test/*.test.mjs",
+    "test:ui": "electron scripts/test-game-filters-ui.js && npm run test:workflow",
+    "pretest:workflow": "npm run build:ui",
+    "test:workflow": "node scripts/qa-workflow.cjs",
     "test:payload": "node scripts/test-feeder-payload.js",
     "test:optiscaler": "node scripts/test-optiscaler-payload.js",
     "payload": "node scripts/collect-payload.js",
@@ -45,6 +48,11 @@
   "dependencies": {
     "extract-zip": "^2.0.1"
   },
+  "overrides": {
+    "extract-zip": {
+      "yauzl": "3.4.0"
+    }
+  },
   "devDependencies": {
     "@playwright/test": "^1.65.0",
     "@types/react": "^19.3.0",
@@ -67,7 +75,12 @@
       "preload.js",
       "overlay-preload.js",
       "THIRD_PARTY_NOTICES.md",
-      "src/**/*",
+      "src/*.js",
+      "src/core/**/*",
+      "src/native/**/*",
+      "src/shared/**/*",
+      "src/ui-dist/**/*",
+      "src/renderer/{icon.png,style.css,game-filters.js,overlay-panel.html,overlay-panel.js,overlay-live.js,overlay-*.css}",
       "assets/**/*",
       "package.json"
     ],

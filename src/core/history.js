@@ -10,6 +10,22 @@ const key = dir => path.resolve(dir).toLowerCase();
 const count = value => Array.isArray(value) ? value.length : Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const validDate = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
 const fingerprint = row => `${key(row.dir)}|${row.manifestDate}|${row.action}`;
+const actions = new Set(['install', 'restore', 'recovery', 'component-update', 'component-rollback']);
+function version(value) { return value && value !== '0.0.0.0' ? value : null; }
+
+function validRecord(row) {
+  const optionalText = value => value == null || typeof value === 'string';
+  const optionalCount = value => value == null || (Number.isSafeInteger(value) && value >= 0);
+  return row && typeof row.id === 'string' && typeof row.dir === 'string' && path.isAbsolute(row.dir)
+    && validDate(row.date) && actions.has(row.action)
+    && [row.name, row.exe, row.api, row.route].every(optionalText)
+    && [row.replaced, row.added].every(optionalCount)
+    && (row.files == null || (Array.isArray(row.files) && row.files.every(f =>
+      f && typeof f.rel === 'string' && typeof f.action === 'string'
+      && [f.before, f.after, f.beforeHash, f.afterHash].every(optionalText))))
+    && (row.configuration == null || (typeof row.configuration === 'object' && !Array.isArray(row.configuration)
+      && Object.values(row.configuration).every(optionalText)));
+}
 
 function operation(dir, manifest = {}, action = 'install', name) {
   return {
@@ -17,7 +33,29 @@ function operation(dir, manifest = {}, action = 'install', name) {
     date: new Date().toISOString(), manifestDate: validDate(manifest.date) ? manifest.date : null,
     action, undone: action === 'restore', route: manifest.route || null,
     exe: manifest.game?.exe || null, api: manifest.game?.api || null,
-    replaced: count(manifest.replaced), added: count(manifest.added)
+    replaced: count(manifest.replaced), added: count(manifest.added),
+    files: [
+      ...(Array.isArray(manifest.replaced) ? manifest.replaced : []).map(f => {
+        const original = version(f.oldVersion ?? f.version), installed = version(f.newVersion);
+        return { rel: f.rel, action: action === 'restore' ? 'restore' : 'replace',
+          before: action === 'restore' ? installed : original, after: action === 'restore' ? original : installed,
+          ...(f.beforeHash && f.afterHash ? {
+            beforeHash: action === 'restore' ? f.afterHash : f.beforeHash,
+            afterHash: action === 'restore' ? f.beforeHash : f.afterHash
+          } : {}) };
+      }),
+      ...(Array.isArray(manifest.added) ? manifest.added : []).map(f => ({ rel: typeof f === 'string' ? f : f.rel, action: action === 'restore' ? 'remove' : 'add' }))
+    ].filter(f => typeof f.rel === 'string'),
+    configuration: {
+      hardwareProfile: manifest.hardwareProfile || null,
+      neuralMode: manifest.neuralRendering?.mode || null,
+      neuralModelId: manifest.neuralRendering?.modelId || null,
+      mfgMode: manifest.mfg?.mode || null,
+      ...(manifest.neuralRendering?.runtimeStack && { neuralRuntimeStack: manifest.neuralRendering.runtimeStack }),
+      ...(manifest.mfg?.runtimeStack && { mfgRuntimeStack: manifest.mfg.runtimeStack }),
+      ...(manifest.mfg?.backend === 'renodx-mfgunlock' && typeof manifest.mfg.hdrCompatibility === 'boolean'
+        ? {qualityGuardMode: manifest.mfg.hdrCompatibility ? '2' : '0'} : {})
+    }
   };
 }
 
@@ -28,7 +66,7 @@ function knownFolders(state = {}, games = []) {
     dirs.set(key(dir), { dir: path.resolve(dir), name: name || dirs.get(key(dir))?.name });
   };
   for (const dir of state.manual || []) add(dir);
-  for (const row of state.recents || []) add(row.dir);
+  for (const row of state.recents || []) add(row?.dir);
   for (const scan of Object.values(state.scans || {})) add(scan?.dir);
   for (const root of state.folders || []) {
     add(root); // A selected folder can be the game itself, not a library root.
@@ -42,7 +80,7 @@ function knownFolders(state = {}, games = []) {
   return [...dirs.values()];
 }
 
-function fromManifests(folders) {
+function fromManifests(folders, onWarning = () => {}) {
   const rows = [];
   for (const { dir, name } of folders) {
     const root = path.join(dir, '_DLSS5_Backup');
@@ -57,13 +95,16 @@ function fromManifests(folders) {
         const manifest = JSON.parse(fs.readFileSync(path.join(root, file.name), 'utf8'));
         if (manifest?.version !== 1 || !validDate(manifest.date) ||
             !Array.isArray(manifest.replaced) || !Array.isArray(manifest.added)) continue;
+        // A standalone version update may create the first backup without installing a graphics route.
+        if (!match[1] && manifest.componentOnlySince === manifest.date) continue;
         const row = operation(dir, manifest, match[1] ? 'restore' : 'install', name);
         // Older backups only contain a snapshot, not every historic click.
         row.imported = true;
         row.date = match[2] ? new Date(Number(match[2])).toISOString() : manifest.date;
         row.id = 'backup:' + crypto.createHash('sha256').update(fingerprint(row)).digest('hex');
-        rows.push(row);
-      } catch { /* Ignore one corrupt backup, never discard the rest. */ }
+        if (validRecord(row)) rows.push(row);
+        else onWarning(new Error('Unreadable backup record'));
+      } catch (error) { onWarning(error); }
     }
   }
   return rows;
@@ -72,12 +113,13 @@ function fromManifests(folders) {
 class HistoryStore {
   constructor(file) { this.file = file; this.pending = new Map(); }
 
-  read() {
+  read(onWarning = () => {}) {
     let content;
     try { content = fs.readFileSync(this.file, 'utf8'); }
     catch (error) { if (error.code === 'ENOENT') return { rows: [], clearedAt: 0 }; throw error; }
     const rows = new Map();
     let clearedAt = 0;
+    let unreadable = false;
     for (const line of content.split(/\r?\n/)) {
       if (!line.trim()) continue;
       try {
@@ -85,12 +127,14 @@ class HistoryStore {
         if (row.type === 'history-cleared' && validDate(row.date)) {
           clearedAt = Math.max(clearedAt, Date.parse(row.date));
           rows.clear();
+          unreadable = false;
           continue;
         }
-        if (typeof row.id === 'string' && typeof row.dir === 'string' && path.isAbsolute(row.dir) &&
-            validDate(row.date) && ['install', 'restore', 'recovery'].includes(row.action)) rows.set(row.id, row);
-      } catch { /* A truncated final write must not lose older operations. */ }
+        if (validRecord(row)) rows.set(row.id, row);
+        else unreadable = true;
+      } catch { unreadable = true; }
     }
+    if (unreadable) onWarning(new Error('Unreadable history record'));
     return { rows: [...rows.values()], clearedAt };
   }
 
@@ -136,12 +180,12 @@ class HistoryStore {
   list(folders = [], onWarning = () => {}) {
     let saved = [];
     let clearedAt = 0;
-    try { ({ rows: saved, clearedAt } = this.read()); } catch (error) { onWarning(error); }
+    try { ({ rows: saved, clearedAt } = this.read(onWarning)); } catch (error) { onWarning(error); }
     const ids = new Set(saved.map(row => row.id));
     for (const id of ids) this.pending.delete(id);
     const rows = [...saved, ...[...this.pending.values()].filter(row => !ids.has(row.id))];
     const seen = new Set(rows.map(fingerprint));
-    for (const row of fromManifests(folders)) {
+    for (const row of fromManifests(folders, onWarning)) {
       if (Date.parse(row.date) <= clearedAt) continue;
       if (!seen.has(fingerprint(row))) { rows.push(row); seen.add(fingerprint(row)); }
     }

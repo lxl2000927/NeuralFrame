@@ -4,8 +4,23 @@ const {DEFINITIONS,PROVIDERS}=require('./component-definitions');
 const {read,safe,hash,digest,fail}=require('./component-library');
 const journal=require('./file-journal');
 const MB=1024*1024;
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const providersByRepo = new Map();
+for (const [provider, {repo}] of Object.entries(PROVIDERS)) {
+  if (!providersByRepo.has(repo)) providersByRepo.set(repo, []);
+  providersByRepo.get(repo).push(provider);
+}
+
+function rateLimitDeadline(response, now) {
+  const exhausted = response.headers.get('x-ratelimit-remaining') === '0';
+  const retry = response.headers.get('retry-after');
+  if (!exhausted && response.status !== 429 && !(response.status === 403 && retry)) return 0;
+  const reset = exhausted ? Number(response.headers.get('x-ratelimit-reset')) * 1000 : 0;
+  const retryAt = retry && /^\d+$/.test(retry) ? now + Number(retry) * 1000 : Date.parse(retry);
+  return Math.max(now + CHECK_INTERVAL_MS, Number.isFinite(reset) ? reset : 0, Number.isFinite(retryAt) ? retryAt : 0);
+}
 function allowedAsset(url,repo){try{const u=new URL(url);return u.protocol==='https:'&&u.hostname==='github.com'&&u.pathname.startsWith('/'+repo+'/releases/download/')&&!u.username&&!u.password;}catch{return false;}}
-async function bounded(response,max){if(!response.ok)throw fail('下载服务返回 HTTP '+response.status);let size=0;const parts=[];for await(const chunk of response.body){size+=chunk.length;if(size>max)throw fail('响应超过大小限制');parts.push(Buffer.from(chunk));}return Buffer.concat(parts);}
+async function bounded(response,max){let size=0;const parts=[];for await(const chunk of response.body){size+=chunk.length;if(size>max)throw fail('响应超过大小限制');parts.push(Buffer.from(chunk));}return Buffer.concat(parts);}
 function stable(release){return !release.draft&&!release.prerelease&&!/(?:^|[-_.])(alpha|beta|rc|pre)(?:[-_.\d]|$)/i.test(release.tag_name);}
 function candidates(releases,provider){const def=PROVIDERS[provider],component=Object.keys(DEFINITIONS).find(c=>DEFINITIONS[c].online===provider);const out=[];
   for(const r of releases.filter(stable))for(const a of r.assets||[])if(def.asset.test(a.name)&&allowedAsset(a.browser_download_url,def.repo)){
@@ -13,7 +28,8 @@ function candidates(releases,provider){const def=PROVIDERS[provider],component=O
     out.push({id:hash(JSON.stringify([provider,r.id,a.id,a.digest])),component,provider,repo:def.repo,tag:r.tag_name,name:a.name,url:a.browser_download_url,releaseUrl:`https://github.com/${def.repo}/releases/tag/${encodeURIComponent(r.tag_name)}`,size:a.size,sha256:sha||null,publishedAt:r.published_at,downloadable:!!sha&&a.size>0&&a.size<=512*MB});
   }return out.slice(0,12);
 }
-async function unpack(file,dest){let count=0,total=0;const names=new Set();await require('extract-zip')(file,{dir:dest,onEntry:entry=>{
+async function unpack(file,dest,signal){let count=0,total=0;const names=new Set();await require('extract-zip')(file,{dir:dest,onEntry:entry=>{
+  signal?.throwIfAborted();
   const rel=entry.fileName.replace(/\/$/,'');safe(dest,rel);const mode=(entry.externalFileAttributes>>>16)&0xf000;
   if(mode===0xa000)throw fail('组件压缩包不能包含符号链接');
   const k=rel.toLowerCase();if(names.has(k))throw fail('组件压缩包包含重复路径');names.add(k);
@@ -30,13 +46,65 @@ class ComponentUpdates{
   constructor(library,{fetcher=globalThis.fetch,onProgress=()=>{}}={}){this.lib=library;this.fetcher=fetcher;this.onProgress=onProgress;this.cache=path.join(library.root,'updates.json');this.busy=false;this.controller=null;}
   cancel(){this.controller?.abort();return{ok:true};}
   status(){return read(this.cache,{checkedAt:null,candidates:[],errors:[]});}
-  async check(){if(this.busy)throw fail('组件更新正在进行');this.busy=true;
-    try{const old=this.status(),repos=[...new Set(Object.values(PROVIDERS).map(p=>p.repo))],results={};
-      // Bound concurrency, including the shared distribution mirror (one request).
-      await Promise.all(repos.map(async repo=>{try{const response=await this.fetcher(`https://api.github.com/repos/${repo}/releases?per_page=100`,{headers:{Accept:'application/vnd.github+json','User-Agent':'Enhanced-Component-Library'},signal:AbortSignal.timeout(30000)});const data=JSON.parse((await bounded(response,12*MB)).toString());if(!Array.isArray(data))throw fail('版本列表格式错误');results[repo]={data};}catch(e){results[repo]={error:e.message};}}));
-      const items=[],errors=[];for(const [id,p] of Object.entries(PROVIDERS)){const r=results[p.repo];if(r.error){errors.push({provider:id,message:r.error});items.push(...old.candidates.filter(x=>x.provider===id).map(x=>({...x,stale:true})));}else items.push(...candidates(r.data,id));}
-      const data={checkedAt:new Date().toISOString(),candidates:items,errors};await journal.atomicJson(this.cache,data);return{ok:true,...data};
-    }finally{this.busy=false;}
+  async check() {
+    if (this.pendingCheck) return this.pendingCheck;
+    if (this.busy) throw fail('组件更新正在进行');
+    const old = this.status();
+    const nextCheckAt = old.nextCheckAt ?? (Date.parse(old.checkedAt) + CHECK_INTERVAL_MS);
+    if (Date.now() < nextCheckAt) return {ok:true, ...old, nextCheckAt, cached:true};
+    this.busy = true;
+    this.pendingCheck = this.refreshReleases(old).finally(() => {
+      this.pendingCheck = null;
+      this.busy = false;
+    });
+    return this.pendingCheck;
+  }
+
+  async refreshReleases(old) {
+    const items = [], errors = [];
+    const etags = {...old.etags};
+    let limitedUntil = 0;
+    for (const [repo, providers] of providersByRepo) {
+      const previous = old.candidates.filter(item => providers.includes(item.provider));
+      try {
+        if (limitedUntil) throw fail('GitHub 请求已限流');
+        const headers = {Accept:'application/vnd.github+json', 'User-Agent':'Enhanced-Component-Library'};
+        if (etags[repo]) headers['If-None-Match'] = etags[repo];
+        const response = await this.fetcher(`https://api.github.com/repos/${repo}/releases?per_page=100`, {
+          headers, signal:AbortSignal.timeout(30000)
+        });
+        limitedUntil = rateLimitDeadline(response, Date.now());
+        if (response.status === 304 && etags[repo]) {
+          items.push(...previous.map(item => ({...item, stale:false})));
+          etags[repo] = response.headers.get('etag') || etags[repo];
+          continue;
+        }
+        if (!response.ok) {
+          // GitHub can report a secondary limit in a 403 body without Retry-After.
+          if (!limitedUntil && response.status === 403 && response.body) {
+            const detail = await bounded(response, 64 * 1024);
+            if (/rate limit/i.test(detail.toString())) limitedUntil = Date.now() + CHECK_INTERVAL_MS;
+          } else {
+            await response.body?.cancel();
+          }
+          if (limitedUntil) throw fail('GitHub 请求已限流');
+          throw fail('下载服务返回 HTTP ' + response.status);
+        }
+        const releases = JSON.parse((await bounded(response, 12 * MB)).toString());
+        if (!Array.isArray(releases)) throw fail('版本列表格式错误');
+        items.push(...providers.flatMap(provider => candidates(releases, provider)));
+        const tag = response.headers.get('etag');
+        if (tag) etags[repo] = tag;
+        else delete etags[repo];
+      } catch (error) {
+        for (const provider of providers) errors.push({provider, message:error.message});
+        items.push(...previous.map(item => ({...item, stale:true})));
+      }
+    }
+    const now = Date.now();
+    const result = {checkedAt:new Date(now).toISOString(), nextCheckAt:Math.max(now + CHECK_INTERVAL_MS, limitedUntil), candidates:items, errors};
+    await journal.atomicJson(this.cache, {...result, etags});
+    return {ok:true, ...result};
   }
   async download(id){if(this.busy)throw fail('组件更新正在进行');this.busy=true;this.controller=new AbortController();const timer=setTimeout(()=>this.controller?.abort(),600000);let temp;
     try{const c=this.status().candidates.find(c=>c.id===id),provider=c&&PROVIDERS[c.provider];
@@ -48,8 +116,10 @@ class ComponentUpdates{
       let last=0;try{for await(const chunk of response.body){size+=chunk.length;if(size>c.size||size>512*MB)throw fail('下载文件大小不符');sha.update(chunk);await handle.writeFile(chunk);if(Date.now()-last>200){this.onProgress({stage:'download',name:c.name,loaded:size,total:c.size});last=Date.now();}}}finally{await handle.close();}
       if(size!==c.size||sha.digest('hex')!==c.sha256)throw fail('下载文件的 SHA-256 或大小不符，已取消入库');
       this.onProgress({stage:'verify',name:c.name,loaded:size,total:c.size});
-      let files;if(/\.zip$/i.test(c.name)){const dest=safe(temp,'unpacked');await fs.promises.mkdir(dest);await unpack(archive,dest);files=await mapFiles(dest,c.component);}else files={[c.name]:archive};
-      const p=await this.lib.importPackage({component:c.component,version:c.tag,files,source:provider.repo,releaseUrl:c.releaseUrl,archiveSha256:c.sha256,trustedAdapter:false});
+      const signal = this.controller.signal;
+      signal.throwIfAborted();
+      let files;if(/\.zip$/i.test(c.name)){const dest=safe(temp,'unpacked');await fs.promises.mkdir(dest);await unpack(archive,dest,signal);files=await mapFiles(dest,c.component);}else files={[c.name]:archive};
+      const p=await this.lib.importPackage({component:c.component,version:c.tag,files,source:provider.repo,releaseUrl:c.releaseUrl,archiveSha256:c.sha256,trustedAdapter:false},signal);
       return{ok:true,package:p,compatibility:this.lib.compatibility(p)};
     }catch(e){if(this.controller.signal.aborted)throw fail('下载已取消或超时，未修改游戏文件');throw e;}
     finally{clearTimeout(timer);this.controller=null;try{if(temp)await fs.promises.rm(safe(this.lib.root,path.relative(this.lib.root,temp)),{recursive:true,force:true});}finally{this.busy=false;}}

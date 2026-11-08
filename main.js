@@ -2,7 +2,7 @@
 // DLSS 5 Swapper
 // Finds the games already on the machine and installs DLSS 5 Neural
 // Rendering into them, using the scanners in src/core.
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Menu, Tray, Notification, nativeImage, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Menu, Tray, nativeImage, screen } = require('electron');
 const previewFs = require('./src/core/preview-fs');
 const fs = previewFs.fs;
 const { ComponentReview } = require('./src/core/component-review');
@@ -25,36 +25,68 @@ function components() {
   });
 }
 function updates() { return componentUpdates ||= new (require('./src/core/component-updates').ComponentUpdates)(components(),{fetcher:(...args)=>require('electron').net.fetch(...args)}); }
-async function managedReview(dir, request, work, token) {
-  const library=components(), selected=library.profile(dir).selected;
-  if (!Object.keys(selected).length) return reviews().run(dir,request,work,token);
-  return reviews().run(dir,{...request,componentSelection:selected},()=>require('./src/core/component-deploy').managed(library,dir,selected,work),token);
+async function managedReview(event, dir, request, work, token) {
+  const library = components();
+  const componentDeploy = require('./src/core/component-deploy');
+  const resolved = componentDeploy.resolveManagedSelection(library, library.profile(dir).selected, request);
+  const selected = resolved.selection;
+  const hasSelection = Object.keys(selected).length > 0;
+  const plan = hasSelection ? { ...resolved.request, componentSelection: selected } : resolved.request;
+  const install = () => work(resolved.request.config);
+  const deploy = hasSelection
+    ? () => componentDeploy.managed(library, dir, selected, install)
+    : install;
+  // The base install, F8 files and selected component versions commit together.
+  const result = await reviews().run(dir, plan, () => journal.group(dir, deploy), token);
+  if (result.ok && !result.preview) {
+    try {
+      const manifest = backends.readManifest(dir);
+      if (manifest) saveOperation(dir, manifest, 'install', e => event.sender.send('job', { ...e, dir }));
+    } catch (error) {
+      result.recordWarning = [result.recordWarning, error.message].filter(Boolean).join('\n');
+    }
+  }
+  return result;
 }
 const path = require('path');
 // Reuse the established cache, game list and version locks during the rebrand.
 // An isolated profile can be selected for QA without touching the user's files.
 if (typeof app.setPath === 'function') {
-  const profile = process.env.NEURALFRAME_USER_DATA || path.join(app.getPath('appData'), 'dlss5-swapper-enhanced');
+  const profile = process.env.NEURALFRAME_USER_DATA || path.join(app.getPath('appData'), require('./package.json').distribution.userDataDirectory);
   app.setPath('userData', profile);
 }
 const { pathToFileURL, fileURLToPath } = require('url');
-const { paletteFromPixels, mergePalettes } = require('./src/core/palette');
 const crypto = require('crypto');
 
 const os = require('os');
 const diagnostics = require('./src/core/diagnostics');
 const { scanGame } = require('./src/core/scan.js');
-const { discover, folder, dedupe, isInside, steam } = require('./src/library');
+let gameInspection;
+function inspections() {
+  return gameInspection ||= new (require('./src/core/game-inspection').GameInspection)();
+}
+function inspectInventory(dir) {
+  return inspections().run('inventory', dir, {userDataDir: app.getPath('userData')});
+}
+function inspectForUi(dir, profileOverride, priority) {
+  const state = loadState();
+  return inspections().run('inspect', dir, {
+    payloadDir: resolvePayloadRoot(),
+    userDataDir: app.getPath('userData'),
+    hardwareProfile: profileOverride,
+    defaultHardwareProfile: state.hardwareProfile,
+    apiOverrides: state.apiOverrides || {}
+  }, priority);
+}
+const { folder, dedupe, isInside, steam } = require('./src/library');
 const { contextForSteamGame, createSetupRunner } = require('./src/core/proton');
 const art = require('./src/steamart');
 const artCache = require('./src/art-cache');
-const { backupRoot, saveActiveManifest, writeTracked, makeReShadeConfigWritable } = require('./src/core/apply.js');
+const { backupRoot, saveActiveManifest, writeTracked, recoverableManifest } = require('./src/core/apply.js');
 const { scanSource } = require('./src/core/scan.js');
 const pe = require('./src/core/pe.js');
 const { isInternalAddon } = require('./src/core/addon-policy');
 const { ensureLumenite, ensureDgVoodoo, missingVCRuntime } = require('./src/core/runtime-components.js');
-const communityKeys = require('./src/shared/community-keys');
-const gpuModel = require('./src/shared/gpu-model');
 // A component that downloaded and verified, then vanished before it could be
 // used, is a security tool quarantining it - never the connection. Saying
 // "check your connection" there sends people after the wrong thing.
@@ -70,35 +102,12 @@ const guards = require('./src/core/install-guards');
 const compatibility = require('./src/core/compatibility');
 const antiCheatWarning = require('./src/shared/anti-cheat-warning');
 const featureI18n = require('./src/shared/feature-i18n');
-const featureText = (key, ...args) => featureI18n.t(loadState().lang || 'zh', key, ...args);
+const featureText = (key, ...args) => featureI18n.t(desktopLanguage(), key, ...args);
 const vulkanLayer = require('./src/core/vulkan-layer');
 const { HistoryStore, knownFolders, fromManifests } = require('./src/core/history');
 const gameMenu = require('./src/core/game-menu');
-const { CommunityClient, ADMIN_TOKEN_PATTERN } = require('./src/community-client');
-const { AdminVault } = require('./src/admin-vault');
 let historyStore;
 const history = () => historyStore || (historyStore = new HistoryStore(path.join(app.getPath('userData'), 'history.jsonl')));
-let communityClient;
-let adminVault;
-const adminAccess = () => adminVault || (adminVault = new AdminVault({
-  file: path.join(app.getPath('userData'), 'community-admin.bin'), storage: safeStorage
-}));
-const community = () => communityClient || (communityClient = new CommunityClient({
-  file: path.join(app.getPath('userData'), 'community.json'),
-  // Only ever set by hand, to point a development build at a server running
-  // locally. Unset - which is every installed copy - it is the real one.
-  baseUrl: process.env.DLSS5_COMMUNITY_API || undefined,
-  getAdminToken: () => adminAccess().load()
-}));
-const communityAvailable = () => typeof app.isPackaged !== 'boolean' || Boolean(process.env.DLSS5_COMMUNITY_API);
-const communityAnswer = async work => {
-  if (!communityAvailable()) {
-    return { ok: false, error: 'community_offline', message: '增强版已彻底断开原作者私服，运行于纯本地安全离线模式', status: null };
-  }
-  if (!communityUsed()) return { ok: false, error: 'community_opt_in', message: 'Community has not been opened yet', status: null };
-  try { return { ok: true, ...(await work()) }; }
-  catch (error) { return { ok: false, error: error.code || 'community_failed', message: error.message, status: error.status || null }; }
-};
 const gameName = dir => lastGames.find(game => keyFor(game.dir) === keyFor(dir))?.name || path.basename(dir);
 function saveOperation(dir, manifest, action, send) {
   if (previewFs.active()) return;
@@ -108,6 +117,7 @@ function saveOperation(dir, manifest, action, send) {
     // HistoryStore retains the row in memory for a later retry.
     send({ code: 'historySaveWarning', params: { error: error.message } });
   }
+  if (action === 'install') rememberGame(dir);
 }
 
 // ---------- add-on builds ----------
@@ -178,7 +188,7 @@ function describe(file, label) {
     id,
     path: file,
     file: path.basename(file),
-    label: known.name || label,
+    label: known.name || label || path.basename(file),
     size,
     // A build with no version resource reports 0.0.0.0, which says nothing.
     version: version && version !== '0.0.0.0' ? version : null
@@ -191,8 +201,11 @@ function addonLibrary() {
   const found = [];
   const seen = new Set();
   const add = (file, label, own) => {
-    if (!/\.addon(64)?$/i.test(file)) return;
-    const row = describe(file, label);
+    if (typeof file !== 'string' || !/\.addon(64)?$/i.test(file) || isInternalAddon(file)) return;
+    let row = describe(file, label);
+    if (!row && own && !fs.existsSync(file)) {
+      row = { path: file, file: path.basename(file), missing: true };
+    }
     if (row && own) {
       row.custom = true;
       // Hand-added builds are listed exactly as given. Nearly every build is
@@ -232,13 +245,13 @@ function addonLibrary() {
   }
 
   // The shipped build is the base, not a choice, so it is not offered.
-  const base = p?.source.addon ? path.basename(p.source.addon).toLowerCase() : null;
-  const chosen = new Set(enabledAddons());
+  const base = path.basename(p?.source.addon || require('./src/core/renodx-release').CONSUMER.file).toLowerCase();
+  const chosen = new Set(storedAddons(loadState()).map(file => keyFor(file)));
   return found
     .filter((r) => !r.shipped && (r.custom || r.id !== integratedId))
     .map((r) => ({
       ...r,
-      active: chosen.has(r.path),
+      active: chosen.has(keyFor(r.path)),
       // Same file name as the base means it overwrites it rather than joining.
       replaces: path.basename(r.path).toLowerCase() === base
     }));
@@ -247,39 +260,34 @@ function addonLibrary() {
 // The payload that ships with the app. `raw` skips the add-on override,
 // which is how the library finds the shipped build in the first place.
 function payload(raw) {
-  // Installed, the payload rides along as an extra resource; from source it
-  // sits beside main.js.
-  for (const dir of (onDemandPayload() ? [runtimes().payloadDir] : [path.join(process.resourcesPath || '', 'payload'), path.join(__dirname, 'payload')])) {
-    const probe = scanSource(dir);
-    if (probe.ok) {
-      const setup = fs.readdirSync(dir).find((f) => /^ReShade_Setup_.*_Addon\.exe$/i.test(f));
-      // Point at the chosen build instead of copying files around: the payload
-      // folder is what a build ships, and switching must not rewrite it.
-      // Only a same-named build changes what applySwap installs; a differently
-      // named one is copied in afterwards, beside the base.
-      if (!raw) {
-        const state = loadState();
-        const list = state.addons || (state.addon ? [state.addon] : []);
-        const base = path.basename(probe.addon || '').toLowerCase();
-        const over = list.find((f) => fs.existsSync(f) && path.basename(f).toLowerCase() === base);
-        if (over) probe.addon = over;
-      }
-      if (probe.feeder) {
-        const enhDir = path.join(dir, 'enhanced', 'feeder-1.19.0');
-        const enhAddon32 = path.join(enhDir, 'dlss5-feed.addon32');
-        const enhAddon64 = path.join(enhDir, 'dlss5-feed.addon64');
-        const enhHost64 = path.join(enhDir, 'host64', 'dlss5-feed-host64.exe');
-        const enhFeedFx = path.join(enhDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
-        if (fs.existsSync(enhAddon32)) probe.feeder.addon32 = enhAddon32;
-        if (fs.existsSync(enhAddon64)) probe.feeder.addon64 = enhAddon64;
-        if (fs.existsSync(enhHost64)) probe.feeder.host64 = enhHost64;
-        if (fs.existsSync(enhFeedFx)) probe.feeder.feedShader = enhFeedFx;
-        if (fs.existsSync(enhAddon32) || fs.existsSync(enhAddon64)) probe.feeder.version = '1.19.0';
-      }
-      return { source: probe, reshadeSetup: setup ? path.join(dir, setup) : null };
-    }
+  const dir = resolvePayloadRoot();
+  const probe = scanSource(dir);
+  if (!probe.ok) return null;
+  const setup = fs.readdirSync(dir).find((f) => /^ReShade_Setup_.*_Addon\.exe$/i.test(f));
+  // Point at the chosen build instead of copying files around: the payload
+  // folder is what a build ships, and switching must not rewrite it.
+  // Only a same-named build changes what applySwap installs; a differently
+  // named one is copied in afterwards, beside the base.
+  if (!raw) {
+    const state = loadState();
+    const list = state.addons || (state.addon ? [state.addon] : []);
+    const base = path.basename(probe.addon || '').toLowerCase();
+    const over = list.find((f) => fs.existsSync(f) && path.basename(f).toLowerCase() === base);
+    if (over) probe.addon = over;
   }
-  return null;
+  if (probe.feeder) {
+    const enhDir = path.join(dir, 'enhanced', 'feeder-1.19.0');
+    const enhAddon32 = path.join(enhDir, 'dlss5-feed.addon32');
+    const enhAddon64 = path.join(enhDir, 'dlss5-feed.addon64');
+    const enhHost64 = path.join(enhDir, 'host64', 'dlss5-feed-host64.exe');
+    const enhFeedFx = path.join(enhDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
+    if (fs.existsSync(enhAddon32)) probe.feeder.addon32 = enhAddon32;
+    if (fs.existsSync(enhAddon64)) probe.feeder.addon64 = enhAddon64;
+    if (fs.existsSync(enhHost64)) probe.feeder.host64 = enhHost64;
+    if (fs.existsSync(enhFeedFx)) probe.feeder.feedShader = enhFeedFx;
+    if (fs.existsSync(enhAddon32) || fs.existsSync(enhAddon64)) probe.feeder.version = '1.19.0';
+  }
+  return { source: probe, reshadeSetup: setup ? path.join(dir, setup) : null };
 }
 
 let win = null;
@@ -287,9 +295,14 @@ let win = null;
 const stateFile = () => path.join(app.getPath('userData'), 'library.json');
 const posterDir = () => path.join(app.getPath('userData'), 'posters');
 const keyFor = (dir) => crypto.createHash('sha1').update(path.resolve(dir).toLowerCase()).digest('hex').slice(0, 16);
+const tileFile = dir => path.join(app.getPath('userData'), 'art', keyFor(dir) + '-tile.jpg');
+function cachedTile(dir) {
+  const file = tileFile(dir);
+  return fs.existsSync(file) ? pathToFileURL(file).href : null;
+}
 // Bump when scan metadata or detection changes so an old wrong result is not
 // kept forever merely because the folder was scanned by an earlier release.
-const SCAN_RULES = 8;
+const SCAN_RULES = 9;
 
 // One live object, not a fresh snapshot per call. Every handler used to parse
 // the file, hold that copy across an await, and write the whole thing back:
@@ -297,15 +310,34 @@ const SCAN_RULES = 8;
 // finished last silently dropped the other's result. Sharing the object means
 // every write carries everything already known.
 let liveState = null;
+let libraryGeneration = 0;
+
+function invalidateLibraryView() {
+  libraryGeneration++;
+  gameInspection?.invalidate?.();
+  lastRoots = [];
+  lastGames = [];
+}
 
 function readState() {
+  const defaults = { folders: [], excludedRoots: [], manual: [], posters: {}, hidden: [], scans: {} };
   try {
     const value = JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
-    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      // Older libraries may have saved preferences before their first scan.
+      for (const [key, fallback] of Object.entries(defaults)) {
+        // These optional indexes are created by the first cover or folder edit.
+        if (!(key in value) && (key === 'posters' || key === 'excludedRoots')) continue;
+        const field = value[key];
+        if (!field || typeof field !== 'object' || Array.isArray(field) !== Array.isArray(fallback)) value[key] = fallback;
+      }
+      if (!Array.isArray(value.excludedFolders)) delete value.excludedFolders;
+      return value;
+    }
   } catch { /* absent or unreadable: start from the defaults below */ }
   // Nothing seeded: the drive sweep finds game libraries on its own, and a
   // path from the machine this was written on means nothing anywhere else.
-  return { folders: [], excludedRoots: [], manual: [], posters: {}, hidden: [], scans: {} };
+  return defaults;
 }
 
 function loadState() {
@@ -319,15 +351,15 @@ function saveState(state) {
   if (state && state !== liveState) liveState = state;
   try {
     fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
-    fs.writeFileSync(stateFile(), JSON.stringify(liveState, null, 2), 'utf8');
+    const pending = stateFile() + '.tmp';
+    fs.writeFileSync(pending, JSON.stringify(liveState, null, 2), 'utf8');
+    fs.renameSync(pending, stateFile());
     return true;
-  } catch { return false; }
+  } catch { liveState = readState(); return false; }
 }
 
 // A choice belongs to one executable, not every launcher in the same folder.
-const apiPreferenceKey = (dir, exe) => crypto.createHash('sha256')
-  .update(path.resolve(dir).toLowerCase()).update('\0')
-  .update(path.relative(dir, exe).toLowerCase()).digest('hex');
+const { apiPreferenceKey } = require('./src/core/game-api');
 function apiPreference(state, dir, exe) {
   const value = state.apiOverrides?.[apiPreferenceKey(dir, exe)];
   return renderingApi.valid(value) ? value : 'auto';
@@ -341,8 +373,8 @@ function reshadeProxyPreference(state, dir, exe) {
 // Renderer can only load what it is handed a URL for.
 function posterUrl(game, state) {
   const key = keyFor(game.dir);
-  const custom = state.posters[key];
-  if (custom && fs.existsSync(custom)) return { url: pathToFileURL(custom).href, tall: true, custom: true };
+  const custom = state.posters?.[key];
+  if (custom && fs.existsSync(custom)) return { url: `${pathToFileURL(custom).href}?v=${fs.statSync(custom).mtimeMs}`, tall: true, custom: true };
   // Art fetched earlier is already on disk; use it before the
   // launcher's own cache, which is often only a wide header.
   const record = state.art && state.art[key];
@@ -354,6 +386,8 @@ function posterUrl(game, state) {
   if (game.poster && fs.existsSync(game.poster.file)) return { url: pathToFileURL(game.poster.file).href, tall: game.poster.tall, custom: false };
   return null;
 }
+function desktopLanguage() { return /^en(?:[-_]|$)/i.test(loadState().lang || '') ? 'en' : 'zh'; }
+function uiText(zh, en) { return desktopLanguage() === 'en' ? en : zh; }
 
 // The tray. Closing the window puts the app here rather than ending it, which
 // is what #255 asked for: people close a window out of habit and then wonder
@@ -409,12 +443,24 @@ const payloadMissing = () => missingPayload({
   temp: app.getPath ? (() => { try { return app.getPath('temp'); } catch { return null; } })() : null
 });
 
+let windowSaveTimer;
+function saveWindowState() {
+  clearTimeout(windowSaveTimer);
+  if (!win || win.isDestroyed() || win.isMinimized()) return;
+  const state = loadState();
+  if (!state.rememberWindow) return;
+  state.windowState = { ...win.getNormalBounds(), maximized: win.isMaximized() };
+  saveState(state);
+}
 function createWindow() {
+  const state = loadState();
+  const saved = state.rememberWindow ? require('./src/core/window-state').restoreBounds(state.windowState, screen.getAllDisplays(), screen.getPrimaryDisplay()) : null;
   win = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 960,
-    minHeight: 640,
+    ...(saved ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height } : {}),
+    minWidth: Math.min(960, saved?.width || 960),
+    minHeight: Math.min(640, saved?.height || 640),
     backgroundColor: '#191919',
     icon: path.join(__dirname, 'src', 'renderer', 'icon.png'),
     // The window draws its own title bar, so the frame comes off.
@@ -428,9 +474,21 @@ function createWindow() {
     }
   });
   win.loadFile(path.join(__dirname, 'src', 'ui-dist', 'index.html'));
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    // Windows can add a non-client inset while creating a frameless window.
+    // Apply the requested outer bounds once the native window exists to avoid
+    // growing its saved size on every launch (especially at fractional DPI).
+    win.show();
+    if (saved) win.setBounds({ x: saved.x, y: saved.y, width: saved.width, height: saved.height });
+    if (saved?.maximized) win.maximize();
+  });
+  for (const event of ['move', 'resize', 'maximize', 'unmaximize']) win.on(event, () => {
+    clearTimeout(windowSaveTimer);
+    windowSaveTimer = setTimeout(saveWindowState, 250);
+  });
   // Close quits by default in portable builds unless closeToTray is explicitly enabled
   win.on('close', (event) => {
+    saveWindowState();
     if (quitting || loadState().closeToTray === false || !ensureTray()) return;
     event.preventDefault();
     win.hide();
@@ -458,14 +516,29 @@ app.setAppUserModelId('io.github.lxl2000927.neuralframe');
 // The lock is asked for defensively - the IPC handlers in this file are also
 // exercised outside Electron, where app is a stand-in that has no such call.
 const singleInstance = typeof app.requestSingleInstanceLock === 'function'
-  ? app.requestSingleInstanceLock()
+  ? app.requestSingleInstanceLock(!app.isPackaged && process.argv.includes('--restart-debug') ? { debugProject: __dirname } : {})
   : true;
 if (!singleInstance) {
   app.quit();
 } else {
   // Opening the app again raises the window - including when it is in the tray
   // rather than merely minimised.
-  app.on('second-instance', showWindow);
+  app.on('second-instance', (_event, _argv, _cwd, data) => {
+    if (app.isPackaged || data?.debugProject !== __dirname) return showWindow();
+    if (quitting) return;
+    if (mutationBusy) {
+      showWindow();
+      void dialog.showMessageBox(win, {
+        type: 'info',
+        message: uiText('当前操作正在进行。完成后重新运行调试启动脚本即可加载新版。',
+          'An operation is in progress. Run the debug launcher again when it finishes.')
+      });
+      return;
+    }
+    quitting = true;
+    app.relaunch();
+    app.quit();
+  });
 }
 
 
@@ -492,7 +565,11 @@ let quitting = false;
 // acceleration off for this window, which costs nothing here: it draws text,
 // cards and pictures. It has to be read before the app is ready, because that
 // is the last moment the flag can still be set.
-try { if (loadState().safeGraphics === true) app.disableHardwareAcceleration(); } catch { /* a default is fine */ }
+let safeGraphicsAtStartup = false;
+try {
+  safeGraphicsAtStartup = loadState().safeGraphics === true;
+  if (safeGraphicsAtStartup) app.disableHardwareAcceleration();
+} catch { /* a default is fine */ }
 
 app.whenReady().then(async () => {
   // app.quit() is asynchronous, so a copy that lost the lock still reaches
@@ -501,14 +578,14 @@ app.whenReady().then(async () => {
   if (!singleInstance) return;
   // Registered here rather than at load: main.js is exercised in a plain vm
   // context by the tests, where src modules are stubbed and cannot be called.
-  require('./src/overlay-ipc')({ app, ipcMain, dialog, shell, window: () => win, bridge: () => overlayBridge, language: () => loadState().lang || 'zh' });
+  require('./src/overlay-ipc')({ app, ipcMain, dialog, shell, window: () => win, bridge: () => overlayBridge, language: desktopLanguage });
   createWindow();
   // The icon is there from launch, not only after the first close - somebody
   // who wants the app parked in the tray wants to see that it is.
   if (loadState().closeToTray !== false) ensureTray();
-  if (communityUsed()) startNotices();
   try {
-    overlayBridge = await require('./src/overlay-bridge')({ BrowserWindow, userData: app.getPath('userData') });
+    overlayBridge = await require('./src/overlay-bridge')({ BrowserWindow, userData: app.getPath('userData'), language: desktopLanguage });
+    overlayBridge.refreshPreferences?.();
     if (quitting) overlayBridge.close();
   } catch (error) {
     if (!quitting) console.error('Overlay bridge:', error.message);
@@ -519,7 +596,7 @@ app.whenReady().then(async () => {
 // arrived: the process stayed in Task Manager with nothing on screen. Quitting
 // follows the window the person actually closed.
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { quitting = true; overlayBridge?.close(); });
+app.on('before-quit', () => { saveWindowState(); quitting = true; overlayBridge?.close(); void gameInspection?.close(); });
 
 // ---------- library ----------
 
@@ -547,7 +624,8 @@ ipcMain.handle('boot', () => {
     skin: state.skin === 'two' ? 'two' : 'one',
     // Theme 2 can keep the sidebar as a rail of icons that opens on hover.
     rail: state.rail === 'on' ? 'on' : 'off',
-    lang: state.lang || 'zh',
+    lang: desktopLanguage(),
+    safeGraphics: safeGraphicsAtStartup,
     groupGamesByStore: state.groupGamesByStore !== false,
     logo: asUrl('logo.png'),
     logoDark: asUrl('logo-dark.png')
@@ -557,7 +635,8 @@ ipcMain.handle('boot', () => {
 ipcMain.handle('set-lang', (_event, lang) => {
   const state = loadState();
   state.lang = lang;
-  saveState(state);
+  if (!saveState(state)) throw Error('Could not save settings');
+  overlayBridge?.refreshPreferences?.();
   return lang;
 });
 
@@ -593,7 +672,7 @@ ipcMain.handle('set-skin', (_event, skin) => {
 ipcMain.handle('set-theme', (_event, theme) => {
   const state = loadState();
   state.theme = theme;
-  saveState(state);
+  if (!saveState(state)) throw Error('Could not save settings');
   return theme;
 });
 
@@ -676,12 +755,16 @@ ipcMain.handle('game-menu', async (event, dir, options) => {
     labels: options?.labels, position: options?.position, busy: mutationBusy || options?.busy === true });
 });
 
+ipcMain.handle('restore-status', (_event, dir) => ({
+  canRestore: typeof dir === 'string' && path.isAbsolute(dir) && gameMenu.hasBackup(dir)
+}));
+
 ipcMain.handle('settings', () => {
   const state = loadState();
   let posterCount = 0;
   try { posterCount = fs.readdirSync(posterDir()).length; } catch {}
   return {
-    folders: state.folders, stateFile: stateFile(), posterDir: posterDir(), posterCount,
+    folders: state.folders || [], stateFile: stateFile(), posterDir: posterDir(), posterCount,
     roots: lastRoots,
     excludedRoots: state.excludedRoots || [],
     hidden: [...(state.hidden || [])],
@@ -689,341 +772,9 @@ ipcMain.handle('settings', () => {
     groupGamesByStore: state.groupGamesByStore !== false,
     closeToTray: state.closeToTray !== false,
     safeGraphics: state.safeGraphics === true,
+    rememberWindow: state.rememberWindow === true,
     skin: state.skin === 'two' ? 'two' : 'one'
   };
-});
-
-// ---------- community compatibility ----------
-// Network access stays in the main process. The renderer receives only parsed
-// data and cannot choose an arbitrary host or attach the private install id to
-// another request.
-// Opening the Community page, filing a report or asking for a game's reports
-// is the opt-in; it is the only thing that switches the community side of the
-// app on (#358).
-ipcMain.handle('community-opt-in', () => { markCommunityUsed(); return { ok: true, on: true }; });
-ipcMain.handle('community-opted-in', () => ({ ok: true, on: communityUsed() }));
-ipcMain.handle('community-profile', async () => {
-  if (adminAccess().load()) {
-    try { await community().adminStatus(); }
-    catch (error) { if (error.code === 'admin_unauthorized') adminAccess().clear(); }
-  }
-  return community().profile();
-});
-ipcMain.handle('community-profile-save', (_event, profile) => communityAnswer(async () => ({
-  profile: await (async () => {
-    const input = profile && typeof profile === 'object' ? profile : {};
-    const candidate = String(input.name || '').trim();
-    if (!candidate.startsWith('dlss5_admin_')) return community().saveProfile(input);
-    if (!ADMIN_TOKEN_PATTERN.test(candidate)) throw Object.assign(new Error('Invalid administrator access code.'), { code: 'admin_unauthorized' });
-    const admin = await community().adminLogin(candidate);
-    adminAccess().save(candidate);
-    return { ...community().profile(), admin };
-  })()
-})));
-ipcMain.handle('community-admin-logout', () => communityAnswer(async () => {
-  adminAccess().clear();
-  community().adminLogout();
-  return { profile: { ...community().profile(), admin: null } };
-}));
-ipcMain.handle('community-delete-me', () => communityAnswer(async () => ({
-  result: await community().deleteMe()
-})));
-ipcMain.handle('community-cards', (_event, filters) => communityAnswer(async () => ({
-  ...(await community().cardsPage(filters && typeof filters === 'object' ? filters : {}))
-})));
-// The games on this machine as the community would name them: every key a
-// report about each could have been filed under, worked out by the server's
-// own rules from the library and the last scan.
-function libraryForCommunity() {
-  const scans = loadState().scans || {};
-  return lastGames.map((game) => {
-    const scan = scans[keyFor(game.dir)];
-    return {
-      dir: game.dir, title: game.name, poster: game.poster || null,
-      installed: fs.existsSync(path.join(game.dir, '_DLSS5_Backup', 'manifest.json')),
-      keys: communityKeys.keysFor({
-        title: game.name, exe: scan && scan.exe ? path.basename(scan.exe) : null,
-        store: communityKeys.storeOf(game.launcher), storeId: game.storeId
-      })
-    };
-  });
-}
-// "My games" and "My comments": the cards for the games on this machine, or for
-// the games this install reported on - sent as one request of keys.
-ipcMain.handle('community-search', (_event, filters, scope) => communityAnswer(async () => {
-  const input = { limit: 100, ...(filters && typeof filters === 'object' ? filters : {}) };
-  if (scope === 'reports') {
-    const mine = await community().myReports();
-    const keys = [...new Set((mine.reports || []).map((row) => row.card).filter(Boolean))];
-    return { ...(await community().cardsSearch(input, keys)) };
-  }
-  const library = libraryForCommunity();
-  const keys = [...new Set(library.flatMap((game) => game.keys))];
-  return { ...(await community().cardsSearch(input, keys)), library };
-}));
-// The game sheet, before installing: this one game's card, if it has one. An
-// older server answers 404 here, which means "not supported", not "no card".
-ipcMain.handle('community-for-game', (_event, dir) => communityAnswer(async () => {
-  const game = libraryForCommunity().find((row) => keyFor(row.dir) === keyFor(String(dir || '')));
-  if (!game || !game.keys.length) return { supported: true, card: null };
-  let page;
-  try { page = await community().cardsSearch({ limit: 5 }, game.keys); }
-  catch (error) { if (error.status === 404) return { supported: false }; throw error; }
-  const rank = (card) => { const at = game.keys.indexOf(card.key); return at === -1 ? 99 : at; };
-  return { supported: true, card: [...page.cards].sort((a, b) => rank(a) - rank(b))[0] || null };
-}));
-// The graphics cards people reported with, and this machine's own among them.
-ipcMain.handle('community-gpus', () => communityAnswer(async () => {
-  const [gpus, rows] = await Promise.all([community().gpus(), guards.gpuInfo().catch(() => null)]);
-  const mine = Array.isArray(rows) && rows[0] ? gpuModel.normaliseGpu(rows[0].name) : null;
-  return { gpus, mine };
-}));
-ipcMain.handle('community-my-reports', () => communityAnswer(async () => ({
-  result: await community().myReports()
-})));
-ipcMain.handle('community-replies', (_event, id, fresh) => communityAnswer(async () => ({
-  thread: await community().replies(id, { fresh: fresh === true })
-})));
-ipcMain.handle('community-reply', (_event, id, body, mentions) => communityAnswer(async () => ({
-  reply: await community().reply(id, typeof body === 'string' ? body : '', Array.isArray(mentions) ? mentions : [])
-})));
-ipcMain.handle('community-card', (_event, key, etag, fresh) => communityAnswer(async () => {
-  if (typeof key !== 'string' || key.length > 300) throw Object.assign(new Error('Invalid game card.'), { code: 'bad_card' });
-  const result = await community().card(key, typeof etag === 'string' ? etag : null, { fresh: fresh === true });
-  return result.notModified ? result : { card: result.data, etag: result.etag };
-}));
-ipcMain.handle('community-updates', (_event, key, since, etag) => communityAnswer(async () => {
-  if (typeof key !== 'string' || key.length > 300) throw Object.assign(new Error('Invalid game card.'), { code: 'bad_card' });
-  const result = await community().updates(key, since, typeof etag === 'string' ? etag : null);
-  return result.notModified ? result : { updates: result.data, etag: result.etag };
-}));
-ipcMain.handle('community-report', (_event, report) => communityAnswer(async () => ({
-  result: await community().report(report && typeof report === 'object' ? report : {})
-})));
-ipcMain.handle('community-withdraw', (_event, id) => communityAnswer(async () => ({
-  result: await community().withdraw(id)
-})));
-ipcMain.handle('community-withdraw-reply', (_event, id) => communityAnswer(async () => ({
-  result: await community().withdrawReply(id)
-})));
-ipcMain.handle('community-reaction', (_event, id, emoji, on) => communityAnswer(async () => ({
-  result: await community().react(id, emoji, on)
-})));
-ipcMain.handle('community-admin-moderate', (_event, kind, id, action) => communityAnswer(async () => ({
-  result: await community().adminModerate(kind, id, action)
-})));
-ipcMain.handle('community-chat-feed', (_event, options) => communityAnswer(async () => {
-  const input = options && typeof options === 'object' ? options : {};
-  const result = await community().chatFeed({
-    before: input.before, limit: Math.min(Math.max(Number(input.limit) || 50, 1), 100),
-    etag: typeof input.etag === 'string' ? input.etag : null
-  });
-  return result.notModified ? result : { feed: result.data, etag: result.etag };
-}));
-ipcMain.handle('community-chat-people', () => communityAnswer(async () => ({
-  people: await community().chatPeople()
-})));
-ipcMain.handle('community-chat-me', () => communityAnswer(async () => ({
-  me: await community().chatMe(), profile: community().profile()
-})));
-ipcMain.handle('community-chat-upload', (_event, meta, bytes) => communityAnswer(async () => {
-  const input = meta && typeof meta === 'object' ? meta : {};
-  if (!(bytes instanceof ArrayBuffer) || bytes.byteLength > 2 * 1024 * 1024) {
-    throw Object.assign(new Error('Compressed image size is invalid.'), { code: 'image_size' });
-  }
-  return { token: await community().chatUpload(input, bytes) };
-}));
-ipcMain.handle('community-chat-post', (_event, input) => communityAnswer(async () => ({
-  result: await community().chatPost(input && typeof input === 'object' ? input : {})
-})));
-ipcMain.handle('community-chat-edit', (_event, id, body) => communityAnswer(async () => ({
-  result: await community().chatEdit(id, typeof body === 'string' ? body : '')
-})));
-ipcMain.handle('community-chat-delete', (_event, id) => communityAnswer(async () => ({
-  result: await community().chatDelete(id)
-})));
-ipcMain.handle('community-chat-reaction', (_event, id, emoji, on) => communityAnswer(async () => ({
-  result: await community().chatReact(id, emoji, on)
-})));
-ipcMain.handle('community-chat-moderate', (_event, id, action) => communityAnswer(async () => ({
-  result: await community().chatModerate(id, action)
-})));
-ipcMain.handle('community-chat-save-image', async (event, source, suggestedName) => {
-  try {
-    const target = new URL(String(source || ''));
-    if (target.protocol !== 'https:' || target.hostname !== 'media.rakanki.com' || !target.pathname.startsWith('/chat/')) {
-      return { ok: false, message: 'This is not a community chat image.' };
-    }
-    const window = BrowserWindow.fromWebContents(event.sender);
-    const safeName = String(suggestedName || 'dlss5-chat-image').replace(/[^a-z0-9_-]+/gi, '-').slice(0, 80) || 'dlss5-chat-image';
-    const picked = await dialog.showSaveDialog(window, {
-      title: 'Save chat image', defaultPath: path.join(app.getPath('pictures'), `${safeName}.webp`),
-      filters: [{ name: 'WebP image', extensions: ['webp'] }]
-    });
-    if (picked.canceled || !picked.filePath) return { ok: false, cancelled: true };
-    const response = await fetch(target, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
-    const announced = Number(response.headers.get('content-length')) || 0;
-    if (!response.ok || announced > 3 * 1024 * 1024) throw new Error('The image could not be downloaded safely.');
-    const data = Buffer.from(await response.arrayBuffer());
-    if (data.length > 3 * 1024 * 1024) throw new Error('The image is larger than expected.');
-    await fs.promises.writeFile(picked.filePath, data, { flag: 'wx' }).catch(async error => {
-      if (error.code !== 'EEXIST') throw error;
-      await fs.promises.writeFile(picked.filePath, data);
-    });
-    return { ok: true, file: picked.filePath };
-  } catch (error) { return { ok: false, message: error.message }; }
-});
-// The line over the title: where the game came from, and what the store calls
-// it. Both are already known - nothing here is guessed at.
-function kickerFor(dir, game) {
-  let genres = [];
-  try { genres = ((loadState().art || {})[keyFor(dir)] || {}).genres || []; } catch { /* none yet */ }
-  return [game.launcher, genres[0]].filter(Boolean).join(' · ') || null;
-}
-// The banner the library already downloaded for this folder, if there is one.
-function heroFor(dir) {
-  try {
-    const record = (loadState().art || {})[keyFor(dir)];
-    return record && record.hero && onDisk(record.hero) ? record.hero : null;
-  } catch { return null; }
-}
-// The scanner speaks in the name of the DLL it hooks, where "dxgi" covers both
-// DirectX 11 and 12; the community database speaks in the names people use. The
-// label is the only place the two are told apart, so the label decides. What it
-// cannot decide - DirectX 10, bare DXGI, an executable that named no renderer -
-// is left for the person to choose rather than guessed at.
-function communityApi(chosen) {
-  const label = String(chosen?.apiLabel || '');
-  if (/11\/12/.test(label)) return null;
-  if (/DirectX 12/i.test(label)) return 'dx12';
-  if (/DirectX 11/i.test(label)) return 'dx11';
-  if (/DirectX 9/i.test(label)) return 'dx9';
-  if (/DirectX 8/i.test(label)) return 'dx8';
-  if (/Vulkan/i.test(label)) return 'vulkan';
-  if (/OpenGL/i.test(label)) return 'opengl';
-  return null;
-}
-
-
-// ---------------------------------------------------------------- notices
-// A reply under your result, your name in a sentence, or a comment on a game
-// you follow. The server keeps the rows; this asks for the ones above the last
-// id it saw, so an app closed all week is told once rather than a hundred
-// times. The wording is the renderer's job - the community feature speaks the
-// two languages its own page does, not the thirty-eight the installer needs.
-const NOTICE_EVERY = 60_000;
-let noticeTimer = null;
-let noticeBusy = false;
-
-// #358: a fresh install polled the notice endpoint eight seconds after
-// launch, before anyone had opened Community at all. The first visit to the
-// page is the opt-in; until then this app talks to no server of ours.
-const communityUsed = () => loadState().communityUsed === true;
-function markCommunityUsed() {
-  if (communityUsed()) return;
-  const state = loadState();
-  state.communityUsed = true;
-  saveState(state);
-  startNotices();
-}
-const noticesOn = () => communityAvailable() && loadState().communityNotices !== false && communityUsed();
-
-async function pollNotices() {
-  if (noticeBusy || !noticesOn() || !win || win.isDestroyed()) return;
-  noticeBusy = true;
-  try {
-    // The very first look only learns where the line is. Nobody wants to be
-    // greeted by every notification they have ever earned.
-    if (await community().noticeCatchUp()) return;
-    const answer = await community().notices();
-    const fresh = (answer && answer.notices || []).filter(notice => !notice.read);
-    if (fresh.length && win && !win.isDestroyed()) win.webContents.send('community-notices', fresh);
-  } catch { /* offline, or the service is down: try again next minute */ }
-  finally { noticeBusy = false; }
-}
-
-function startNotices() {
-  if (noticeTimer) clearInterval(noticeTimer);
-  if (!communityAvailable()) return;
-  noticeTimer = setInterval(() => { pollNotices(); }, NOTICE_EVERY);
-  setTimeout(() => { pollNotices(); }, 8000);
-}
-
-// Shown only after the page has said what they should say, and marked read
-// only after they have actually been shown - a crash in between should repeat
-// a notification, never swallow it.
-ipcMain.handle('community-notify', (_event, items) => {
-  if (!Array.isArray(items) || !Notification.isSupported() || !noticesOn()) return { ok: false };
-  for (const item of items.slice(0, 4)) {
-    const popup = new Notification({
-      title: String(item?.title || '').slice(0, 120),
-      body: String(item?.body || '').slice(0, 240)
-    });
-    popup.on('click', () => {
-      if (!win || win.isDestroyed()) return;
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
-      win.webContents.send('community-open', item);
-    });
-    popup.show();
-  }
-  return { ok: true };
-});
-
-ipcMain.handle('community-notices-read', () => communityAnswer(async () => ({
-  result: await community().readNotices()
-})));
-ipcMain.handle('community-notice-settings', (_event, on) => {
-  const state = loadState();
-  if (typeof on === 'boolean') { state.communityNotices = on; saveState(state); }
-  return { ok: true, on: state.communityNotices !== false };
-});
-ipcMain.handle('community-follow', (_event, key, on) => communityAnswer(async () => ({
-  result: await community().follow(String(key || ''), on !== false)
-})));
-ipcMain.handle('community-notices', () => communityAnswer(async () => ({
-  result: await community().notices()
-})));
-ipcMain.handle('community-edit-reply', (_event, id, body) => communityAnswer(async () => ({
-  result: await community().editReply(id, typeof body === 'string' ? body : '')
-})));
-
-ipcMain.handle('community-prefill', async (_event, dir) => {
-  if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, error: 'bad_game' };
-  const game = lastGames.find(row => keyFor(row.dir) === keyFor(dir));
-  if (!game) return { ok: false, error: 'bad_game' };
-  return communityAnswer(async () => {
-    const scan = await scanGame(dir);
-    // The API the person actually installed against: their own override when
-    // they set one, detection otherwise.
-    const target = scan.chosen
-      ? renderingApi.effective(scan.chosen, apiPreference(loadState(), dir, scan.chosen.path))
-      : null;
-    const gpus = await guards.gpuInfo().catch(() => null);
-    const gpu = Array.isArray(gpus) && gpus[0] ? gpus[0] : {};
-    const route = scan.install?.route === 'native' ? 'renodx' : (scan.install?.route || null);
-    const store = ({ Steam: 'steam', 'Epic Games': 'epic', GOG: 'gog', Xbox: 'xbox', Ubisoft: 'ubisoft' })[game.launcher] || null;
-    return { prefill: {
-      title: game.name, poster: game.poster?.url || game.poster || null,
-      // The wide banner was fetched with the poster when the library filled in,
-      // so the report header can have it without asking the network again - and
-      // a game found in a folder has no store id to look one up with anyway.
-      hero: heroFor(dir),
-      // The colour of the two pictures this dialog is about to show. Without
-      // this it fell back to a hash of the title, which is why a red game came
-      // out green.
-      palette: paletteOfAll(heroFor(dir), game.poster?.url || game.poster || null),
-      kicker: kickerFor(dir, game),
-      game: { store, storeId: store && game.storeId ? game.storeId : null, title: game.name,
-        exe: scan.chosen?.rel ? path.basename(scan.chosen.rel) : null },
-      route: ['feeder', 'renodx', 'optiscaler'].includes(route) ? route : null,
-      api: communityApi(target),
-      gpu: gpu.name || null, driver: gpu.driver || null,
-      cpu: os.cpus()?.[0]?.model || null,
-      os: `${process.platform} ${os.release()}`, app: app.getVersion()
-    } };
-  });
 });
 
 ipcMain.handle('set-safe-graphics', (_event, enabled) => {
@@ -1032,10 +783,36 @@ ipcMain.handle('set-safe-graphics', (_event, enabled) => {
   // It reads the flag at startup, so the change lands on the next launch.
   return saveState(state) ? { ok: true, on: state.safeGraphics } : { ok: false, on: !state.safeGraphics };
 });
+ipcMain.handle('set-remember-window', (_event, enabled) => {
+  const state = loadState();
+  state.rememberWindow = enabled === true;
+  if (!state.rememberWindow) delete state.windowState;
+  if (!saveState(state)) throw Error('Could not save settings');
+  if (state.rememberWindow) saveWindowState();
+  return state.rememberWindow;
+});
+ipcMain.handle('restore-scan-root', (_event, dir) => {
+  const state = loadState();
+  const matches = item => keyFor(item) === keyFor(dir);
+  const previousFolder = state.excludedFolders?.find(matches);
+  if (previousFolder && !state.folders.some(matches)) state.folders.push(previousFolder);
+  state.excludedFolders = (state.excludedFolders || []).filter(item => !matches(item));
+  state.excludedRoots = (state.excludedRoots || []).filter(item => !matches(item));
+  if (!saveState(state)) throw Error('Could not save settings');
+  return true;
+});
+ipcMain.handle('reset-library', () => {
+  const state = loadState();
+  Object.assign(state, { folders: [], excludedRoots: [], manual: [], hidden: [], scans: {}, posters: {}, recents: [] });
+  delete state.excludedFolders;
+  if (!saveState(state)) throw Error('Could not save settings');
+  invalidateLibraryView();
+  return true;
+});
 ipcMain.handle('set-close-to-tray', (_event, enabled) => {
   const state = loadState();
   state.closeToTray = enabled === true;
-  saveState(state);
+  if (!saveState(state)) throw Error('Could not save settings');
   if (state.closeToTray) ensureTray();
   // Turning it off leaves the icon alone: the window is open, and taking the
   // tray away under a menu somebody may have just opened is worse than a
@@ -1054,64 +831,55 @@ ipcMain.handle('set-tray-labels', (_event, labels) => {
 ipcMain.handle('set-group-games-by-store', (_event, enabled) => {
   const state = loadState();
   state.groupGamesByStore = enabled === true;
-  saveState(state);
+  if (!saveState(state)) throw Error('Could not save settings');
   return state.groupGamesByStore;
 });
 
 ipcMain.handle('set-auto-scan-drives', (_event, enabled) => {
   const state = loadState();
   state.autoScanDrives = enabled === true;
+  if (!saveState(state)) throw Error('Could not save settings');
   if (!state.autoScanDrives) lastRoots = [];
-  saveState(state);
   return state.autoScanDrives;
 });
 
-// Used when a folder arrives by drop rather than through the picker.
-ipcMain.handle('add-game-path', (_event, dir) => {
+// Both the native picker and a desktop drop add a single game directory.
+function addGameDirectory(dir) {
+  if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return null;
   const state = loadState();
-  if (fs.existsSync(dir) && !state.manual.includes(dir)) {
+  if (!state.manual.some(item => keyFor(item) === keyFor(dir))) {
     state.manual.push(dir);
-    saveState(state);
+    if (!saveState(state)) throw Error(uiText('无法保存游戏目录', 'Could not save the game directory'));
   }
   return dir;
-});
+}
+ipcMain.handle('add-game-path', (_event, dir) => addGameDirectory(dir));
 
 // The roots found on the drives, kept so Settings can show what was searched
 // without paying for the sweep twice.
 let lastRoots = [];
 let lastGames = [];
 
-// #155: a ReShade.ini left read-only by an install from before 2.2.2 covers the
-// game with an error banner. 2.2.5 cleared it only when the game was opened in
-// this app, and launching from Steam never passes through here - so every game
-// this app installed into is looked at once, in the background, per start.
-let configsRepaired = false;
-function repairReadOnlyConfigs(games) {
-  if (configsRepaired) return;
-  configsRepaired = true;
-  setImmediate(async () => {
-    for (const game of games) {
-      try {
-        const manifest = JSON.parse(fs.readFileSync(path.join(game.dir, '_DLSS5_Backup', 'manifest.json'), 'utf8'));
-        const exe = manifest && manifest.game && manifest.game.exe;
-        if (typeof exe !== 'string' || !exe) continue;
-        const exeDir = path.dirname(path.resolve(game.dir, exe));
-        // Only ever inside the game's own folder, whatever the manifest says.
-        if (!exeDir.toLowerCase().startsWith(path.resolve(game.dir).toLowerCase())) continue;
-        const cleared = await makeReShadeConfigWritable(exeDir);
-        if (cleared.length) console.log('Cleared read-only:', cleared.join(', '), 'in', game.dir);
-      } catch { /* not installed by this app, or unreadable: nothing to repair */ }
-    }
-  });
+function discoveryOptions(state) {
+  return {
+    folders: [...state.folders],
+    scanDrives: state.autoScanDrives === true,
+    excludedRoots: [...(state.excludedRoots || [])]
+  };
 }
 
-ipcMain.handle('library', () => {
+ipcMain.handle('library', async () => {
+  const generation = libraryGeneration;
+  let found;
+  // A folder can be added or excluded while the worker is reading launcher files.
+  // Publish only a result for the current roots, and respect an explicit library reset.
+  for (;;) {
+    const options = discoveryOptions(loadState());
+    found = await inspections().run('discover', null, options);
+    if (generation !== libraryGeneration) return lastGames;
+    if (JSON.stringify(options) === JSON.stringify(discoveryOptions(loadState()))) break;
+  }
   const state = loadState();
-  const found = discover(
-    state.folders,
-    state.autoScanDrives === true,
-    state.excludedRoots || []
-  );
   lastRoots = found.roots;
   const games = found.games.concat(
     state.manual
@@ -1127,12 +895,11 @@ ipcMain.handle('library', () => {
       launcher: g.launcher,
       // Steam records the app id, so its games never need a name search.
       appid: g.launcher === 'Steam' ? g.id : null,
-      // Every store's own id, for the community report. It was read from
-      // game.id, which this row never had, so no report ever carried one.
-      storeId: g.id ? String(g.id) : null,
       name: g.name,
       dir: g.dir,
       poster: posterUrl(g, state),
+      tile: cachedTile(g.dir),
+      hero: artCache.usable(state.art?.[keyFor(g.dir)], onDisk).hero || null,
       // Whatever the last scan found, so cards can render before rescanning.
       cached: state.scans[keyFor(g.dir)] && state.scans[keyFor(g.dir)].rules === SCAN_RULES
         ? state.scans[keyFor(g.dir)]
@@ -1145,10 +912,10 @@ ipcMain.handle('library', () => {
 // Scanning 37 folders takes seconds, so each card asks for its own result and
 // the grid fills in as they land.
 ipcMain.handle('scan', async (_event, dir) => {
-  const state = loadState();
+  const generation = libraryGeneration;
   const key = keyFor(dir);
   try {
-    const scan = await scanGame(dir);
+    const scan = await inspections().run('scan', dir);
     let dlss = scan.primaryDlss;
     if (!dlss && scan.chosen && scan.chosen.bitness === 32) {
       const hostDlss = path.join(path.dirname(scan.chosen.path), 'host64', 'nvngx_dlss.dll');
@@ -1173,14 +940,18 @@ ipcMain.handle('scan', async (_event, dir) => {
       reason: scan.emptyReason || null,
       dlss: dlss ? dlss.version : null,
       hasDlss: Boolean(dlss),
+      managed: Boolean(scan.install),
       addon: Boolean(scan.addonPresent),
       optiscaler: Boolean(scan.install?.optiscaler?.installed),
       reshade: scan.reshade.installed ? scan.reshade.version : null,
       scannedAt: Date.now(),
       rules: SCAN_RULES
     };
-    state.scans[key] = result;
-    saveState(state);
+    if (generation === libraryGeneration) {
+      const state = loadState();
+      state.scans[key] = result;
+      saveState(state);
+    }
     return result;
   } catch (err) {
     return { ok: false, api: null, dx12: false, reason: 'error', error: err.message };
@@ -1190,82 +961,76 @@ ipcMain.handle('scan', async (_event, dir) => {
 // ---------- editing the library ----------
 
 ipcMain.handle('add-folder', async () => {
-  const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Scan this folder for games' });
+  const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: uiText('扫描游戏文件夹', 'Scan this folder for games') });
   if (res.canceled) return null;
   const state = loadState();
-  if (!state.folders.includes(res.filePaths[0])) state.folders.push(res.filePaths[0]);
+  if (!state.folders.some(folder => keyFor(folder) === keyFor(res.filePaths[0]))) state.folders.push(res.filePaths[0]);
+  state.excludedFolders = (state.excludedFolders || []).filter(folder => keyFor(folder) !== keyFor(res.filePaths[0]));
   state.excludedRoots = (state.excludedRoots || []).filter(
     (root) => path.resolve(root).toLowerCase() !== path.resolve(res.filePaths[0]).toLowerCase()
   );
-  saveState(state);
+  if (!saveState(state)) throw Error(uiText('无法保存扫描目录', 'Could not save the scan folder'));
   return res.filePaths[0];
 });
 
-ipcMain.handle('remove-folder', (_event, dir) => {
+function excludeScanRoot(_event, dir) {
   const state = loadState();
-  state.folders = state.folders.filter((f) => f !== dir);
-  state.excludedRoots = state.excludedRoots || [];
-  if (!state.excludedRoots.some((root) => path.resolve(root).toLowerCase() === path.resolve(dir).toLowerCase())) {
-    state.excludedRoots.push(dir);
+  const matches = item => keyFor(item) === keyFor(dir);
+  const folder = state.folders.find(matches);
+  if (folder) {
+    state.excludedFolders ||= [];
+    if (!state.excludedFolders.some(matches)) state.excludedFolders.push(folder);
   }
-  lastRoots = lastRoots.filter(
-    (root) => path.resolve(root).toLowerCase() !== path.resolve(dir).toLowerCase()
-  );
-  saveState(state);
+  state.excludedRoots ||= [];
+  if (!state.excludedRoots.some(matches)) state.excludedRoots.push(dir);
+  state.folders = state.folders.filter(item => !matches(item));
+  if (!saveState(state)) throw Error('Could not save settings');
+  lastRoots = lastRoots.filter(item => !matches(item));
   return true;
-});
-
-// Auto-discovered roots used to be display-only, so unwanted locations came
-// back on every scan. Excluding one removes only its library entries; no file
-// or folder on disk is changed.
-ipcMain.handle('exclude-root', (_event, dir) => {
-  const state = loadState();
-  state.excludedRoots = state.excludedRoots || [];
-  if (!state.excludedRoots.some((root) => path.resolve(root).toLowerCase() === path.resolve(dir).toLowerCase())) {
-    state.excludedRoots.push(dir);
-  }
-  state.folders = state.folders.filter(
-    (folder) => path.resolve(folder).toLowerCase() !== path.resolve(dir).toLowerCase()
-  );
-  lastRoots = lastRoots.filter(
-    (root) => path.resolve(root).toLowerCase() !== path.resolve(dir).toLowerCase()
-  );
-  saveState(state);
-  return true;
-});
+}
+ipcMain.handle('exclude-root', excludeScanRoot);
+ipcMain.handle('remove-folder', excludeScanRoot);
 
 ipcMain.handle('add-game', async () => {
-  const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Add one game' });
+  const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: uiText('添加游戏目录', 'Add one game') });
   if (res.canceled) return null;
-  const state = loadState();
-  if (!state.manual.includes(res.filePaths[0])) state.manual.push(res.filePaths[0]);
-  saveState(state);
-  return res.filePaths[0];
+  return addGameDirectory(res.filePaths[0]);
 });
 
 ipcMain.handle('set-poster', async (_event, dir) => {
   const res = await dialog.showOpenDialog(win, {
     properties: ['openFile'],
-    title: 'Pick a poster',
-    filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    title: uiText('选择游戏封面', 'Choose a game cover'),
+    filters: [{ name: uiText('图片', 'Images'), extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
   });
   if (res.canceled) return null;
 
-  // Copied into the app's own folder, keyed by path, so renaming the game
-  // folder is the only thing that loses it.
+  // Keep the previous cover reachable until the updated index is on disk.
   const state = loadState();
-  fs.mkdirSync(posterDir(), { recursive: true });
-  const dest = path.join(posterDir(), keyFor(dir) + path.extname(res.filePaths[0]));
-  fs.copyFileSync(res.filePaths[0], dest);
-  state.posters[keyFor(dir)] = dest;
-  saveState(state);
+  const folder = posterDir(), key = keyFor(dir), source = res.filePaths[0];
+  const previous = state.posters?.[key];
+  fs.mkdirSync(folder, { recursive: true });
+  const dest = path.join(folder, key + '-' + crypto.randomUUID() + path.extname(source));
+  try {
+    fs.copyFileSync(source, dest);
+    state.posters ||= {};
+    state.posters[key] = dest;
+    if (!saveState(state)) throw Error(uiText('无法保存封面设置', 'Could not save the cover setting'));
+  } catch (error) {
+    fs.rmSync(dest, { force: true });
+    throw error;
+  }
+  if (typeof previous === 'string' && path.dirname(previous) === folder &&
+      new RegExp('^' + key + '(?:-[a-f0-9-]{36})?\\.(?:png|jpe?g|webp)$', 'i').test(path.basename(previous))) {
+    try { fs.unlinkSync(previous); } catch { /* The old cover may already be gone. */ }
+  }
   return pathToFileURL(dest).href;
 });
 
 ipcMain.handle('hide', (_event, dir) => {
   const state = loadState();
-  if (!state.hidden.includes(dir)) state.hidden.push(dir);
-  saveState(state);
+  if (!state.hidden.some(item => keyFor(item) === keyFor(dir))) state.hidden.push(dir);
+  if (!saveState(state)) throw Error('Could not save settings');
   return true;
 });
 
@@ -1275,16 +1040,24 @@ ipcMain.handle('unhide', (_event, dir) => {
   const state = loadState();
   const wanted = path.resolve(String(dir)).toLowerCase();
   state.hidden = (state.hidden || []).filter((item) => path.resolve(item).toLowerCase() !== wanted);
-  saveState(state);
+  if (!saveState(state)) throw Error('Could not save settings');
   return true;
 });
 
 ipcMain.handle('reset', () => {
-  try { fs.unlinkSync(stateFile()); } catch {}
+  try { fs.unlinkSync(stateFile()); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  // Clear the in-memory object too; otherwise the next setting save resurrects
+  // the configuration that was just reset on disk.
+  liveState = null;
+  invalidateLibraryView();
+  overlayBridge?.refreshPreferences();
   return true;
 });
 
-ipcMain.handle('open', (_event, dir) => shell.openPath(dir));
+ipcMain.handle('open', async (_event, dir) => {
+  if (dir === posterDir()) await fs.promises.mkdir(dir, { recursive: true });
+  return shell.openPath(dir);
+});
 ipcMain.handle('open-project', async (_event, destination) => {
   const url = projectUrl(destination);
   if (!url) return false;
@@ -1292,14 +1065,15 @@ ipcMain.handle('open-project', async (_event, destination) => {
 });
 
 // The home page lists the last games touched, newest first.
-ipcMain.handle('touch', (_event, dir) => {
+function rememberGame(dir) {
   const state = loadState();
   state.recents = [{ dir, at: Date.now() }]
-    .concat((state.recents || []).filter((r) => r.dir !== dir))
+    .concat((Array.isArray(state.recents) ? state.recents : []).filter(r => typeof r?.dir === 'string' && keyFor(r.dir) !== keyFor(dir)))
     .slice(0, 12);
   saveState(state);
   return state.recents;
-});
+}
+ipcMain.handle('touch', (_event, dir) => rememberGame(dir));
 
 // Before anything has been installed in this session, the row is filled from
 // the backup manifests already sitting in the game folders - real installs
@@ -1330,10 +1104,11 @@ ipcMain.handle('recents', () => {
 
 // Which builds are switched on. Any number can be, because ReShade loads every
 // .addon64 in the folder. `state.addon` was a single path in earlier versions.
+function storedAddons(state) {
+  return (state.addons || (state.addon ? [state.addon] : [])).filter(file => typeof file === 'string' && file);
+}
 function enabledAddons() {
-  const state = loadState();
-  const list = state.addons || (state.addon ? [state.addon] : []);
-  return list.filter((f) => fs.existsSync(f) && describe(f, null));
+  return storedAddons(loadState()).filter(f => fs.existsSync(f) && describe(f, null));
 }
 
 // The one that takes the base's place, if any: same file name means the same
@@ -1422,7 +1197,7 @@ ipcMain.handle('set-optiscaler-build', (_event, dir, version) => {
   const map = { ...(state.optiscalerVersion || {}) };
   if (chosen === optiscaler.RELEASE.version) delete map[key]; else map[key] = chosen;
   state.optiscalerVersion = map;
-  saveState(state);
+  if (!saveState(state)) throw Error('Could not save settings');
   return chosen;
 });
 
@@ -1433,33 +1208,30 @@ ipcMain.handle('addons', () => addonLibrary());
 // only one file can hold that name, so the older choice steps aside.
 ipcMain.handle('addon-toggle', (_event, file, on) => {
   const state = loadState();
-  let list = state.addons || (state.addon ? [state.addon] : []);
-  delete state.addon;
+  let list = storedAddons(state);
+  let clash;
 
   if (!on) {
-    list = list.filter((f) => f !== file);
+    list = list.filter((f) => keyFor(f) !== keyFor(file));
   } else {
-    const row = addonLibrary().find((r) => r.path === file);
-    if (!row) return { ok: false, message: 'That build is no longer there' };
+    const row = addonLibrary().find((r) => keyFor(r.path) === keyFor(file));
+    if (!row || row.missing) return { ok: false, message: 'That build is no longer there' };
     const name = path.basename(file).toLowerCase();
-    const clash = list.find((f) => f !== file && path.basename(f).toLowerCase() === name);
-    list = list.filter((f) => f !== clash && f !== file);
-    list.push(file);
-    if (clash) {
-      state.addons = list; saveState(state);
-      return { ok: true, replaced: path.basename(clash) };
-    }
+    clash = list.find((f) => keyFor(f) !== keyFor(file) && path.basename(f).toLowerCase() === name);
+    list = list.filter((f) => path.basename(f).toLowerCase() !== name);
+    list.push(row.path);
   }
+  delete state.addon;
   state.addons = list;
-  saveState(state);
-  return { ok: true };
+  if (!saveState(state)) return { ok: false, message: 'Could not save add-on settings' };
+  return clash ? { ok: true, replaced: path.basename(clash) } : { ok: true };
 });
 
 // Picking only reports what was chosen; nothing is stored until the dialog in
 // the window is filled in and confirmed.
 ipcMain.handle('addon-pick', async () => {
   const res = await dialog.showOpenDialog(win, {
-    title: 'Add an add-on build',
+    title: uiText('添加附加组件', 'Add an add-on build'),
     filters: [{ name: 'ReShade add-on', extensions: ['addon64', 'addon'] }],
     properties: ['openFile']
   });
@@ -1480,10 +1252,11 @@ ipcMain.handle('addon-pick', async () => {
 });
 
 ipcMain.handle('addon-save', (_event, entry) => {
+  if (!entry || typeof entry.path !== 'string' || !/\.addon(64)?$/i.test(entry.path) || !describe(entry.path, null)) throw Error('That build is no longer there');
   const state = loadState();
   const list = (state.addonFiles || []).map((e) => (typeof e === 'string' ? { path: e } : e));
   state.addonFiles = [
-    ...list.filter((e) => e.path !== entry.path),
+    ...list.filter((e) => keyFor(e.path) !== keyFor(entry.path)),
     {
       path: entry.path,
       name: (entry.name || '').trim() || null,
@@ -1491,126 +1264,72 @@ ipcMain.handle('addon-save', (_event, entry) => {
       notes: String(entry.description || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean)
     }
   ];
-  saveState(state);
-  return true;
+  return saveState(state);
 });
 
 ipcMain.handle('addon-remove', (_event, file) => {
   const state = loadState();
   const list = (state.addonFiles || []).map((e) => (typeof e === 'string' ? { path: e } : e));
-  state.addonFiles = list.filter((e) => e.path !== file);
+  state.addonFiles = list.filter((e) => keyFor(e.path) !== keyFor(file));
   // Removing the one that was switched on falls back to the built-in add-on.
-  state.addons = (state.addons || []).filter((f) => f !== file);
-  if (state.addon === file) delete state.addon;
-  saveState(state);
-  return true;
+  state.addons = storedAddons(state).filter((f) => keyFor(f) !== keyFor(file));
+  delete state.addon;
+  return saveState(state);
 });
 
 ipcMain.handle('art-status', () => ({ available: art.available() }));
-
-ipcMain.handle('community-palette', (_event, pixels) => {
-  if (!Array.isArray(pixels) || pixels.length !== 12 * 12 * 4 ||
-      pixels.some(value => !Number.isInteger(value) || value < 0 || value > 255)) return null;
-  return paletteFromPixels(Uint8Array.from(pixels), 'rgba');
-});
-
-ipcMain.handle('community-palette-merge', (_event, palettes) =>
-  mergePalettes(Array.isArray(palettes) ? palettes.slice(0, 2) : []));
 
 // Bumped whenever the art picked for a game could change, so folders cached
 // under the old rule fetch again instead of keeping a bad banner forever.
 const ART_RULES = artCache.RULES;
 
-// A community card is a game somebody else has, so there is no folder to key
-// its artwork by - but a card keyed "steam:<appid>" carries the appid itself,
-// which is the best lookup there is. Everything else falls back to the title.
-//
-// The image is downloaded here and handed over as a file:// URL, because the
-// renderer's policy allows no remote images at all - and should not.
 const onDisk = url => {
   if (typeof url !== 'string' || !url.startsWith('file:')) return false;
   try { return fs.existsSync(fileURLToPath(url)); } catch { return false; }
 };
-// The colour a card is lit by. Electron already decodes every picture format
-// the art comes in, so the image is shrunk to a thumbnail and read from that -
-// twelve by twelve is enough to say what a poster is mostly made of, and small
-// enough that doing it is free.
-function paletteOf(fileUrl) {
-  if (!fileUrl) return null;
-  try {
-    const image = nativeImage.createFromPath(fileURLToPath(fileUrl));
-    if (image.isEmpty()) return null;
-    const small = image.resize({ width: 12, height: 12, quality: 'good' });
-    return paletteFromPixels(small.toBitmap(), 'bgra');
-  } catch { return null; }
+const tileRequests = new Map();
+const tileRetryAfter = new Map();
+async function fetchHomeTile(dir, name, appid) {
+  const existing = cachedTile(dir);
+  if (existing) return { tile: existing };
+  const file = tileFile(dir);
+  if (tileRequests.has(file)) return tileRequests.get(file);
+  if (Date.now() < (tileRetryAfter.get(file) || 0)) return {};
+  const urls = art.tileUrls(name, appid || loadState().art?.[keyFor(dir)]?.appid);
+  if (!urls.length) return {};
+  const generation = libraryGeneration;
+  const pending = (async () => {
+    const tmp = file + '.' + crypto.randomUUID() + '.tmp';
+    try {
+      for (const url of urls) {
+        try { await art.download(url, tmp); }
+        catch { continue; }
+        if (libraryGeneration !== generation) return {};
+        fs.renameSync(tmp, file);
+        tileRetryAfter.delete(file);
+        return { tile: pathToFileURL(file).href };
+      }
+      tileRetryAfter.set(file, Date.now() + 10 * 60 * 1000);
+      return {};
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+  })();
+  tileRequests.set(file, pending);
+  try { return await pending; }
+  finally { tileRequests.delete(file); }
 }
 
-// The banner and the poster are both on screen, so both decide.
-const paletteOfAll = (...files) => mergePalettes(files.map(paletteOf));
-
-ipcMain.handle('community-art', async (_event, key, title) => {
-  if (typeof key !== 'string' || !/^[a-z]+:[A-Za-z0-9._-]{1,64}$/.test(key)) return { none: true };
-  if (!communityUsed()) return { none: true };
-  const state = loadState();
-  const cacheKey = `community-w-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 24)}`;
-  // A remembered picture is only worth serving while the file is still there.
-  // Antivirus quarantine, a cleanup tool or a cleared profile all take these
-  // away, and a record pointing at a missing file renders as a broken image
-  // forever - the cache has to notice rather than insist.
-  const cached = state.art && state.art[cacheKey];
-  if (cached && (cached.none || onDisk(cached.cover))) {
-    if (cached.none || cached.palette !== undefined) return cached;
-    // Remembered before there was such a thing as a palette: read one now
-    // rather than leaving the card grey until the art is downloaded again.
-    cached.palette = paletteOfAll(cached.cover, cached.poster);
-    saveState(state);
-    return cached;
-  }
-
-  const [kind, id] = key.split(':');
-  try {
-    const hit = await art.look(String(title || '').slice(0, 120), kind === 'steam' ? id : null);
-    if (!hit) {
-      // Remember the miss too: a game with no art must not be looked up again
-      // on every visit to the page.
-      state.art = state.art || {};
-      state.art[cacheKey] = { none: true, fetchedAt: Date.now() };
-      saveState(state);
-      return { none: true };
-    }
-    const dest = path.join(app.getPath('userData'), 'art');
-    // The card is landscape, so this wants the wide art. The tall 600x900
-    // poster would be cropped to a band across the middle of the picture.
-    let cover = null;
-    for (const url of [hit.heroUrl, hit.heroFallbackUrl, hit.coverUrl]) {
-      if (!url) continue;
-      try { cover = pathToFileURL(await art.download(url, path.join(dest, cacheKey + '-wide.jpg'))).href; break; }
-      catch { /* try the next shape */ }
-    }
-    // The opened card shows both: the wide art behind its header, and the tall
-    // poster beside the title the way a store page does.
-    let poster = null;
-    try { poster = pathToFileURL(await art.download(hit.coverUrl, path.join(dest, cacheKey + '-tall.jpg'))).href; }
-    catch { poster = null; }
-    // The wide art is what the header shows, so it decides; the poster is
-    // the fallback for a game whose banner is a black-and-white logo.
-    const record = { cover, poster, palette: paletteOfAll(cover, poster), fetchedAt: Date.now() };
-    state.art = state.art || {};
-    state.art[cacheKey] = record;
-    saveState(state);
-    return record;
-  } catch {
-    return { none: true };
-  }
-});
-
-ipcMain.handle('art-fetch', async (_event, dir, name, appid) => {
+ipcMain.handle('art-fetch', async (_event, dir, name, appid, kind) => {
+  if (kind === 'tile') return fetchHomeTile(dir, name, appid);
+  const generation = libraryGeneration;
   const state = loadState();
   const key = keyFor(dir);
   const cached = state.art && state.art[key];
   if (artCache.reusable(cached, onDisk)) return { ...cached, ...artCache.usable(cached, onDisk) };
 
   const remember = record => {
+    if (generation !== libraryGeneration) return record;
     const latest = loadState();
     latest.art = latest.art || {};
     latest.art[key] = record;
@@ -1649,6 +1368,7 @@ ipcMain.handle('art-fetch', async (_event, dir, name, appid) => {
 // sent, no download started: the answer is a version number and a link the
 // person may click. Any failure is silence - this must never delay a start.
 let updateAnswer = null;
+let updateInFlight = null;
 // Nothing wrote the app's own failures down anywhere, so a crash left the
 // person with nothing to report but a description. Keep the last few in
 // userData, bounded, and let the diagnostics file carry them.
@@ -1680,14 +1400,13 @@ function newerRelease(current, latest) {
   }
   return false;
 }
-ipcMain.handle('update-check', async () => {
-  if (updateAnswer) return updateAnswer;
+async function checkRelease() {
   const current = app.getVersion();
   const distribution = require('./package.json').distribution;
   const repository = distribution?.channel === 'independent' ? distribution.releaseRepository : 'skyi7943-cmd/DLSS5-Swapper-Enhanced';
   if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository)) {
-    return (updateAnswer = { current, latest: null, newer: false, channel: 'independent', status: 'unconfigured',
-      message: '独立分支尚未配置软件发布源；插件可在组件库中单独检查更新。' });
+    return { current, latest: null, newer: false, channel: 'independent', status: 'unconfigured',
+      message: '独立分支尚未配置软件发布源；插件可在组件库中单独检查更新。' };
   }
   try {
     const response = await require('electron').net.fetch(`https://api.github.com/repos/${repository}/releases/latest`, {
@@ -1697,19 +1416,32 @@ ipcMain.handle('update-check', async () => {
     if (!response.ok) throw Error(String(response.status));
     const release = await response.json();
     const latest = String(release.tag_name || '').replace(/^v/, '');
-    updateAnswer = { current, latest, newer: newerRelease(current, latest) };
-    if (typeof release.body === 'string' && release.body.trim()) updateAnswer.notes = release.body.trim();
-    if (typeof release.name === 'string' && release.name.trim()) updateAnswer.title = release.name.trim();
-    if (typeof release.published_at === 'string' && release.published_at.trim()) updateAnswer.publishedAt = release.published_at.trim();
+    const answer = { current, latest, newer: newerRelease(current, latest) };
+    if (typeof release.body === 'string' && release.body.trim()) answer.notes = release.body.trim();
+    if (typeof release.name === 'string' && release.name.trim()) answer.title = release.name.trim();
+    if (typeof release.published_at === 'string' && release.published_at.trim()) answer.publishedAt = release.published_at.trim();
+    return answer;
   } catch {
     // Offline, rate-limited or blocked: say nothing rather than worry anyone.
-    updateAnswer = { current, latest: null, newer: false };
+    return { current, latest: null, newer: false };
   }
-  return updateAnswer;
+}
+ipcMain.handle('update-check', (_event, refresh) => {
+  if (updateInFlight) return updateInFlight;
+  if (!refresh && updateAnswer) return updateAnswer;
+  updateInFlight = checkRelease().then(answer => (updateAnswer = answer))
+    .finally(() => { updateInFlight = null; });
+  return updateInFlight;
 });
-ipcMain.handle('details', async (_event, dir) => {
-  const detailsPayload = payload();
-  const scan = await scanGame(dir);
+ipcMain.handle('details', async (_event, dir, priority) => {
+  let inspection;
+  try {
+    inspection = await inspectForUi(dir, undefined, priority);
+  } catch (error) {
+    if (error.code === 'SELECTION_SUPERSEDED') return { ok: false, cancelled: true };
+    throw error;
+  }
+  const { scan, newDlss } = inspection;
   // Opening game details must not change permissions or configuration files.
   const state = loadState();
   const hasNativeDlss = installRoutes.nativeDlssPresent(scan);
@@ -1735,6 +1467,7 @@ ipcMain.handle('details', async (_event, dir) => {
   }
   const files = [...scan.dlssFiles, ...hostDlssFiles, ...scan.streamlineFiles]
     .map((f) => ({ rel: f.rel, name: f.name, version: f.version }));
+  const antiCheatDirectories = new Map();
   return {
     ok: Boolean(scan.chosen),
     reason: scan.chosen ? null : (scan.emptyReason || null),
@@ -1746,25 +1479,26 @@ ipcMain.handle('details', async (_event, dir) => {
     via: scan.chosen ? scan.chosen.via : null,
     emulator: scan.emulator,
     installedRoute: scan.install && scan.install.route,
-    antiCheatWarning: compatibility.hasAntiCheat(dir, scan.chosen?.path),
+    ...compatibility.antiCheatDetails(dir, scan.chosen?.path, antiCheatDirectories),
     installedApi: scan.install && scan.install.api,
     installedExe: scan.install && scan.install.exe,
     previousReShadeRoute: scan.install && scan.install.previousReShadeRoute,
     optiscaler: scan.install && scan.install.optiscaler,
     recommendedRoute: installRoutes.recommendedRoute(scan),
-    exes: scan.exeCandidates.map((e) => ({
-      rel: e.rel, path: e.path, apiLabel: e.apiLabel, api: e.api,
-      bitness: e.bitness, size: e.size, via: e.via,
-      emulator: e.emulator,
-      installIssue: compatibility.targetIssue(dir, e.path),
-      antiCheatWarning: compatibility.hasAntiCheat(dir, e.path),
-      hasNativeDlss,
-      hasNativeUpscaler,
-      apiOverride: apiPreference(state, dir, e.path),
-      reshadeProxy: reshadeProxyPreference(state, dir, e.path),
-      apiChoices: e.apiChoices || [{ api: e.api, label: e.apiLabel }],
-      routes: installRoutes.routesFor({ ...e, hasNativeDlss, hasNativeUpscaler })
-    })),
+    exes: scan.exeCandidates.map(e => {
+      const capabilities = { hasNativeDlss: e.hasNativeDlss ?? hasNativeDlss, hasNativeUpscaler: e.hasNativeUpscaler ?? hasNativeUpscaler };
+      return {
+        rel: e.rel, path: e.path, apiLabel: e.apiLabel, api: e.api,
+        bitness: e.bitness, size: e.size, via: e.via, emulator: e.emulator,
+        installIssue: compatibility.targetIssue(dir, e.path),
+        ...compatibility.antiCheatDetails(dir, e.path, antiCheatDirectories),
+        ...capabilities,
+        apiOverride: apiPreference(state, dir, e.path),
+        reshadeProxy: reshadeProxyPreference(state, dir, e.path),
+        apiChoices: e.apiChoices || [{ api: e.api, label: e.apiLabel }],
+        routes: installRoutes.routesFor({ ...e, ...capabilities })
+      };
+    }),
     files,
     currentDlss: effectivePrimaryDlss ? {
       rel: effectivePrimaryDlss.rel,
@@ -1774,11 +1508,13 @@ ipcMain.handle('details', async (_event, dir) => {
     addon: scan.addonPresent,
     reshade: scan.reshade,
     hasBackup: scan.hasBackup || fs.existsSync(journal.pendingPath(dir)),
-    newDlss: detailsPayload && detailsPayload.source ? detailsPayload.source.dlssVersion : null
+    newDlss
   };
 });
 
 let mutationBusy = false;
+let mutationFinished;
+const libraryReads = new Map();
 ipcMain.handle('set-api-override', async (_event, dir, exePath, value) => {
   if (mutationBusy) return { ok: false, code: 'errJobBusy' };
   if (!renderingApi.valid(value) || typeof dir !== 'string' || !path.isAbsolute(dir) || typeof exePath !== 'string') {
@@ -1812,34 +1548,47 @@ ipcMain.handle('set-reshade-proxy', async (_event, dir, exePath, value) => {
   return saveState(state) ? { ok: true } : { ok: false, code: 'errApiSave' };
 });
 async function exclusiveMutation(work) {
-  if (mutationBusy) return { ok: false, code: 'errJobBusy' };
+  if (mutationBusy) return { ok: false, code: 'errJobBusy', message: uiText('另一项操作正在进行，请稍后重试。', 'Another operation is in progress. Try again shortly.') };
   mutationBusy = true;
-  try { return await work(); }
+  let release;
+  mutationFinished = new Promise(resolve => { release = resolve; });
+  try {
+    // Finish snapshots and first-use catalog seeding before publishing new files.
+    if (libraryReads.size) await Promise.allSettled([...libraryReads.values()]);
+    return await work();
+  }
   catch (err) { return { ok: false, code: err.code, message: err.message, dependencies: err.dependencies, downloads: err.downloads }; }
-  finally { mutationBusy = false; }
+  finally { mutationBusy = false; mutationFinished = undefined; gameInspection?.invalidate(); release(); }
 }
 
-ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, reviewToken) => exclusiveMutation(() => managedReview(dir, { kind: 'install', exePath, requestedRoute, requestedApi }, async () => {
-  const scan = await scanGame(dir);
-  if (!scan.chosen) return { ok: false, message: 'No game executable found' };
-
-  // Honour the sheet's choice, but only if it is one of the candidates we
-  // actually found - never patch a path the renderer made up.
-  const detected = scan.exeCandidates.find((e) => e.path === exePath) || scan.chosen;
+ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, reviewToken) => exclusiveMutation(() => managedReview(event, dir, { kind: 'install', exePath, requestedRoute, requestedApi }, async () => {
+  const scan = await scanGame(dir, exePath);
+  const detected = exePath
+    ? scan.exeCandidates.find(e => typeof exePath === 'string' && path.isAbsolute(exePath) && path.relative(e.path, exePath) === '')
+    : scan.chosen;
+  if (!detected) return exePath
+    ? { ok:false, code:'errSelectedExeMissing', message:uiText('所选游戏程序已不在扫描列表中，请刷新后重新选择。', 'The selected executable is no longer in the scan. Refresh and select it again.') }
+    : { ok:false, message:uiText('未找到游戏主程序。','No game executable found.') };
   const selection = requestedApi ?? apiPreference(loadState(), dir, detected.path);
   const target = renderingApi.effective(detected, selection);
   compatibility.assertSafeTarget(dir, target.path);
-  target.hasNativeDlss = installRoutes.nativeDlssPresent(scan);
-  target.hasNativeUpscaler = installRoutes.nativeUpscalerPresent ? installRoutes.nativeUpscalerPresent(scan) : false;
+  target.hasNativeDlss = detected.hasNativeDlss ?? installRoutes.nativeDlssPresent(scan);
+  target.hasNativeUpscaler = detected.hasNativeUpscaler ?? (installRoutes.nativeUpscalerPresent ? installRoutes.nativeUpscalerPresent(scan) : false);
   const api = target.api;
   const availableRoutes = installRoutes.routesFor(target, api);
-  if (requestedRoute === 'optiscaler' && !availableRoutes.includes('optiscaler')) {
-    return { ok: false, code: installRoutes.optiReason(target, api) || 'optiUnsupported' };
+  const routeSpecified = requestedRoute != null && requestedRoute !== '';
+  if (routeSpecified && !availableRoutes.includes(requestedRoute)) {
+    if (requestedRoute === 'optiscaler') {
+      const code = installRoutes.optiReason(target, api) || 'optiUnsupported';
+      return { ok: false, code, message: featureText(code) };
+    }
+    return { ok: false, code: 'errSelectedRouteUnavailable', message: uiText(
+      '所选安装路线已不适用于当前游戏程序和图形 API。请刷新游戏详情，重新选择安装路线。',
+      'The selected install route is unavailable for this executable and graphics API. Refresh the game details and select a route again.'
+    ) };
   }
   if (!availableRoutes.length) return { ok: false, code: 'unsupportedRendererHint', message: 'This rendering API is not supported. Select the game’s DirectX 11 mode where available.' };
-  const recommendedRoute = installRoutes.recommendedRoute(scan, target);
-  const route = availableRoutes.includes(requestedRoute) ? requestedRoute
-    : (availableRoutes.includes(recommendedRoute) ? recommendedRoute : availableRoutes[0]);
+  const route = routeSpecified ? requestedRoute : installRoutes.recommendedRoute(scan, target);
 
   // ReShade Setup is a Windows executable. On Linux, support Windows games
   // launched with Steam Play by using their existing Proton prefix; native
@@ -1855,18 +1604,18 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
     return { ok: false, code: 'errLinuxVulkanUnsupported', message: 'The Vulkan Feeder route needs a host Vulkan layer and is not supported on Linux yet. Select a DirectX renderer in the game.' };
   }
 
-  const send = (e) => { if (!previewFs.active()) event.sender.send('job', e); };
+  const send = (e) => { if (!previewFs.active()) event.sender.send('job', { ...e, dir }); };
   await guards.assertGameClosed(dir, target.path);
   await requireRuntime({kind:'install',route,target,scan});
   const p = payload();
   if (!p) return {ok:false,...payloadMissing()};
-  if (fs.existsSync(journal.pendingPath(dir))) return { ok: false, code: 'errBackendRecovery' };
+  if (journal.hasPendingRecovery(dir)) return { ok: false, code: 'errBackendRecovery' };
   const old = backends.readManifest(dir);
   const changed = old && (old.route !== route || old.game.api !== api || old.game.exe.toLowerCase() !== target.rel.toLowerCase());
   if (changed && (old.game.api === 'vulkan' || api === 'vulkan')) return { ok: false, code: 'errBackendVulkanSwitch' };
   let antiCheatAcknowledged = false;
   if (compatibility.hasAntiCheat(dir, target.path)) {
-    const answer = previewFs.active() ? { response: 1 } : await dialog.showMessageBox(win, antiCheatWarning.dialogOptions(loadState().lang, dir, target.path));
+    const answer = previewFs.active() ? { response: 1 } : await dialog.showMessageBox(win, antiCheatWarning.dialogOptions(desktopLanguage(), dir, target.path));
     if (answer.response !== 1) return { ok: false, cancelled: true };
     antiCheatAcknowledged = true;
     send({ code: 'antiCheatRiskAccepted', params: {} });
@@ -1982,14 +1731,6 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
   let overlayPlan = null;
   if (overlayWanted) {
     try {
-      // Drop records whose bytes are already gone - a restore, or an overlay
-      // rebuilt since. Without this, prepare() refuses the new build because an
-      // old record still claims a different one is installed here.
-      gameOverlay.cleanupMissing(overlayLibrary(), dir);
-      // An update ships a different overlay build. Retire the copy this app
-      // installed here for the previous one instead of stopping with "remove
-      // the previous test overlay first".
-      gameOverlay.replaceOutdated(overlayLibrary(), path.dirname(target.path));
       if (gameOverlay.routes(target).includes(route)) {
         overlayPlan = gameOverlay.prepare({ library: overlayLibrary(), target, route });
       } else {
@@ -2040,10 +1781,9 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
       addStreamline: false,
       upgradeReShade: false
     }, send);
-    // By this point DLSS is installed and the manifest is written. An overlay
-    // failure here is reported, never turned into a failed install that the
-    // caller would read as "nothing happened".
-    if (overlayPlan) try {
+    // Preflight can skip an unavailable overlay. Once file changes start, a
+    // failure must reach the transaction that also owns the base install.
+    if (overlayPlan) {
       const exeDir = path.dirname(target.path);
       // Feeder's own config template omits two upstream defaults the overlay
       // reads; fill them without touching a choice already made.
@@ -2054,21 +1794,14 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
             gameOverlay.completeFeederConfig(fs.readFileSync(cfg, 'utf8')), { kind: 'config' });
         }
       }
-      await journal.capture(dir, overlayPlan.file);
       await gameOverlay.attach({
         library: overlayLibrary(), target, gameDir: dir, manifest,
         saveManifest: saveActiveManifest, plan: overlayPlan
       });
       send({ code: 'addonInstalled', params: { name: 'DLSS 5 Overlay (F8)' } });
-    } catch (error) {
-      send({ code: 'overlaySkipped', params: { error: error.message } });
-      try { gameOverlay.cleanupMissing(overlayLibrary(), dir); } catch {}
     }
-    saveOperation(dir, manifest, 'install', send);
     return { ok: true, replaced: manifest.replaced.length, added: manifest.added.length };
   } catch (err) {
-    // Drop stale overlay records whose bytes the rollback already removed.
-    try { require('./src/game-overlay').cleanupMissing(overlayLibrary(), dir); } catch {}
     return { ok: false, code: err.code, message: err.message };
   }
 }, reviewToken)));
@@ -2077,20 +1810,35 @@ ipcMain.handle('restore', (event, dir, reviewToken) => exclusiveMutation(() => r
   let restoredManifest = null;
   const send = (e) => {
     if (e.code === 'restoreDone') restoredManifest = e.params;
-    if (!previewFs.active()) event.sender.send('job', e);
+    if (!previewFs.active()) event.sender.send('job', { ...e, dir });
   };
   try {
     let old = null;
-    try { old = backends.readManifest(dir); } catch (error) { if (!fs.existsSync(journal.pendingPath(dir))) throw error; }
+    const pending = fs.existsSync(journal.pendingPath(dir));
+    try { old = backends.readManifest(dir); } catch (error) { if (!pending) throw error; }
+    if (!old && !pending) old = recoverableManifest(dir)?.manifest;
     // Recovery belongs to the manifest/journal, not the graphics scanner.
     // A missing/updated/unrecognised executable must not strand our hooks.
-    if (!old && !fs.existsSync(journal.pendingPath(dir))) return { ok: false, code: 'errNoBackup' };
-    const exe = old ? journal.safePath(dir, old.game.exe) : null;
+    if (!old && !pending) return { ok: false, code: 'errNoBackup' };
+    let exe = null;
+    if (old) {
+      try { exe = journal.safePath(dir, old.game?.exe); } catch (error) { if (!pending) throw error; }
+    }
     await guards.assertGameClosed(dir, exe);
     if (!previewFs.active()) history().list([{ dir, name: gameName(dir) }], error => send({ code: 'historySaveWarning', params: { error: error.message } }));
-    if (!await backends.restore(dir, send)) return { ok: false, code: 'errNoBackup' };
+    const restoreOptions = { vulkanLayerTarget: path.join(app.getPath('userData'), 'reshade-vulkan') };
+    if (!await backends.restore(dir, send, manifest => { restoredManifest = manifest; }, restoreOptions)) return { ok: false, code: 'errNoBackup' };
+    const result = previewFs.active() ? { ok: true, inventoryManifest: restoredManifest } : { ok: true };
+    if (restoredManifest?.labOverlay) {
+      try {
+        const dirOfExe = path.dirname(journal.safePath(dir, restoredManifest.game.exe));
+        require('./src/game-overlay').cleanupMissing(overlayLibrary(), dirOfExe);
+      } catch (error) {
+        result.recordWarning = error.message;
+      }
+    }
     saveOperation(dir, restoredManifest || {}, restoredManifest ? 'restore' : 'recovery', send);
-    return { ok: true };
+    return result;
   } catch (err) {
     return { ok: false, code: err.code, message: err.message };
   }
@@ -2098,108 +1846,15 @@ ipcMain.handle('restore', (event, dir, reviewToken) => exclusiveMutation(() => r
 
 // ---------- Enhanced Modules (DLSS 5 Neural Rendering + RTX 40 MFG + Diagnostics) ----------
 const neuralModels = require('./src/core/neural-models');
-const mfgManager = require('./src/core/mfg-manager');
 const combinedManager = require('./src/core/combined-manager');
 
 function resolvePayloadRoot() {
-  if (onDemandPayload()) return runtimes().payloadDir;
-  const tempDirs = [];
-  try {
-    const tmp = os.tmpdir();
-    for (const name of fs.readdirSync(tmp)) {
-      if (/^DLSS5-Swapper/i.test(name)) {
-        tempDirs.push(path.join(tmp, name, 'resources', 'payload'));
-      } else if (/^ns[a-z0-9]+\.tmp$/i.test(name)) {
-        tempDirs.push(path.join(tmp, name, 'app', 'resources', 'payload'));
-        tempDirs.push(path.join(tmp, name, '7z-out', 'resources', 'payload'));
-      }
-    }
-  } catch {}
-
-  const candidates = [
-    path.join(process.resourcesPath || '', 'payload'),
-    path.join(__dirname, 'payload'),
-    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload') : null,
-    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload') : null,
-    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload') : null,
-    ...tempDirs,
-    'E:\\DLSS5-Swapper-Enhanced\\payload'
-  ].filter(Boolean);
-  for (const dir of candidates) {
-    if (fs.existsSync(path.join(dir, 'streamline', 'nvngx_dlssnr.dll'))) return dir;
-  }
-  for (const dir of candidates) {
-    if (fs.existsSync(path.join(dir, 'enhanced', 'mfg', 'renodx-mfgunlock.addon64'))) return dir;
-  }
-  for (const dir of candidates) {
-    if (fs.existsSync(dir)) return dir;
-  }
-  return path.join(__dirname, 'payload');
+  return onDemandPayload() ? runtimes().payloadDir : require('./src/core/payload-root').resolvePayloadDir(undefined, process.resourcesPath, __dirname);
 }
 
-ipcMain.handle('enhanced-set-profile', async (_event, profileId) => {
-  try {
-    const valid = ['rtx40_laptop', 'rtx40_desktop', 'rtx50_desktop'].includes(profileId) ? profileId : 'rtx40_laptop';
-    const state = loadState();
-    state.hardwareProfile = valid;
-    saveState(state);
-    return {
-      ok: true,
-      hardwareProfile: valid,
-      profileInfo: neuralModels.getHardwareProfileInfo(valid),
-      hardwareProfiles: neuralModels.HARDWARE_PROFILES
-    };
-  } catch (err) {
-    return { ok: false, message: err.message };
-  }
-});
-
-ipcMain.handle('enhanced-hardware', async (_event, forceRefresh) => {
-  try {
-    const hw = await combinedManager.detectHardwareEnvironment(forceRefresh === true);
-    const state = loadState();
-    const activeProfile = combinedManager.resolveHardwareProfile(state.hardwareProfile, hw.gpu.name);
-    return {
-      ok: true,
-      hardwareProfile: activeProfile,
-      hardwareProfiles: neuralModels.HARDWARE_PROFILES,
-      hardware: {
-        ...hw,
-        activeProfile,
-        activeProfileInfo: neuralModels.getHardwareProfileInfo(activeProfile),
-        gpu: {
-          ...hw.gpu,
-          architecture: neuralModels.detectGpuArchitecture(hw.gpu.name, activeProfile)
-        }
-      }
-    };
-  } catch (err) {
-    return { ok: false, message: err.message };
-  }
-});
-
-ipcMain.handle('enhanced-models', async (_event, profileOverride) => {
-  try {
-    const hw = await combinedManager.detectHardwareEnvironment();
-    const state = loadState();
-    const activeProfile = combinedManager.resolveHardwareProfile(profileOverride || state.hardwareProfile, hw.gpu.name);
-    const models = neuralModels.listNeuralModels({
-      payloadDir: resolvePayloadRoot(),
-      userDataDir: app.getPath('userData'),
-      gpuName: hw.gpu.name,
-      hardwareProfile: activeProfile
-    });
-    return {
-      ok: true,
-      models,
-      runtimeStacks: neuralModels.RUNTIME_STACKS,
-      unlockers: mfgManager.MFG_UNLOCKERS,
-      hardwareProfile: activeProfile,
-      hardwareProfiles: neuralModels.HARDWARE_PROFILES
-    };
-  } catch (err) {
-    return { ok: false, message: err.message };
-  }
+require('./src/hardware-ipc')({
+  ipcMain, screen, window: () => win, loadState, saveState, inspections,
+  payloadRoot: resolvePayloadRoot, userData: () => app.getPath('userData')
 });
 
 ipcMain.handle('enhanced-import-model', (_event, filePath, meta) => exclusiveMutation(async () => {
@@ -2218,7 +1873,7 @@ ipcMain.handle('enhanced-import-model', (_event, filePath, meta) => exclusiveMut
     await components().importPackage({component:'dlss-nr',version:record.version,files:{'nvngx_dlssnr.dll':record.filePath},source:'模型页导入'});
     const hw = await combinedManager.detectHardwareEnvironment();
     const state = loadState();
-    const activeProfile = combinedManager.resolveHardwareProfile(state.hardwareProfile, hw.gpu.name);
+    const activeProfile = combinedManager.resolveHardwareProfile(state.hardwareProfile, hw.gpu.name, null, null, hw.gpu.vramTotalMB);
     const compat = neuralModels.evaluateModelGpuCompatibility(record, hw.gpu.name, activeProfile);
     return { ok: true, model: { ...record, compatibility: compat } };
   } catch (err) {
@@ -2226,70 +1881,108 @@ ipcMain.handle('enhanced-import-model', (_event, filePath, meta) => exclusiveMut
   }
 }));
 
-ipcMain.handle('enhanced-status', async (_event, dir, profileOverride) => {
+ipcMain.handle('enhanced-status', async (_event, dir, profileOverride, priority) => {
   if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) {
     return { ok: false, message: '无效的游戏目录' };
   }
   try {
-    const state = loadState();
-    return await combinedManager.inspectCombinedStatus(dir, {
-      payloadDir: resolvePayloadRoot(),
-      userDataDir: app.getPath('userData'),
-      hardwareProfile: profileOverride || state.hardwareProfile
-    });
+    return (await inspectForUi(dir, profileOverride, priority)).status;
   } catch (err) {
+    if (err.code === 'SELECTION_SUPERSEDED') return { ok: false, cancelled: true };
     return { ok: false, message: err.message };
   }
 });
 
-ipcMain.handle('enhanced-apply', (event, dir, config, reviewToken) => exclusiveMutation(() => managedReview(dir, { kind: 'enhanced', config }, async () => {
+ipcMain.handle('enhanced-apply', (event, dir, config, reviewToken) => exclusiveMutation(() => managedReview(event, dir, { kind: 'enhanced', config }, async (resolvedConfig) => {
   if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, message: '无效的游戏目录' };
-  const state = { ...loadState() };
-  if (config && config.hardwareProfile && ['rtx40_laptop', 'rtx40_desktop', 'rtx50_desktop'].includes(config.hardwareProfile)) {
-    state.hardwareProfile = config.hardwareProfile;
-    if (!previewFs.active()) saveState(state);
-  }
-  const send = (e) => { if (!previewFs.active()) event.sender.send('job', e); };
+  const state = loadState();
+  const send = (e) => { if (!previewFs.active()) event.sender.send('job', { ...e, dir }); };
   const scanForOverride = await scanGame(dir).catch(() => null);
   const chosenExe = scanForOverride?.chosen?.path;
-  const result = await combinedManager.applyCombinedConfiguration(dir, {
-    hardwareProfile: state.hardwareProfile,
+  return combinedManager.applyCombinedConfiguration(dir, {
+    defaultHardwareProfile: state.hardwareProfile,
     apiOverride: chosenExe ? apiPreference(state, dir, chosenExe) : 'auto',
     reshadeProxy: chosenExe ? reshadeProxyPreference(state, dir, chosenExe) : 'dxgi',
-    ...(config || {}),
+    ...resolvedConfig,
     payloadDir: resolvePayloadRoot(),
     userDataDir: app.getPath('userData'),
     requirePayload: requireRuntime
   }, send);
-  const manifest = backends.readManifest(dir);
-  if (manifest) saveOperation(dir, manifest, 'install', send);
-  return result;
 }, reviewToken)));
 
 ipcMain.handle('component-inventory', async (_event, dir) => {
   if (mutationBusy) return { ok: false, message: '安装操作进行中，请完成后再刷新组件清单。' };
-  try { return await reviews().inventory(dir); }
+  try { return await inspectInventory(dir); }
   catch (error) { return { ok: false, message: error.message, code: error.code }; }
 });
-ipcMain.handle('library-components', (_event, dir) => exclusiveMutation(async () => {
-  const result=await components().list(dir);
-  result.updates=updates().status();
-  result.runtimePacks=runtimes().list();
-  if(dir){result.inventory=await reviews().inventory(dir);result.rollback=backends.readManifest(dir)?.componentHistory?.at(-1)||null;}
-  return result;
-}));
+async function readLibraryComponents(dir) {
+  try {
+    const result = await components().list(dir);
+    result.updates = updates().status();
+    result.runtimePacks = runtimes().list();
+    if (dir) {
+      result.inventory = await inspectInventory(dir);
+      result.rollback = backends.readManifest(dir)?.componentHistory?.at(-1) || null;
+    }
+    return result;
+  } catch (error) {
+    return { ok: false, code: error.code, message: error.message };
+  }
+}
+ipcMain.handle('library-components', async (_event, dir) => {
+  // A seeded global catalog and update index are atomically published snapshots.
+  // They remain readable during a long download or game install.
+  if (dir || !components().initialized) {
+    while (mutationFinished) await mutationFinished;
+  }
+  const key = dir || '';
+  if (!libraryReads.has(key)) {
+    libraryReads.set(key, readLibraryComponents(dir).finally(() => libraryReads.delete(key)));
+  }
+  return libraryReads.get(key);
+});
 ipcMain.handle('library-select', (_event, dir, selection) => exclusiveMutation(()=>components().select(dir,selection)));
-ipcMain.handle('library-check', () => exclusiveMutation(()=>updates().check()));
+ipcMain.handle('library-check-runtime', (_event, id) => exclusiveMutation(async () => {
+  await runtimes().require([id]);
+  return { ok: true };
+}));
+ipcMain.handle('library-check', async () => {
+  // Update metadata is published atomically. Checking it doesn't change games or the package catalog.
+  try { return await updates().check(); }
+  catch (error) { return { ok: false, code: error.code, message: error.message }; }
+});
 ipcMain.handle('library-download', (event, id) => exclusiveMutation(async()=>{await components().init();updates().onProgress=p=>{if(!event.sender.isDestroyed())event.sender.send('library-progress',p);};try{return await updates().download(id);}finally{updates().onProgress=()=>{};}}));
 ipcMain.handle('library-cancel',()=>updates().cancel());
-ipcMain.handle('library-apply', (_event,dir,token) => exclusiveMutation(async()=>{
-  const library=components(),selection=library.profile(dir).selected;
-  if(!Object.keys(selection).length)throw Error('请先选择组件版本');
-  return reviews().run(dir,{kind:'component-update',selection},()=>library.apply(dir,selection,{strict:true}),token);
+function recordComponentChange(dir, result, action) {
+  if (!result.ok || !result.historyManifest) return;
+  saveOperation(dir, result.historyManifest, action, ({ params }) => {
+    const warning = uiText('未能写入操作历史', 'Could not save operation history') + ' · ' + params.error;
+    result.recordWarning = [result.recordWarning, warning].filter(Boolean).join('\n');
+  });
+  delete result.historyManifest;
+}
+ipcMain.handle('library-apply', (_event, dir, token, draft) => exclusiveMutation(async () => {
+  const library = components();
+  const previous = library.profile(dir).selected;
+  const selection = draft === undefined ? previous : draft;
+  if (!selection || typeof selection !== 'object' || Array.isArray(selection)) throw Error('无效的版本选择');
+  const hasSelection = Object.keys(selection).length > 0;
+  if (!hasSelection && !Object.keys(previous).length) throw Error('请先选择组件版本');
+  const request = { kind: 'component-update', selection, previous };
+  const result = await reviews().run(dir, request, () => hasSelection
+    ? library.apply(dir, selection, { strict: true, previousSelection: draft === undefined ? undefined : previous })
+    : Promise.resolve({ ok: true, changed: 0 }), token);
+  if (draft !== undefined && result.ok && !result.preview) {
+    try { await library.select(dir, selection); }
+    catch (error) { result.recordWarning = [result.recordWarning, uiText('未能保存版本选择', 'Could not save the version selection') + ' · ' + error.message].filter(Boolean).join('\n'); }
+  }
+  recordComponentChange(dir, result, 'component-update');
+  return result;
 }));
 ipcMain.handle('library-rollback', (_event,dir,id,token) => exclusiveMutation(async()=>{
   const result=await reviews().run(dir,{kind:'component-rollback',id},()=>components().rollback(dir,id),token);
-  if(result.ok&&!result.preview){try{await components().select(dir,result.selection);}catch(e){result.recordWarning='组件已回滚，但版本选择未保存：'+e.message;}}
+  if(result.ok&&!result.preview){try{await components().select(dir,result.selection);}catch(e){result.recordWarning=[result.recordWarning,uiText('组件已回滚，但版本选择未保存', 'Rolled back the component files, but could not save the version selection')+' · '+e.message].filter(Boolean).join('\n');}}
+  recordComponentChange(dir, result, 'component-rollback');
   return result;
 }));
 ipcMain.handle('library-import', (_event, component) => exclusiveMutation(async()=>{

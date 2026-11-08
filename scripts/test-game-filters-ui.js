@@ -194,13 +194,15 @@ app.whenReady().then(async () => {
   const apiReady = () => run(`new Promise(resolve => { const check = () => $('apiChoice') && !$('apiChoice').disabled ? resolve() : setTimeout(check, 15); check(); })`);
   await apiReady();
   assert.equal(await run(`$('apiChoice').value`), 'auto');
-  assert.equal(await run(`$('apiChoice').options.length`), 8);
+  assert.deepEqual(await run(`Array.from($('apiChoice').options, item => item.value)`),
+    ['auto', 'ddraw', 'd3d8', 'd3d9', 'd3d10', 'd3d11', 'd3d12', 'vulkan', 'opengl']);
   const beforeApi = await run(`window.lab.testInstallCalls().length`);
   for (const value of ['d3d9', 'd3d11', 'd3d12', 'vulkan', 'opengl', 'd3d10']) {
     await select('apiChoice', value);
     await apiReady();
     assert.equal(await run(`$('apiChoice').value`), value);
-    assert.equal(await run(`$('doInstall').disabled`), value === 'd3d10');
+    assert.equal(await run(`$('doInstall').disabled`), false);
+    if (value === 'd3d10') assert.equal(await run(`$('routeChoice').value`), 'feeder');
     assert.equal(await run(`window.lab.testInstallCalls().length`), beforeApi);
     if (value === 'vulkan') {
       assert.match(await run(`$('apiHint').textContent`), /shared ReShade layer/);
@@ -365,19 +367,45 @@ app.whenReady().then(async () => {
   assert.equal(await run(`$('copyLog').disabled`), true);
   // Right-click is delegated to current cards, including after filters/renders.
   await run(`window.lab.testCopyFailure(false); applyLang('en'); show('games'); state.recents = [{ dir: state.games[0].dir, at: Date.now() }]; renderRecent();`);
-  const menu = (selector, action) => run(`(async () => {
-    window.lab.testMenuAction(${JSON.stringify(action)});
-    const card = document.querySelector(${JSON.stringify(selector)});
-    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 900, clientY: 650 });
-    card.querySelector('.title, .name')?.dispatchEvent(event);
-    await new Promise(resolve => { const check = () => contextMenuOpen ? setTimeout(check, 10) : resolve(); check(); });
-    return event.defaultPrevented;
-  })()`);
+  async function driveMenu(selector, action, keyboard) {
+    async function until(condition, label) {
+      const deadline = Date.now() + 4000;
+      while (!condition()) {
+        if (Date.now() > deadline) throw Error('Timed out waiting for ' + label);
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+    const card = document.querySelector(selector);
+    card.focus();
+    const event = keyboard
+      ? new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true })
+      : new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 900, clientY: 650 });
+    (keyboard ? card : card.querySelector('.title, .name')).dispatchEvent(event);
+    const menu = document.querySelector('#gameMenu');
+    await until(() => menu.getAttribute('aria-hidden') === 'false', 'the game menu');
+    const button = action && menu.querySelector('[data-menu="' + action + '"]');
+    if (action && !button) throw Error('Missing menu action ' + action);
+    const info = { prevented: event.defaultPrevented, disabled: button?.disabled,
+      openLabel: menu.querySelector('[data-menu="open"]').textContent.trim(), game: menu.querySelector('.ctx-name b').textContent };
+    if (!button || button.disabled) {
+      document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape',bubbles:true,cancelable:true}));
+    } else {
+      button.click();
+      if (['restore', 'hide'].includes(action)) {
+        const confirm = () => document.querySelector('dialog[open] [data-ask="confirm"]');
+        await until(confirm, 'action confirmation');
+        confirm().click();
+      }
+    }
+    await until(() => !contextMenuOpen, 'the game action');
+    return info;
+  }
+  const menu = (selector, action, keyboard = false) => run(`(${driveMenu})(...${JSON.stringify([selector, action, keyboard])})`);
   const first = '#groups .card';
   const firstDir = await run(`document.querySelector('${first}').dataset.dir`);
   const recentDir = await run(`state.games[0].dir`);
   const readsBeforeMenu = await run(`window.lab.testLibraryReads()`);
-  assert.equal(await menu(first, 'copy'), true);
+  assert.equal((await menu(first, 'copy')).prevented, true);
   assert.equal(await run(`window.lab.testCopiedText()`), firstDir);
   assert.equal(await run(`$('overlay').classList.contains('hidden')`), true, 'right-click does not open details by itself');
   await menu(first, 'open');
@@ -390,22 +418,18 @@ app.whenReady().then(async () => {
   await menu(first, 'details');
   assert.equal(await run(`sheetGame.dir`), firstDir);
   await run(`closeSheet(); show('home'); applyLang('ar')`);
-  await menu('#recents .rcard', 'copy');
+  const arabicMenu = await menu('#recents .rcard', 'copy');
   assert.equal(await run(`window.lab.testCopiedText()`), recentDir);
-  assert.equal(await run(`window.lab.testMenuCalls().at(-1).options.labels.open`), 'فتح مجلد اللعبة');
-  await run(`(async () => {
-    window.lab.testMenuAction(null);
-    const card = document.querySelector('#recents .rcard'); card.focus();
-    card.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }));
-    await new Promise(resolve => { const check = () => contextMenuOpen ? setTimeout(check, 10) : resolve(); check(); });
-  })()`);
-  assert.equal(await run(`window.lab.testMenuCalls().at(-1).dir`), recentDir);
+  assert.equal(arabicMenu.openLabel, 'فتح مجلد اللعبة');
+  const keyboardMenu = await menu('#recents .rcard', null, true);
+  assert.equal(keyboardMenu.prevented, true);
+  assert.equal(keyboardMenu.game, await run(`state.games.find(g => g.dir === ${JSON.stringify(recentDir)}).name`));
   const restoresBefore = await run(`window.lab.testActionCalls().filter(c => c.action === 'restore').length`);
   await menu('#recents .rcard', null);
   assert.equal(await run(`window.lab.testActionCalls().filter(c => c.action === 'restore').length`), restoresBefore);
   await run(`jobRunning = true`);
-  await menu('#recents .rcard', 'restore'); // Defensive guard even for a forged return value.
-  assert.equal(await run(`window.lab.testMenuCalls().at(-1).options.busy`), true);
+  assert.equal((await menu('#recents .rcard', 'restore')).disabled, true);
+  await run(`performGameAction('restore', ${JSON.stringify(recentDir)})`); // A forged action still hits the busy guard.
   assert.equal(await run(`window.lab.testActionCalls().filter(c => c.action === 'restore').length`), restoresBefore);
   await run(`jobRunning = false`);
   await menu('#recents .rcard', 'restore');

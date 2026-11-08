@@ -30,6 +30,31 @@ test('failed install restores exact pre-switch files, settings, absent files and
   assert.equal(fs.existsSync(journal.pendingPath(root)), false);
 });
 
+test('a swallowed nested failure cannot commit partial writes or external steps', async t => {
+  const game = temp(t), target = path.join(game, 'settings.ini');
+  fs.writeFileSync(target, 'original');
+  let external = 0;
+  const nested = async fail => journal.transaction(game, async () => {
+    await journal.capture(game, target);
+    fs.writeFileSync(target, 'changed');
+    assert.equal(journal.deferExternal(game, 'test', () => { external++; }), true);
+    return fail();
+  });
+  await assert.rejects(journal.group(game, async () => {
+    await nested(() => { throw Error('failed nested install'); }).catch(() => {});
+    return { ok: true };
+  }), /failed nested install/);
+  assert.equal(fs.readFileSync(target, 'utf8'), 'original');
+  const returned = await journal.group(game, async () => {
+    await nested(() => ({ ok: false, code: 'cancelled' }));
+    return { ok: true };
+  });
+  assert.deepEqual(returned, { ok: false, code: 'cancelled' });
+  assert.equal(fs.readFileSync(target, 'utf8'), 'original');
+  assert.equal(fs.existsSync(journal.pendingPath(game)), false);
+  assert.equal(external, 0);
+});
+
 test('interrupted journal is recovered from disk without executing any payload', async t => {
   const root = temp(t);
   const folder = '_DLSS5_Backup/.transactions/abc-123';
@@ -50,6 +75,20 @@ test('a missing original backup is reported before changing game files', async t
   const manifest = { version: 1, replaced: [{ rel: 'dxgi.dll' }], added: [], game: { exe: 'game.exe' } };
   await assert.rejects(core.restoreFiles(root, manifest), { code: 'errBackupInvalid' });
   assert.equal(fs.readFileSync(path.join(root, 'dxgi.dll'), 'utf8'), 'working backend');
+});
+
+test('a malformed interrupted journal cannot restore or delete a file outside its snapshot folder', async t => {
+  const root = temp(t);
+  const folder = '_DLSS5_Backup/.transactions/abc-123';
+  fs.mkdirSync(path.join(root, folder), {recursive: true});
+  fs.writeFileSync(path.join(root, '0.bin'), 'game asset');
+  fs.writeFileSync(path.join(root, 'settings.ini'), 'game settings');
+  const invalid = {rel:'settings.ini', existed:true, snapshot:folder + '/../../../0.bin'};
+  fs.writeFileSync(journal.pendingPath(root), JSON.stringify({version:1, folder, dirs:[], files:[invalid]}));
+  await assert.rejects(journal.recover(root), {code:'errBackupInvalid'});
+  assert.equal(fs.readFileSync(path.join(root, '0.bin'), 'utf8'), 'game asset');
+  assert.equal(fs.readFileSync(path.join(root, 'settings.ini'), 'utf8'), 'game settings');
+  assert.ok(fs.existsSync(journal.pendingPath(root)));
 });
 
 test('new install sessions do not reuse stale original backups after a game update', async t => {

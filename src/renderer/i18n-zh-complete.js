@@ -13,10 +13,10 @@ Object.assign(window.i18n.S.en, {
   addonRemoveRecord:'Remove entry',addonRemoveHint:'Remove from this library; keep the file and existing game installations',addonNoMatches:'No matching add-ons',addonEmpty:'No optional add-ons',addonEmptyHint:'The base plugin is included. Add an optional build if needed.',
   addonCounts:(shown,total,selected)=>`${shown} / ${total} builds · ${selected} selected for installation`,addonActionFailed:'Could not save the change. Please retry.',addonRecordRemoved:'Entry removed; the file and game installations were kept.',addonSelectionSaved:'Selection saved for the next installation.',
   save:'Save', foundLibrary:(games,sources)=>`Found ${games} games across ${sources} sources`,
-  windowTheme:'Theme', windowMinimize:'Minimize', windowClose:'Close', liveLabel:'Live', betaLabel:'Beta',
-  betaHint:'This feature is new and still being tested', overlayTitle:'Overlay', overlayKeyTitle:'Overlay hotkey',
+  windowTheme:'Theme', windowMinimize:'Minimize', windowClose:'Close', betaLabel:'Beta',
+  overlayTitle:'Overlay', overlayKeyTitle:'Overlay hotkey',
   overlayKeyHelp:'Click the field, then press your shortcut. Ctrl, Alt and Shift are supported. Home / Escape stay reserved for ReShade.',
-  overlayCreateTheme:'Create theme', attachLabel:'Attach', sendLabel:'Send', enhancedAria:'DLSS 5 and multi-frame generation control center'
+  overlayCreateTheme:'Create theme', enhancedAria:'DLSS 5 and multi-frame generation control center'
 });
 // Simplified Chinese additions. Keep technical identifiers, filenames and IPC values intact.
 Object.assign(window.i18n.S.zh, {
@@ -33,10 +33,10 @@ Object.assign(window.i18n.S.zh, {
   addonRemoveRecord:'移除记录',addonRemoveHint:'仅从本列表移除，保留原文件和游戏中的安装',addonNoMatches:'没有符合条件的插件',addonEmpty:'暂无可选插件',addonEmptyHint:'基础插件已随软件提供，需要其他版本时可手动添加。',
   addonCounts:(shown,total,selected)=>`显示 ${shown} / ${total} 个版本 · 下次安装已选择 ${selected} 个`,addonActionFailed:'保存失败，请重试。',addonRecordRemoved:'已移除记录，原文件和游戏中的安装仍保留。',addonSelectionSaved:'已保存选择，下次安装时使用。',
   save:'保存', foundLibrary:(games,sources)=>`从 ${sources} 个来源找到 ${games} 款游戏`,
-  windowTheme:'主题', windowMinimize:'最小化', windowClose:'关闭', liveLabel:'实时', betaLabel:'测试版',
-  betaHint:'此功能为新功能，仍在测试中', overlayTitle:'游戏内面板', overlayKeyTitle:'面板快捷键',
+  windowTheme:'主题', windowMinimize:'最小化', windowClose:'关闭', betaLabel:'测试版',
+  overlayTitle:'游戏内面板', overlayKeyTitle:'面板快捷键',
   overlayKeyHelp:'点击下方按钮后按下快捷键，支持 Ctrl、Alt 和 Shift 组合键。Home 和 Escape 保留给 ReShade 使用。',
-  overlayCreateTheme:'创建主题', attachLabel:'添加附件', sendLabel:'发送', enhancedAria:'DLSS 5 与多帧生成控制中心',
+  overlayCreateTheme:'创建主题', enhancedAria:'DLSS 5 与多帧生成控制中心',
   feedVkLayerReady: rel => `Vulkan 互操作层已安装。如果游戏中没有出现 DLSS 5，请通过 ${rel} 启动游戏。`,
   neuralModelKept: rel => `已保留现有的 ${rel}，未用内置模型覆盖。`,
   restoreRecovered: date => `未找到当前备份记录，正在使用旁边保留的记录（${date}）恢复；记录中的文件仍在游戏目录内。`,
@@ -46,23 +46,17 @@ Object.assign(window.i18n.S.zh, {
   hideConfirm: name => `将 ${name} 从列表中隐藏？磁盘文件和已安装内容保持不变，可在设置中重新显示。`,
   optiDownloading: '正在下载并校验 OptiScaler…', optiVerified: version => `OptiScaler 官方版本已通过校验：${version}。`,
   backendSwitching: '正在保存设置并切换渲染后端…', backendRecovered: '已恢复中断的后端切换。',
-  navCommunity: '社区', copyLog: '复制日志', copyHistory: '复制历史记录', copied: '已复制到剪贴板',
+  copyLog: '复制日志', copyHistory: '复制历史记录', copied: '已复制到剪贴板',
   saveDiagnostics: '保存诊断信息', notesTitle: '此游戏的注意事项', notesWarning: '安装前请阅读',
   diagnosticsSaved: n => `已保存诊断信息，包含 ${n} 个日志文件，可随问题报告一起提供。`,
   menuDetails: '查看游戏详情', menuOpen: '打开游戏文件夹', menuCopyPath: '复制文件夹路径',
-  menuScan: '重新扫描此游戏', menuPoster: '更换封面', menuCommunity: '添加到社区测试列表',
-  menuCommunityEdit: '编辑我的社区报告', menuCommunityRemove: '删除我的社区报告',
-  menuCommunityRemoved: '已删除 {0} 的社区报告', menuHide: '从游戏库隐藏（保留文件）',
+  menuScan: '重新扫描此游戏', menuPoster: '更换封面', menuHide: '从游戏库隐藏（保留文件）',
   menuConfirmRestore: '还原此游戏的原始文件？',
   menuRestoreHint: '请先关闭游戏。将移除本软件安装的文件，并恢复备份的原始文件。',
   menuNoBackup: '此游戏没有可用的当前备份。', menuScanned: name => `扫描结果已更新：${name}`,
   menuActionFailed: (name, error) => `${name}：${error}`, historySnapshot: '备份记录',
   historyRecovered: '已恢复中断的操作', overlaySkipped: error => `不会安装游戏内面板：${error}。其他组件继续安装。`,
   errNoWriteAccess: 'Windows 不允许本软件写入游戏文件夹，因此未作修改。Program Files 下的游戏目录受到保护，请以管理员身份运行本软件，或将游戏移至其他目录。',
-  sheetCommunityTitle: '社区测试结果', sheetCommunityOpen: '查看报告',
-  sheetCommunityNone: '此游戏还没有社区报告，安装并测试后可以分享你的结果。',
-  sheetCommunityCounts: (reports, comments) => `${reports} 份报告 · ${comments} 条评论`,
-  communityWorking: '运行正常', communityMixed: '结果不一致', communityBroken: '无法运行',
   overlayNotForRoute: (why, api) => `不会安装游戏内面板：${why === 'bits' ? '该面板仅支持 64 位游戏，而此游戏为 32 位'
     : why === 'multipass' ? '多遍渲染方案有独立的游戏内页面（按 Home）；此面板支持原生 DLSS（RenoDX）和 Feeder 方案'
     : why === 'optiscaler' ? 'OptiScaler 有独立的游戏内菜单（按 Insert）；此面板支持原生 DLSS（RenoDX）和 Feeder 方案'
@@ -70,7 +64,7 @@ Object.assign(window.i18n.S.zh, {
   multipassNext: dlss => dlss === 'yes'
     ? '多遍渲染组件已安装。进游戏按 Home，打开最后一个“RenoDX DLSS”标签页；运行遍数（Pass Count）和其他设置都在那里。请保持游戏内 DLSS 开启。'
     : '多遍渲染组件已安装。进游戏按 Home，打开最后一个“RenoDX DLSS”标签页。此游戏没有原生 DLSS，请关闭“要求 DLSS（Require DLSS）”，并将“挂钩方式（Hook Method）”设为 Present；运行遍数也在同一页。',
-  t2SetupTitle: '设置 DLSS 5', t2Cards: '卡片', t2List: '列表', t2Signal: '社区反馈',
+  t2SetupTitle: '设置 DLSS 5', t2Cards: '卡片', t2List: '列表',
   t2System: '系统 / 实时状态', t2Updated: '已更新', t2ViewAll: '查看全部',
   t2Search: '搜索游戏、启动器或文件夹…', t2SearchHint: '输入游戏或页面名称',
   t2Move: '移动', t2Open: '打开', t2Page: '页面', t2NoMatch: '没有匹配的结果',
@@ -101,7 +95,6 @@ Object.assign(window.i18n.S.zh, {
   driverFaultBody: names => `${names}\n\n上游曾在 616.64 及更新驱动上测到 NVIDIA 神经渲染运行库内部异常；也有不少用户能正常使用新驱动，尤其是在关闭 MSI Afterburner 和 RivaTuner 后。\n\n安装可以继续。若游戏里始终没有神经渲染效果，上游这条提示所记录的最后已知可用驱动为 616.56。`,
   driverFaultGo: '仍然安装', driverFaultStopped: '已停止：未接受驱动兼容性提示',
   setTray: '关闭窗口后保留在系统托盘', setTrayHint: '关闭窗口时隐藏到系统托盘；使用托盘菜单中的“退出”可完全退出软件。',
-  trayShow: '打开 DLSS 5 Swapper', trayQuit: '退出', setNotices: '社区通知',
-  setNoticesHint: '有人回复或提及我，或在我关注的游戏下发表评论时通知我。',
+  trayShow: '打开 DLSS 5 Swapper', trayQuit: '退出',
   supportBody: 'DLSS 5 Swapper 免费提供并采用 MIT 许可。如果它帮你节省了时间，可以请作者喝杯咖啡，或用手机扫码支持。'
 });

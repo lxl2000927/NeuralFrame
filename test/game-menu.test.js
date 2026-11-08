@@ -14,7 +14,7 @@ function fixture(t) {
   return { dir, root };
 }
 
-test('context menu restore depends on active backups or recovery journal, never archived backups or DLL presence', t => {
+test('context menu restore accepts active backups or a journal; a stray DLL and empty archive are insufficient', t => {
   const { dir, root } = fixture(t);
   fs.writeFileSync(path.join(root, 'manifest.json.done-123'), '{}');
   fs.writeFileSync(path.join(dir, 'nvngx_dlss.dll'), 'not a DLL');

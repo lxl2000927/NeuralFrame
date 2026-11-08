@@ -6,13 +6,14 @@ const fs = require('fs');
 const os = require('os');
 const net = require('net');
 const path = require('path');
+const ipcMain = new (require('node:events').EventEmitter)();
 
 // Outside Electron, require('electron') hands back a path string, so the
 // bridge's ipcMain listeners are stubbed before it is loaded.
 const electronPath = require.resolve('electron');
 require.cache[electronPath] = {
   id: electronPath, filename: electronPath, loaded: true, children: [], paths: [],
-  exports: { ipcMain: { on() {}, removeListener() {} } }
+  exports: { ipcMain }
 };
 
 const startBridge = require('../src/overlay-bridge.js');
@@ -43,6 +44,14 @@ const connect = (pipeName) => new Promise((resolve, reject) => {
 
 const settle = (ms = 120) => new Promise(resolve => setTimeout(resolve, ms));
 
+function publish(socket, effects) {
+  const body = Buffer.from(JSON.stringify({epoch:1, effects, tools:[]}));
+  const header = Buffer.alloc(8);
+  header.writeUInt32LE(0x31534c44);
+  header.writeUInt32LE(body.length, 4);
+  socket.write(Buffer.concat([header, body]));
+}
+
 async function bridge(t, idleTakeoverMs = 5000) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-swapper-bridge-'));
   const live = await startBridge({ BrowserWindow: FakeWindow, userData, idleTakeoverMs });
@@ -57,8 +66,14 @@ test('a game left holding the pipe does not lock every later game out', async (t
   assert.equal(live.state().connected, false);
 
   const first = await connect(live.pipeName);
+  const statuses = [];
+  const sender = live.window.webContents;
+  sender.send = (channel, status) => { if (channel === 'lab-overlay-status') statuses.push(status); };
+  publish(first, true);
   await settle();
   assert.equal(live.state().connected, true, 'the first game is attached');
+  assert.equal(live.getStatus().effects, true);
+  const oldSession = statuses.at(-1).session;
 
   // A second game while the first is alive is refused, as designed: one game
   // at a time may drive the panel.
@@ -75,6 +90,22 @@ test('a game left holding the pipe does not lock every later game out', async (t
   await settle();
   assert.equal(third.destroyed, false, 'the next game is let in');
   assert.equal(live.state().connected, true);
+  assert.equal(live.state().game, false, 'a new socket must publish its own status');
+  assert.equal(statuses.at(-1), null);
+  const packets = [];
+  third.on('data', data => packets.push(data));
+  publish(third, false);
+  await settle();
+  assert.equal(live.getStatus().effects, false);
+  const session = statuses.at(-1).session;
+  assert.notEqual(session, oldSession);
+  const cmd = {epoch:1, id:0, kind:3, value:1};
+  ipcMain.emit('lab-overlay-control', {sender}, {...cmd, session:oldSession});
+  await settle();
+  assert.equal(packets.length, 0, 'late control from the first game is ignored even when epochs match');
+  ipcMain.emit('lab-overlay-control', {sender}, {...cmd, session});
+  await settle();
+  assert.equal(Buffer.concat(packets).readUInt32LE(0), 0x31434c44);
   first.destroy(); third.destroy();
 });
 

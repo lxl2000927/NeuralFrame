@@ -175,11 +175,10 @@ test('模块 C：模拟 64位 DX12 游戏从模式 A 到 F 的完整配置、双
   ].join('\n'), 'utf8');
 
   const statusF = await combinedManager.inspectCombinedStatus(gameDir, { payloadDir: PAYLOAD_DIR, userDataDir });
-  assert.equal(statusF.mfg.runtimeVerification.verifiedActive, true);
+  assert.equal(statusF.mfg.runtimeVerification.verifiedActive, false, 'a game folder log does not identify a live process');
   assert.equal(statusF.mfg.runtimeVerification.effectiveMultiplier, 4);
-  assert.equal(statusF.mfg.status, 'verified');
-  assert.equal(statusF.mfg.statusBadge, '已验证可用');
-  assert.equal(statusF.diagnostics.combinedBadge, '已验证可用');
+  assert.equal(statusF.mfg.status, statusF.mfg.gpuSupport.nativeX3X4 ? 'verified' : 'experimental');
+  assert.doesNotMatch(statusF.mfg.effectiveMultiplier, /已验证生效/);
   assert.equal(statusF.diagnostics.coExecution.vramBudget.totalAddedOverheadMB, 680 + 660);
 
   // 清理模拟运行的 ReShade.log 后执行一键还原，验证所有注入文件被移除且原版文件 100% 恢复
@@ -191,6 +190,33 @@ test('模块 C：模拟 64位 DX12 游戏从模式 A 到 F 的完整配置、双
   assert.equal(fs.existsSync(path.join(gameDir, 'renodx-dlss5.addon64')), false);
   assert.equal(fs.existsSync(origDlssPath), true);
   assert.equal(fs.statSync(origDlssPath).size, origDlssBytes.length);
+});
+
+test('applying MFG alone preserves tuning and restores the chosen stack on the next inspection', async t => {
+  const gameDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-only-game-'));
+  t.after(() => fs.rmSync(gameDir, {recursive:true, force:true}));
+  const writePe = require('./fixtures/pe').writePe;
+  const exe = writePe(path.join(gameDir, 'Game.exe'), {text:'D3D11CreateDevice'});
+  writePe(path.join(gameDir, 'nvngx_dlssnr.dll'));
+  fs.writeFileSync(path.join(gameDir, 'renodx-dlss5.addon64'), 'fixture');
+  const iniPath = path.join(gameDir, 'ReShade.ini');
+  fs.writeFileSync(iniPath, '[OVERLAY]\nUiLanguage=en-US\n[RenoDX.DLSS5]\nUiLanguage=en-US\nNRResolutionScale=0.625\nNRMaxWorksets=5\n');
+  const config = {apiOverride:'d3d12', hardwareProfile:'rtx50_desktop', runtimeStack:'baseline-310.9.1',
+    mfgMode:'x3', payloadDir:PAYLOAD_DIR, userDataDir:path.join(gameDir, 'test-data')};
+  const result = await combinedManager.applyCombinedConfiguration(gameDir, config);
+  assert.equal(result.status.mfg.currentConfig.mode, 'x3');
+  const status = await combinedManager.inspectCombinedStatus(gameDir, {payloadDir:PAYLOAD_DIR, userDataDir:config.userDataDir,
+    defaultHardwareProfile:'rtx40_laptop', apiOverrides:{[require('../src/core/game-api').apiPreferenceKey(gameDir,exe)]:'d3d12'}});
+  assert.equal(status.graphicsApi,'DirectX 12');
+  assert.equal(status.mfg.api,'DirectX 12');
+  assert.equal(status.neural.api,'DirectX 12');
+  assert.equal(status.hardwareProfile,'rtx50_desktop');
+  assert.equal(status.configuredRuntimeStack, config.runtimeStack);
+  const text = fs.readFileSync(iniPath, 'utf8');
+  assert.equal(ini.getIni(text, 'RenoDX.DLSS5', 'NRResolutionScale'), '0.625');
+  assert.equal(ini.getIni(text, 'RenoDX.DLSS5', 'NRMaxWorksets'), '5');
+  assert.equal(ini.getIni(text, 'RenoDX.DLSS5', 'UiLanguage'), 'en-US');
+  assert.equal(ini.getIni(text, 'OVERLAY', 'UiLanguage'), 'en-US');
 });
 
 test('Phase 5 UI：前端包含三大功能区域与明确区分的四级状态徽章', () => {
@@ -317,7 +343,9 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
   });
   assert.equal(resDesktop50.ok, true);
   assert.equal(resDesktop50.hardwareProfile, 'rtx50_desktop');
-  assert.equal(resDesktop50.status.mfg.status, 'verified');
+  const actualBlackwell = neuralModels.detectGpuArchitecture(resDesktop50.status.hardware.gpu.name).code === 'blackwell';
+  assert.equal(resDesktop50.status.mfg.gpuSupport.nativeX3X4, actualBlackwell);
+  assert.equal(resDesktop50.status.mfg.status, actualBlackwell ? 'verified' : 'experimental');
 
   const iniDesktop50 = fs.readFileSync(path.join(gameDir, 'ReShade.ini'), 'utf8');
   // 50 系桌面卡 MFG 必须开启 DynamicMFG=1、QualityGuardMode=0 并关闭所有 40 系二进制补丁，直通 Blackwell 原生硬件 Flip Metering
@@ -329,6 +357,95 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
   assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ForceFlipMeteringOff'), '0');
   assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ExperimentalAdaptiveQuality'), '0');
   assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'RaiseFrameCeiling'), '1');
+});
+
+test('MFG preview and apply preserve other early ReShade addons and restore the original INI', async t => {
+  const layer = require('../src/core/vulkan-layer');
+  t.mock.method(layer, 'register', () => assert.fail('DirectX installs must not register a Vulkan layer'));
+  t.mock.method(layer, 'detach', () => assert.fail('DirectX restores must not detach a Vulkan layer'));
+  const {ComponentReview} = require('../src/core/component-review');
+  const {writePe} = require('./fixtures/pe');
+  const sha = data => require('node:crypto').createHash('sha256').update(data).digest('hex');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-early-addons-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  const game = path.join(root,'Game'), userDataDir = path.join(root,'Profile');
+  writePe(path.join(game,'Play.exe'), {text:'D3D12CreateDevice'});
+  writePe(path.join(game,'nvngx_dlss.dll'), {version:[3,8,0,0]});
+  const file = path.join(game,'ReShade.ini');
+  const original = '[ADDON]\r\nLoadFromDllMain=HDR.addon64,renodx-mfgunlock.addon64.backup,Overlay.addon64\r\n[OtherPlugin]\r\nLoadFromDllMain=third-party-setting\r\n';
+  fs.writeFileSync(file,original);
+  const review = new ComponentReview(userDataDir);
+  const run = async config => {
+    const request = {kind:'enhanced-apply',config};
+    const action = () => combinedManager.applyCombinedConfiguration(game, {...config,payloadDir:PAYLOAD_DIR,userDataDir});
+    const before = fs.readFileSync(file);
+    const {preview} = await review.run(game,request,action);
+    assert.deepEqual(fs.readFileSync(file), before);
+    const iniChange = preview.rows.find(row => row.rel === 'ReShade.ini');
+    assert.ok(iniChange);
+    assert.equal((await review.run(game,request,action,preview.token)).ok, true);
+    const written = fs.readFileSync(file);
+    assert.equal(sha(written), iniChange.after.sha256);
+    const text = written.toString('utf8');
+    assert.equal(ini.getIni(text,'OtherPlugin','LoadFromDllMain'),'third-party-setting');
+    return ini.getIni(text,'ADDON','LoadFromDllMain').split(',');
+  };
+  const foreign = ['HDR.addon64','renodx-mfgunlock.addon64.backup','Overlay.addon64'];
+  const expected = [...foreign,'renodx-mfgunlock.addon64'];
+  assert.deepEqual(await run({mfgMode:'x2'}),expected);
+  assert.deepEqual(await run({mfgMode:'x3',neuralMode:'latest_compatible'}),expected);
+  assert.deepEqual(await run({mfgMode:'off'}),foreign);
+  await run({mfgMode:'x2'});
+  await mfgManager.applyMfgConfiguration(game, {mode:'x2', backend:'mfg-unlocker-asi', payloadDir:PAYLOAD_DIR});
+  assert.deepEqual(ini.getIni(fs.readFileSync(file,'utf8'),'ADDON','LoadFromDllMain').split(','), foreign);
+  assert.equal(await backends.restore(game, undefined, undefined, {
+    vulkanLayerTarget: path.join(userDataDir, 'reshade-vulkan')
+  }), true);
+  assert.deepEqual(fs.readFileSync(file), Buffer.from(original));
+});
+
+test('MFG-only rejects an unsupported DirectX 11 game before resolving payload or writing game files', async (t) => {
+  const { writePe } = require('./fixtures/pe');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-unsupported-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  writePe(path.join(root, 'Game.exe'), { bitness: 64, text: 'D3D11CreateDevice' });
+  let payloadRequests = 0;
+  await assert.rejects(combinedManager.applyCombinedConfiguration(root, {
+    mfgMode: 'x3',
+    userDataDir: path.join(root, 'data'),
+    requirePayload: async () => { payloadRequests++; }
+  }), { code: 'errMfgUnsupportedApi' });
+  assert.equal(payloadRequests, 0);
+  assert.deepEqual(fs.readdirSync(root), ['Game.exe']);
+});
+
+test('external 2.3.0 components survive disabling both modules, repeated Off, and a full restore', async t => {
+  const { writePe } = require('./fixtures/pe');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'profile-230-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  const game = path.join(root, 'Game'), exe = path.join(game, 'Game.exe');
+  fs.mkdirSync(path.join(game, 'OptiScaler', 'plugins'), {recursive:true});
+  writePe(exe, {bitness:64, text:'D3D12CreateDevice'});
+  const pending = new Map(Object.entries({
+    'nvngx_dlssnr.dll': 'game-supplied runtime',
+    'renodx-dlss5.addon64': 'existing neural addon',
+    'OptiScaler/plugins/MFGUnlocker.asi': 'existing mfg plugin',
+    'RTXMFG-Universal.json': '\ufeff' + JSON.stringify({enabled:true,multiplier:4,temporalFix:false,hardwareProfile:'rtx50_desktop'}),
+    'OptiScaler.ini': '[MfgUnlock]\nForceMultiplier=2\nEnabled=false\nTemporalFix=true\n[DlssNr]\nEnabled=true\n',
+  }));
+  for (const [rel, text] of pending) fs.writeFileSync(path.join(game, rel), text);
+  const config = mfgManager.readCurrentMfgConfiguration(game);
+  assert.equal(config.mode, 'x4');
+  assert.equal(config.settings.temporalFix, false);
+  for (let i = 0; i < 2; i++) {
+    await neuralModels.applyNeuralModelSelection(game, {mode:'off',payloadDir:PAYLOAD_DIR,userDataDir:root});
+    await mfgManager.applyMfgConfiguration(game, {mode:'off',payloadDir:PAYLOAD_DIR});
+    assert.equal(fs.readFileSync(path.join(game, 'nvngx_dlssnr.dll'), 'utf8'), 'game-supplied runtime');
+    for (const rel of ['renodx-dlss5.addon64', 'OptiScaler/plugins/MFGUnlocker.asi','RTXMFG-Universal.json'])
+      assert.equal(fs.existsSync(path.join(game, rel)), false, rel);
+  }
+  assert.equal(await backends.restore(game), true);
+  for (const [rel, text] of pending) assert.equal(fs.readFileSync(path.join(game, rel), 'utf8'), text, rel);
 });
 
 test('老游戏全自动离线管线：32位 DX9 与 64位 DX10 无原生 DLSS 游戏一键部署 dgVoodoo2 + Feeder + LumeniteFX + host64 并支持无损还原', async (t) => {

@@ -104,8 +104,16 @@ async function gpuInfo(runner = run) {
     });
   } catch { return null; }
 }
-function antiCheatPresent(gameDir) {
+const antiCheatMarkers = [
+  ['Easy Anti-Cheat', /easyanticheat|(?:^|[-_])eaclauncher/i],
+  ['BattlEye', /battleye|(?:^|[-_])belauncher/i],
+  ['EA AntiCheat', /eaanticheat/i],
+  ['AntiCheatExpert', /^(?:AntiCheatExpert|ACE-CORE\.sys|ACE-Base64\.dll)$/i],
+  ['HoYoKProtect', /^HoYoKProtect\.sys$/i],
+];
+function antiCheatComponents(gameDir) {
   const queue = [[gameDir, 0]];
+  const components = new Set();
   let examined = 0;
   while (queue.length && examined < 2000) {
     const [dir, depth] = queue.shift();
@@ -114,10 +122,15 @@ function antiCheatPresent(gameDir) {
     for (const entry of entries) {
       if (examined >= 2000) break;
       examined++;
-      if (/easyanticheat|battleye|(?:^|[-_])(?:eac|be)launcher|eaanticheat/i.test(entry.name)) return true;
+      for (const [name, marker] of antiCheatMarkers) {
+        if (marker.test(entry.name)) components.add(name);
+      }
       if (entry.isDirectory() && depth < 2 && !/^_DLSS5_Backup$|^node_modules$/i.test(entry.name)) queue.push([path.join(dir, entry.name), depth + 1]);
     }
   }
-  return false;
+  return [...components];
 }
-module.exports = { assertGameClosed, executableLocked, matchingProcesses, gpuInfo, gpuSupported, gpuModelSupported, driverSupported, driverNeuralFault, driverNames, antiCheatPresent };
+function antiCheatPresent(gameDir) {
+  return antiCheatComponents(gameDir).length > 0;
+}
+module.exports = { assertGameClosed, executableLocked, matchingProcesses, gpuInfo, gpuSupported, gpuModelSupported, driverSupported, driverNeuralFault, driverNames, antiCheatComponents, antiCheatPresent };

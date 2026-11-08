@@ -6,6 +6,9 @@
 const fs = require('./preview-fs').fs;
 const path = require('path');
 const crypto = require('crypto');
+const replaceFile = require('./replace-file');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const ownership = new AsyncLocalStorage();
 const active = new Map();
 const rootKey = dir => path.resolve(dir).toLowerCase();
 const pendingPath = dir => path.join(dir, '_DLSS5_Backup', 'pending-switch.json');
@@ -30,20 +33,33 @@ function safePath(root, rel) {
 }
 async function atomicJson(file, data) {
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
-  const temp = file + '.tmp';
-  await fs.promises.writeFile(temp, JSON.stringify(data, null, 2), 'utf8');
-  await fs.promises.rename(temp, file);
+  const json = JSON.stringify(data, null, 2);
+  if (require('./preview-fs').active()) {
+    // The copy-on-write preview needs only the final bytes.
+    await fs.promises.writeFile(file, json, 'utf8');
+    return;
+  }
+  const temp = file + '.' + crypto.randomUUID() + '.tmp';
+  const handle = await fs.promises.open(temp, 'wx');
+  try {
+    try {
+      await handle.writeFile(json, 'utf8');
+      await handle.sync();
+    } finally { await handle.close(); }
+    await fs.promises.rename(temp, file);
+  } catch (cause) {
+    await fs.promises.unlink(temp).catch(() => {});
+    throw cause;
+  }
 }
-async function capture(gameDir, target) {
-  const state = active.get(rootKey(gameDir));
-  if (!state) return;
+async function captureFile(gameDir, target, state) {
   const rel = path.relative(gameDir, target);
   safePath(gameDir, rel);
   if (state.files.some(f => f.rel.toLowerCase() === rel.toLowerCase())) return;
   let parent = path.dirname(target);
   while (rootKey(parent) !== rootKey(gameDir)) {
     const dir = path.relative(gameDir, parent);
-    if (!fs.existsSync(parent) && !state.dirs.includes(dir)) state.dirs.push(dir);
+    if (!fs.existsSync(parent) && !state.dirs.includes(dir) && !state.removedDirs?.includes(dir)) state.dirs.push(dir);
     parent = path.dirname(parent);
   }
   const existed = fs.existsSync(target);
@@ -52,10 +68,56 @@ async function capture(gameDir, target) {
   if (existed) {
     const copy = safePath(gameDir, snapshot);
     await fs.promises.mkdir(path.dirname(copy), { recursive: true });
-    await fs.promises.copyFile(target, copy);
+    await fs.promises.copyFile(target, copy, fs.constants.COPYFILE_EXCL);
   }
   state.files.push({ rel, existed, snapshot });
   await atomicJson(pendingPath(gameDir), state);
+}
+function owns(gameDir) {
+  const owner = ownership.getStore();
+  return !!owner && active.get(rootKey(gameDir)) === owner;
+}
+function hasPendingRecovery(gameDir) {
+  return !owns(gameDir) && fs.existsSync(pendingPath(gameDir));
+}
+function deferExternal(gameDir, key, work) {
+  if (!owns(gameDir) || !ownership.getStore().started) return false;
+  ownership.getStore().external.set(key, work);
+  return true;
+}
+async function startJournal(gameDir, owner) {
+  safePath(gameDir, '_DLSS5_Backup/pending-switch.json');
+  await atomicJson(pendingPath(gameDir), owner.state);
+  await captureFile(gameDir, path.join(gameDir, '_DLSS5_Backup', 'manifest.json'), owner.state);
+}
+async function queueCapture(gameDir, save) {
+  const owner = active.get(rootKey(gameDir));
+  if (!owner) return;
+  if (!owns(gameDir)) throw error('errJobBusy');
+  owner.started ||= startJournal(gameDir, owner);
+  // Concurrent writes in this operation must allocate distinct snapshot slots.
+  owner.captures = (owner.captures || owner.started).then(() => save(owner.state));
+  await owner.captures;
+}
+function capture(gameDir, target) {
+  return queueCapture(gameDir, state => captureFile(gameDir, target, state));
+}
+async function removeEmptyDirectory(gameDir, target) {
+  const rel = path.relative(gameDir, target);
+  safePath(gameDir, rel);
+  if (!fs.existsSync(target) || !fs.statSync(target).isDirectory() || fs.readdirSync(target).length) return false;
+  await queueCapture(gameDir, async state => {
+    if (state.dirs.includes(rel) || state.removedDirs?.includes(rel)) return;
+    (state.removedDirs ||= []).push(rel);
+    await atomicJson(pendingPath(gameDir), state);
+  });
+  try {
+    await fs.promises.rmdir(target);
+    return true;
+  } catch (cause) {
+    if (['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(cause.code)) return false;
+    throw cause;
+  }
 }
 async function cleanup(gameDir, state) {
   // Only our numbered snapshots and now-empty transaction folder.
@@ -66,28 +128,46 @@ async function cleanup(gameDir, state) {
   try { await fs.promises.rmdir(safePath(gameDir, state.folder)); } catch {}
 }
 async function recover(gameDir) {
+  const key = rootKey(gameDir);
+  if (active.has(key)) throw error('errJobBusy');
+  active.set(key, {});
+  try { return await recoverPending(gameDir); }
+  finally { active.delete(key); }
+}
+async function recoverPending(gameDir) {
   const pending = pendingPath(gameDir);
   if (!fs.existsSync(pending)) return false;
   safePath(gameDir, path.relative(gameDir, pending));
   const state = JSON.parse(await fs.promises.readFile(pending, 'utf8'));
-  if (state.version !== 1 || !Array.isArray(state.files) || !Array.isArray(state.dirs) ||
+  if (!state || state.version !== 1 || !Array.isArray(state.files) || !Array.isArray(state.dirs) ||
       !/^_DLSS5_Backup\/\.transactions\/[a-f0-9-]+$/.test(state.folder)) throw error('errBackupInvalid');
   // Validate everything before changing anything. Missing rollback bytes are
   // not permission to silently discard the journal and report success.
-  for (const item of state.files) {
+  for (const [index, item] of state.files.entries()) {
+    // Version 1 always writes each snapshot directly into this transaction folder.
+    if (!item || typeof item.existed !== 'boolean' || item.snapshot !== state.folder + '/' + index + '.bin') throw error('errBackupInvalid');
     safePath(gameDir, item.rel);
-    if (!item.snapshot.startsWith(state.folder + '/') || !/^\d+\.bin$/.test(path.basename(item.snapshot))) throw error('errBackupInvalid');
     const copy = safePath(gameDir, item.snapshot);
-    if (item.existed && !fs.existsSync(copy)) throw error('errBackendRecovery');
+    if (item.existed && (!fs.existsSync(copy) || !fs.statSync(copy).isFile())) throw error('errBackendRecovery');
   }
-  for (const dir of state.dirs) safePath(gameDir, dir);
+  const removedDirs = state.removedDirs ?? [];
+  if (!Array.isArray(removedDirs)) throw error('errBackupInvalid');
+  for (const dir of [...state.dirs, ...removedDirs]) safePath(gameDir, dir);
+  // Once shared registration has started, the installed manifest owns its
+  // cleanup. Preserve that manifest for Restore, including after a restart.
+  if (state.phase === 'external-commit') {
+    await fs.promises.unlink(pending);
+    await cleanup(gameDir, state).catch(() => {});
+    return true;
+  }
   for (const item of [...state.files].reverse()) {
     const target = safePath(gameDir, item.rel);
     if (item.existed) {
       await fs.promises.mkdir(path.dirname(target), { recursive: true });
-      await fs.promises.copyFile(safePath(gameDir, item.snapshot), target);
+      await replaceFile.copyFile(safePath(gameDir, item.snapshot), target);
     } else if (fs.existsSync(target)) await fs.promises.unlink(target);
   }
+  for (const dir of removedDirs) await fs.promises.mkdir(safePath(gameDir, dir), { recursive: true });
   for (const dir of [...state.dirs].sort((a, b) => b.length - a.length)) {
     try { await fs.promises.rmdir(safePath(gameDir, dir)); } catch {}
   }
@@ -95,25 +175,64 @@ async function recover(gameDir) {
   await cleanup(gameDir, state).catch(() => {});
   return true;
 }
-async function transaction(gameDir, work) {
-  if (active.has(rootKey(gameDir))) throw error('errJobBusy');
+// A composite operation can perform read-only preflight before its first
+// transactional stage. Stages belonging to this owner share one rollback point.
+async function group(gameDir, work) {
+  const key = rootKey(gameDir);
+  if (owns(gameDir)) {
+    const owner = ownership.getStore();
+    try {
+      const result = await work();
+      if (owner.started && result?.ok === false) owner.failure ||= result;
+      return result;
+    } catch (cause) {
+      // There is one rollback point. A caller catching a failed nested stage
+      // cannot turn its partial writes into a successful outer commit.
+      if (owner.started) owner.failure ||= { cause };
+      throw cause;
+    }
+  }
+  if (active.has(key)) throw error('errJobBusy');
   if (fs.existsSync(pendingPath(gameDir))) throw error('errBackendRecovery');
-  safePath(gameDir, '_DLSS5_Backup/pending-switch.json');
   const state = { version: 1, folder: `_DLSS5_Backup/.transactions/${crypto.randomUUID()}`, files: [], dirs: [] };
-  await atomicJson(pendingPath(gameDir), state);
-  active.set(rootKey(gameDir), state);
+  const owner = { state, external: new Map() };
+  active.set(key, owner);
   try {
-    await capture(gameDir, path.join(gameDir, '_DLSS5_Backup', 'manifest.json'));
-    const result = await work();
-    await fs.promises.unlink(pendingPath(gameDir));
-    active.delete(rootKey(gameDir));
-    await cleanup(gameDir, state).catch(() => {});
+    let result = await ownership.run(owner, work);
+    if (owner.failure && result?.ok !== false) {
+      if (owner.failure.ok === false) result = owner.failure;
+      else throw owner.failure.cause;
+    }
+    if (owner.started) {
+      await owner.captures;
+      if (result?.ok === false) await recoverPending(gameDir);
+      else {
+        if (owner.external.size) {
+          state.phase = 'external-commit';
+          await atomicJson(pendingPath(gameDir), state);
+          owner.externalStarted = true;
+          for (const commit of owner.external.values()) await commit();
+        }
+        await fs.promises.unlink(pendingPath(gameDir));
+        await cleanup(gameDir, state).catch(() => {});
+      }
+    }
     return result;
   } catch (cause) {
-    active.delete(rootKey(gameDir));
-    try { await recover(gameDir); }
+    if (owner.externalStarted) throw Object.assign(error('errBackendRecovery'), { cause });
+    try { if (owner.started) await recoverPending(gameDir); }
     catch (recoveryError) { throw Object.assign(error('errBackendRecovery'), { cause, recoveryError }); }
     throw cause;
+  } finally {
+    active.delete(key);
   }
 }
-module.exports = { safePath, capture, transaction, recover, pendingPath, atomicJson };
+async function transaction(gameDir, work) {
+  return group(gameDir, async () => {
+    const owner = ownership.getStore();
+    owner.started ||= startJournal(gameDir, owner);
+    await owner.started;
+    return work();
+  });
+}
+module.exports = { safePath, capture, removeEmptyDirectory, group, transaction, recover, hasPendingRecovery, deferExternal, pendingPath, atomicJson };

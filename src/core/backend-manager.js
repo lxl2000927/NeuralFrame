@@ -98,20 +98,17 @@ async function install(config, log = () => {}) {
   if (changed && (old.game.api === 'vulkan' || config.api === 'vulkan')) {
     throw Object.assign(new Error('errBackendVulkanSwitch'), { code: 'errBackendVulkanSwitch' });
   }
-  // ReShade's global Vulkan registration is not a game-local transaction.
-  // Keep its existing recoverable partial manifest on failure instead of
-  // rolling that manifest away while leaving a shared layer registered.
-  if (config.api === 'vulkan' && config.route === 'feeder') {
-    compatibility.assertLoaderCompatible(config, old);
-    const profile = !old ? loadProfile(config) : {};
-    if (Object.keys(profile).length) {
-      const manifest = core.beginManifest(config.gameDir, config.exePath, config.api);
-      manifest.route = config.route;
-      for (const [rel, text] of Object.entries(profile)) await core.writeTracked(manifest, config.gameDir, journal.safePath(config.gameDir, rel), text, { kind: 'config' });
-    }
-    return core.applySwap(config, log);
-  }
   return journal.transaction(config.gameDir, async () => {
+    if (config.api === 'vulkan' && config.route === 'feeder') {
+      compatibility.assertLoaderCompatible(config, old);
+      const profile = !old ? loadProfile(config) : {};
+      if (Object.keys(profile).length) {
+        const manifest = core.beginManifest(config.gameDir, config.exePath, config.api);
+        manifest.route = config.route;
+        for (const [rel, text] of Object.entries(profile)) await core.writeTracked(manifest, config.gameDir, journal.safePath(config.gameDir, rel), text, { kind: 'config' });
+      }
+      return core.applySwap(config, log);
+    }
     if (!old && config.route !== 'optiscaler') {
       // Native ReShade may already have an untouched custom preset. Capture
       // its original bytes before the first managed session, while saving
@@ -149,15 +146,23 @@ async function install(config, log = () => {}) {
     return manifest;
   });
 }
-async function restore(gameDir, log = () => {}) {
+async function restore(gameDir, log = () => {}, onRestored, { vulkanLayerTarget } = {}) {
   const recovered = await journal.recover(gameDir);
   if (recovered) log({ code: 'backendRecovered', params: {} });
   const old = readManifest(gameDir);
-  if (!old) return recovered;
-  // Keep the last tuning even when the user chooses a complete uninstall.
-  try { await saveProfile(gameDir, old); }
-  catch (error) { log({ code: 'restoreProfileWarning', params: { error: error.message } }); }
-  await core.restore(gameDir, log);
+  // A recovered first install can leave no active deployment. Its journal is
+  // authoritative; never roll back an older installation as a second step.
+  if (!old && recovered) return true;
+  try {
+    await core.restore(gameDir, log, onRestored, {
+      vulkanLayerTarget,
+      beforeFiles: old && (async () => {
+        try { await saveProfile(gameDir, old); }
+        catch (error) { log({ code: 'restoreProfileWarning', params: { error: error.message } }); }
+      })
+    });
+  }
+  catch (error) { if (error.code === 'errNoBackup') return false; throw error; }
   return true;
 }
 module.exports = { install, restore, readManifest, saveProfile, loadProfile };

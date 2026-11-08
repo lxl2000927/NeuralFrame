@@ -10,6 +10,7 @@ const emulators = require('./emulators');
 const crypto = require('crypto');
 const feederRelease = require('./feeder-release');
 const { safePath } = require('./file-journal');
+const installRoutes = require('../shared/install-routes');
 
 const SKIP_DIRS = new Set([
   '_dlss5_backup', 'reshade-shaders', 'host64', 'node_modules', '.git',
@@ -543,7 +544,7 @@ function playableRoleScore(exe) {
   return score;
 }
 
-async function scanGame(gameDir) {
+async function scanGame(gameDir, preferredExe) {
   const exeCandidates = [];
   // Executables that are real PE binaries but name no rendering API. Kept
   // aside rather than thrown away: see the fallback below.
@@ -551,7 +552,7 @@ async function scanGame(gameDir) {
   const dlssFiles = [];
   const streamlineFiles = [];
   const upscalerFiles = [];
-  let addonPresent = null;
+  const addonPaths = [];
   const xboxDeclared = xboxExecutables(gameDir);
   const xboxLayout = xboxDeclared.length > 0 || /(?:^|[\\/])xboxgames(?:[\\/]|$)/i.test(path.resolve(gameDir));
 
@@ -563,11 +564,18 @@ async function scanGame(gameDir) {
       try { size = (await fs.promises.stat(full)).size; } catch { return; }
       const bitness = pe.getBitness(full);
       if (!bitness) return;
-      const emulator = emulators.profileFor(full);
+      let emulator = emulators.profileFor(full);
+      let observedApi;
+      // Play.exe is also a common game executable. Prefer its renderer evidence
+      // when it contradicts Play!'s profile and version metadata does not identify Play!.
+      if (emulator?.key === 'play' && !pe.versionMentions(full, 'Play!')) {
+        observedApi = detectApi(full, pe.getImports(full));
+        if (observedApi && !emulator.apis.includes(observedApi.api)) emulator = null;
+      }
       const gameProfile = emulator ? null : gameApiProfile(full);
       const detected = emulator
         ? { ...emulators.apiChoices(emulator)[0], via: 'emulator-profile' }
-        : (gameProfile ? gameProfile.detected : detectApi(full, pe.getImports(full)));
+        : (gameProfile ? gameProfile.detected : observedApi || detectApi(full, pe.getImports(full)));
       if (!detected) {
         undetectedExes.push({ path: full, rel: path.relative(gameDir, full), name, size, depth, bitness });
         return;
@@ -623,7 +631,7 @@ async function scanGame(gameDir) {
         });
       }
     } else if (lower.endsWith('.addon64') || lower.endsWith('.addon32') || lower.endsWith('.addon')) {
-      addonPresent = path.relative(gameDir, full);
+      addonPaths.push(full);
     }
   }, MAX_SCAN_DEPTH, { includeContent: xboxLayout });
 
@@ -672,12 +680,15 @@ async function scanGame(gameDir) {
   const seenNames = new Set();
   const perName = new Map();
   const unique = [];
+  const hiddenCopies = [];
   for (const exe of exeCandidates) {
     const name = exe.name.toLowerCase();
     const key = `${name}|${exe.size}|${exe.dx12 ? 12 : 11}`;
-    if (seenNames.has(key)) continue;
     const seen = perName.get(name) || 0;
-    if (seen >= 2) continue;
+    if (seenNames.has(key) || seen >= 2) {
+      hiddenCopies.push(exe);
+      continue;
+    }
     seenNames.add(key);
     perName.set(name, seen + 1);
     unique.push(exe);
@@ -731,12 +742,10 @@ async function scanGame(gameDir) {
     exeCandidates.push(...offered);
   }
 
-  const chosen = exeCandidates[0] || null;
-  const primaryDlss = selectPrimaryDlss(dlssFiles, chosen);
   // When nothing turned up, say which kind of folder this actually is instead
   // of leaving the user to guess.
   let emptyReason = null;
-  if (!chosen) {
+  if (!exeCandidates.length) {
     let top = [];
     try { top = fs.readdirSync(gameDir).map((f) => f.toLowerCase()); } catch {}
     const looksPacked = top.some((f) => /^setup\.exe$/.test(f)) && top.some((f) => /\.(bin|rar|iso|zip|part\d+)$/.test(f));
@@ -750,11 +759,26 @@ async function scanGame(gameDir) {
     // DLLs say which one this is.
     else emptyReason = rendererModule(gameDir) ? 'renderer-in-dll' : 'no-graphics-exe';
   }
-  let install = null;
+  // An update can make two previously distinct candidates indistinguishable
+  // to the picker. Keep the exact scanned EXE when it was already selected.
+  const retainTarget = file => {
+    if (!file) return null;
+    const matches = exe => path.relative(exe.path, file) === '';
+    const shown = exeCandidates.find(matches);
+    if (shown) return shown;
+    const scanned = hiddenCopies.find(matches);
+    if (scanned) exeCandidates.push(scanned);
+    return scanned;
+  };
+  let install = null, installedExe = null;
   const activeManifest = path.join(gameDir, '_DLSS5_Backup', 'manifest.json');
   if (fs.existsSync(activeManifest)) {
     try {
       const data = JSON.parse(fs.readFileSync(activeManifest, 'utf8'));
+      if (data.version === 1 && Array.isArray(data.added) && Array.isArray(data.replaced) &&
+          typeof data.game?.exe === 'string' && !path.isAbsolute(data.game.exe)) {
+        installedExe = retainTarget(path.resolve(gameDir, data.game.exe));
+      }
       install = {
         route: data.route || (data.game && data.game.bitness === 32 ? 'feeder' : 'native'),
         api: data.game && data.game.api,
@@ -782,6 +806,44 @@ async function scanGame(gameDir) {
   if (!fs.existsSync(activeManifest)) {
     try { recoverable = require('./apply').recoverableManifest(gameDir); } catch {}
   }
+  const chosen = retainTarget(preferredExe) || installedExe || exeCandidates[0] || null;
+  // Leave shared engine/plugin directories available. DLLs beside a
+  // different executable, or under its independent subtree, belong to it.
+  const candidateDirs = [...new Set([...exeCandidates, ...hiddenCopies].map(exe => path.dirname(exe.path)))].sort((a, b) => b.length - a.length);
+  const chosenDir = chosen && path.dirname(chosen.path);
+  const inside = (folder, file) => {
+    const rel = path.relative(folder, file);
+    return rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel);
+  };
+  const owners = new Map();
+  const belongsTo = (file, targetDir) => {
+    if (candidateDirs.length < 2) return true;
+    const parent = path.dirname(file);
+    if (!owners.has(parent)) owners.set(parent, candidateDirs.find(dir => inside(dir, parent)));
+    const owner = owners.get(parent);
+    return !owner || owner === targetDir || (owner !== parent && inside(owner, targetDir));
+  };
+  const forChosen = file => belongsTo(file, chosenDir);
+  const localDlss = dlssFiles.filter(file => forChosen(file.path));
+  const localUpscalers = upscalerFiles.filter(file => forChosen(file.path));
+  const localStreamline = streamlineFiles.filter(file => forChosen(file.path));
+  const capabilities = new Map();
+  const routeCandidates = exeCandidates.map(exe => {
+    const dir = path.dirname(exe.path);
+    if (!capabilities.has(dir)) {
+      const runtimes = dir === chosenDir ? localDlss : dlssFiles.filter(file => belongsTo(file.path, dir));
+      const target = {
+        primaryDlss: selectPrimaryDlss(runtimes, exe),
+        upscalerFiles: dir === chosenDir ? localUpscalers : upscalerFiles.filter(file => belongsTo(file.path, dir)),
+        install,
+      };
+      capabilities.set(dir, {
+        hasNativeDlss: installRoutes.nativeDlssPresent(target),
+        hasNativeUpscaler: installRoutes.nativeUpscalerPresent(target),
+      });
+    }
+    return { ...exe, ...capabilities.get(dir) };
+  });
   let reshade = chosen ? inspectReShade(path.dirname(chosen.path)) : inspectReShade(gameDir);
   if (!reshade.installed && install && install.vulkanLayer &&
       fs.existsSync(install.vulkanLayer.manifest || '')) {
@@ -794,14 +856,14 @@ async function scanGame(gameDir) {
   return {
     gameDir,
     gameName: path.basename(gameDir),
-    exeCandidates,
+    exeCandidates: routeCandidates,
     chosen,
     emulator: chosen ? chosen.emulator : null,
-    dlssFiles,
-    primaryDlss,
-    streamlineFiles,
-    upscalerFiles,
-    addonPresent,
+    dlssFiles: localDlss,
+    primaryDlss: selectPrimaryDlss(localDlss, chosen),
+    streamlineFiles: localStreamline,
+    upscalerFiles: localUpscalers,
+    addonPresent: addonPaths.filter(forChosen).map(file => path.relative(gameDir, file)).at(-1) || null,
     emptyReason,
     reshade,
     install,

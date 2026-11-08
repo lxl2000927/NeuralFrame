@@ -33,67 +33,95 @@ function minimalPe(file, { dll, filler }) {
   return file;
 }
 
-test('an updated overlay build replaces the copy the previous one installed', (t) => {
+function upgradeFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-overlay-update-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-
   const gameDir = realDir(root, 'game');
-  const exe = minimalPe(path.join(gameDir, 'Game.exe'), { dll: false, filler: 1 });
-  const oldBuild = minimalPe(path.join(root, 'old', 'overlay.addon64'), { dll: true, filler: 2 });
-  const newBuild = minimalPe(path.join(root, 'new', 'overlay.addon64'), { dll: true, filler: 3 });
+  const exe = minimalPe(path.join(gameDir, 'Game.exe'), { dll:false, filler:1 });
+  const libraryFor = filler => createOverlayLibrary(path.join(root, 'library'),
+    minimalPe(path.join(root, String(filler), 'overlay.addon64'), { dll:true, filler }));
+  const oldLibrary = libraryFor(2), library = libraryFor(3);
+  const old = oldLibrary.install('builtin', exe);
+  const target = { path:exe, bitness:64, api:'dxgi', apiLabel:'DirectX 12' };
+  const manifest = { route:'native', added:[path.basename(old.file)] };
+  const plan = gameOverlay.prepare({library,target,route:'native'});
+  return {root,gameDir,exe,oldLibrary,library,old,target,manifest,plan};
+}
 
-  const library = build => createOverlayLibrary(path.join(root, 'library'), build);
-  const target = { path: exe, bitness: 64, api: 'dxgi', apiLabel: 'DirectX 12' };
-
-  const installed = library(oldBuild).install('builtin', exe);
-  assert.ok(fs.existsSync(installed.file));
-
-  // Without the replacement step the older copy blocks the new build outright.
-  assert.throws(() => gameOverlay.prepare({ library: library(newBuild), target, route: 'native' }),
-    /Remove the previous test overlay/);
-
-  gameOverlay.replaceOutdated(library(newBuild), gameDir);
-  assert.equal(fs.existsSync(installed.file), false, 'the previous build was left in the game folder');
-  assert.deepEqual(library(newBuild).list().installations, []);
-
-  const plan = gameOverlay.prepare({ library: library(newBuild), target, route: 'native' });
-  assert.equal(plan.alreadyPresent, false);
-  assert.notEqual(plan.file, installed.file);
+test('planning is read-only; replacing an overlay retires only that game’s previous build', async t => {
+  const f = upgradeFixture(t);
+  const otherExe = minimalPe(path.join(f.root, 'other', 'Other.exe'), {dll:false, filler:1});
+  const other = f.oldLibrary.install('builtin', otherExe);
+  assert.ok(fs.existsSync(f.old.file));
+  assert.equal(f.plan.previous.length, 1);
+  const result = await gameOverlay.attach({...f,saveManifest: async () => {}});
+  assert.equal(fs.existsSync(f.old.file), false);
+  assert.deepEqual(f.manifest.added,[path.basename(result.file)]);
+  assert.ok(fs.existsSync(other.file));
+  assert.deepEqual(f.library.list().installations.map(r => r.id).sort(), [result.id,other.id].sort());
+  const unchanged = gameOverlay.prepare({library:f.library,target:f.target,route:'native'});
+  assert.equal(unchanged.alreadyPresent, true);
+  assert.equal(unchanged.previous.length, 0);
 });
 
-test('a current overlay installation survives the replacement check', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-overlay-keep-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-
-  const gameDir = realDir(root, 'game');
-  const exe = minimalPe(path.join(gameDir, 'Game.exe'), { dll: false, filler: 1 });
-  const build = minimalPe(path.join(root, 'build', 'overlay.addon64'), { dll: true, filler: 2 });
-  const library = () => createOverlayLibrary(path.join(root, 'library'), build);
-
-  const installed = library().install('builtin', exe);
-  gameOverlay.replaceOutdated(library(), gameDir);
-  assert.ok(fs.existsSync(installed.file), 'the matching build must not be removed');
-  assert.equal(library().list().installations.length, 1);
+test('overlay update rolls back game files, inventory and manifest on a failed save', async t => {
+  const f = upgradeFixture(t), original = fs.readFileSync(f.old.file);
+  const manifestFile = path.join(realDir(f.gameDir, '_DLSS5_Backup'), 'manifest.json');
+  fs.writeFileSync(manifestFile, JSON.stringify(f.manifest));
+  await assert.rejects(gameOverlay.attach({...f,saveManifest:async (_,next) => {
+    fs.writeFileSync(manifestFile, JSON.stringify(next));
+    throw Error('simulated failure');
+  }}), /simulated failure/);
+  assert.deepEqual(fs.readFileSync(f.old.file), original);
+  assert.equal(fs.existsSync(f.plan.file), false);
+  assert.deepEqual(f.library.list().installations.map(r=>r.id), [f.old.id]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(manifestFile)), f.manifest);
+  assert.deepEqual(f.manifest.added, [path.basename(f.old.file)]);
 });
 
-test('another game keeps its overlay when this one is updated', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-overlay-other-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+test('the change preview simulates the complete overlay upgrade without changing the test game or catalog', async t => {
+  const f = upgradeFixture(t), preview = require('../src/core/preview-fs');
+  await preview.simulate(async () => {
+    const plan = gameOverlay.prepare({library:f.library,target:f.target,route:'native'});
+    const updated = await gameOverlay.attach({...f,plan,manifest:structuredClone(f.manifest),saveManifest:async()=>{}});
+    assert.deepEqual(f.library.list().installations.map(r=>r.id), [updated.id]);
+    assert.ok(preview.fs.existsSync(plan.file));
+    assert.equal(preview.fs.existsSync(f.old.file), false);
+  });
+  assert.ok(fs.existsSync(f.old.file));
+  assert.equal(fs.existsSync(f.plan.file), false);
+  assert.deepEqual(f.library.list().installations.map(r=>r.id), [f.old.id]);
+});
 
-  const first = realDir(root, 'first');
-  const second = realDir(root, 'second');
-  const exeOne = minimalPe(path.join(first, 'One.exe'), { dll: false, filler: 1 });
-  const exeTwo = minimalPe(path.join(second, 'Two.exe'), { dll: false, filler: 1 });
-  const oldBuild = minimalPe(path.join(root, 'old', 'overlay.addon64'), { dll: true, filler: 2 });
-  const newBuild = minimalPe(path.join(root, 'new', 'overlay.addon64'), { dll: true, filler: 3 });
-  const library = b => createOverlayLibrary(path.join(root, 'library'), b);
+test('modification after preview is detected without removing the replaced file', async t => {
+  const f = upgradeFixture(t);
+  fs.appendFileSync(f.old.file, 'user change');
+  await assert.rejects(gameOverlay.attach({...f,saveManifest:async()=>{}}), /modified/);
+  assert.ok(fs.readFileSync(f.old.file).includes(Buffer.from('user change')));
+  assert.equal(fs.existsSync(f.plan.file), false);
+  assert.deepEqual(f.library.list().installations.map(r=>r.id), [f.old.id]);
+});
 
-  library(oldBuild).install('builtin', exeOne);
-  const untouched = library(oldBuild).install('builtin', exeTwo);
+test('a backend switch removing F8 after preflight still tracks the newly installed file', async t => {
+  const f = upgradeFixture(t);
+  const plan = gameOverlay.prepare({ library: f.oldLibrary, target: f.target, route: 'native' });
+  assert.equal(plan.alreadyPresent, true);
+  fs.unlinkSync(plan.file);
+  const manifest = { route: 'native', added: [] };
+  await gameOverlay.attach({ ...f, library: f.oldLibrary, manifest, plan, saveManifest: async () => {} });
+  assert.ok(fs.existsSync(plan.file));
+  assert.deepEqual(manifest.added, [path.relative(f.gameDir, plan.file)]);
+  assert.deepEqual(f.oldLibrary.list().installations.map(r => r.id), [f.old.id]);
+});
 
-  gameOverlay.replaceOutdated(library(newBuild), first);
-  assert.ok(fs.existsSync(untouched.file), 'only the game being installed into is updated');
-  assert.deepEqual(library(newBuild).list().installations.map(r => r.directory), [second]);
+test('a deleted copy can be reinstalled and a deleted game can release its installation record', t => {
+  const f = upgradeFixture(t);
+  fs.unlinkSync(f.old.file);
+  assert.equal(f.oldLibrary.install('builtin', f.exe).id, f.old.id);
+  assert.ok(fs.existsSync(f.old.file));
+  fs.rmSync(f.gameDir, {recursive:true});
+  f.library.uninstall(f.old.id);
+  assert.deepEqual(f.library.list().installations, []);
 });
 
 test('a protected Xbox executable uses the architecture found by the game scanner', async (t) => {

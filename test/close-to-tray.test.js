@@ -42,7 +42,7 @@ function load(root) {
     }
   };
   const context = vm.createContext({ require: (name) => stubs[name] || realRequire(name),
-    __dirname: path.dirname(main), process, Buffer, console, setTimeout, setInterval, clearInterval });
+    __dirname: path.dirname(main), process, Buffer, console, setTimeout, clearTimeout, setInterval, clearInterval });
   vm.runInContext(fs.readFileSync(main, 'utf8'), context, { filename: main });
   // createWindow is only called from whenReady, which the stub never resolves.
   vm.runInContext('createWindow();', context);

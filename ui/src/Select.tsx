@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
@@ -15,9 +16,10 @@ export function Select({
   options: string[][];
   disabled?: boolean;
 }) {
-  const items = options.some(([id]) => id === value)
+  const rawItems = options.some(([id]) => id === value)
     ? options
-    : [[value, `${value}（当前配置）`], ...options];
+    : [[value, t("{0}（当前配置）", [value])], ...options];
+  const items = rawItems.map(([id, text]) => [id, t(text)]);
   const selected = Math.max(
     0,
     items.findIndex(([id]) => id === value),
@@ -31,6 +33,7 @@ export function Select({
     maxHeight: 280,
   });
   const trigger = useRef<HTMLButtonElement>(null);
+  const anchor = useRef<{ left: number; top: number } | null>(null);
   const popup = useRef<HTMLDivElement>(null);
   const search = useRef({ text: "", at: 0 });
   const id = useId();
@@ -44,6 +47,7 @@ export function Select({
   useLayoutEffect(() => {
     if (!visible || !trigger.current) return;
     const r = trigger.current.getBoundingClientRect();
+    anchor.current = { left: r.left, top: r.top };
     const below = innerHeight - r.bottom - 12;
     const above = r.top - 12;
     const upward =
@@ -79,7 +83,11 @@ export function Select({
         setOpen(false);
     };
     const scrolled = (event: Event) => {
-      if (!popup.current?.contains(event.target as Node)) setOpen(false);
+      if (popup.current?.contains(event.target as Node)) return;
+      // Focusing an off-screen control can deliver its scroll event after the
+      // menu opens. Close only when scrolling actually moves the anchor.
+      const rect = trigger.current?.getBoundingClientRect(), previous = anchor.current;
+      if (rect && previous && (Math.abs(rect.left - previous.left) > 1 || Math.abs(rect.top - previous.top) > 1)) setOpen(false);
     };
     const close = () => setOpen(false);
     document.addEventListener("pointerdown", outside, true);
@@ -109,7 +117,7 @@ export function Select({
         className="select-trigger"
         role="combobox"
         type="button"
-        aria-label={label}
+        aria-label={t(label)}
         aria-haspopup="listbox"
         aria-expanded={visible}
         aria-controls={visible ? id : undefined}
@@ -190,7 +198,7 @@ export function Select({
             className="select-popup"
             role="listbox"
             id={id}
-            aria-label={label}
+            aria-label={t(label)}
             style={position}
           >
             {items.map(([key, text], index) => (

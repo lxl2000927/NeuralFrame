@@ -5,6 +5,38 @@ const context=new AsyncLocalStorage(),journal=require('./file-journal'),pe=requi
 const {fail,safe}=require('./component-library');
 const digest=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const same=(a,b)=>path.resolve(a).toLowerCase()===path.resolve(b).toLowerCase();
+function resolveManagedSelection(lib, selected, request) {
+  if (request.kind !== 'enhanced' || !selected['dlss-nr']) return { selection: selected, request };
+  // The graphics installer owns its model, including every deep copy and the
+  // manifest identity. Never let the generic component pass overwrite it later.
+  const { 'dlss-nr': packageId, ...selection } = selected;
+  const config = request.config || {};
+  if (!config.neuralMode || config.neuralMode === 'off') return { selection, request };
+
+  const models = require('./neural-models');
+  const pkg = lib.package(packageId);
+  const file = pkg.files.find(entry => entry.rel === 'nvngx_dlssnr.dll');
+  if (pkg.component !== 'dlss-nr' || !file) throw fail('所选组件不包含神经渲染模型');
+  const info = models.inspectNeuralModelBinary(safe(lib.directory(pkg), file.rel));
+  if (!info.valid || info.sha256 !== file.sha256) throw fail('组件库中的神经渲染模型已变化或缺失，请重新导入');
+  const id = models.normalizeModelId(config.neuralModelId);
+  const matches = id ? models.matchesModelId(info, id) : config.neuralMode !== 'legacy' || info.knownModel?.role === 'legacy';
+  if (!matches) {
+    throw fail(`档位选择的神经模型（${id || config.neuralMode}）与此游戏在组件库中选择的模型（${info.modelId}）不同。请将两处设为同一模型，或在组件库清除此游戏的模型选择。`);
+  }
+  return {
+    selection,
+    request: { ...request, config: { ...config, neuralModelId: info.modelId, neuralModelSha256: info.sha256 } }
+  };
+}
+function claimGraphicsModel(dir, config) {
+  const owner = context.getStore();
+  if (!owner || !same(owner.dir, dir) || !owner.selected['dlss-nr']) return config;
+  const resolved = resolveManagedSelection(owner.lib, owner.selected, {kind:'enhanced',config});
+  owner.packages = owner.packages.filter(pkg => pkg.component !== 'dlss-nr');
+  owner.remaining = resolved.selection;
+  return resolved.request.config;
+}
 async function prepare(lib,selection){
   const packages=[];
   for(const [component,id] of Object.entries(selection||{})){
@@ -27,12 +59,14 @@ function resolveSource(gameDir,src,dest){const c=context.getStore();if(!c||!same
   for(const p of c.packages){const f=match(p,dest);if(f&&pe.getBitness(src)===f.bitness)return safe(c.lib.directory(p),f.rel);}return src;
 }
 async function managed(lib,dir,selection,work){
-  const packages=await prepare(lib,selection),result=await context.run({lib,dir,packages},work);
+  const owner = {lib, dir, packages:await prepare(lib,selection), selected:selection || {}, remaining:selection};
+  const result = await context.run(owner,work);
   if(result?.ok===false)return result;
   // Installers can intentionally skip a same/newer bundled version. Explicit
   // library choices must still be honored, including a user-selected downgrade.
   // This pass only touches features the route left installed, never enables one.
-  const applied=await applySelection(lib,dir,selection,{strict:false});
+  const applied=Object.keys(owner.remaining || {}).length
+    ? await applySelection(lib,dir,owner.remaining,{strict:false}) : {ok:true,changed:0};
   return result&&typeof result==='object'?{...result,componentUpdate:applied}:result;
 }
 async function targets(dir,packages){
@@ -48,38 +82,85 @@ async function targets(dir,packages){
   for(const file of files)if(fs.existsSync(file)&&fs.statSync(file).isFile())for(const p of packages){const f=match(p,file);if(f&&pe.getBitness(file)===f.bitness)rows.push({file,p,f});}
   return{scan,manifest,rows};
 }
-async function applySelection(lib,dir,selection,{strict=false}={}){
+function updateModelIdentity(dir, manifest, paths) {
+  if (!manifest.neuralRendering || manifest.neuralRendering.mode === 'off') return false;
+  const models = paths.filter(file => path.basename(file).toLowerCase() === 'nvngx_dlssnr.dll');
+  if (!models.length) return false;
+  const exe = journal.safePath(dir, manifest.game.exe);
+  const exeDir = path.dirname(exe);
+  const candidates = [pe.getBitness(exe) === 32 ? path.join(exeDir, 'host64', 'nvngx_dlssnr.dll') : null,
+    path.join(exeDir, 'nvngx_dlssnr.dll'), ...models];
+  const model = candidates.filter(Boolean).map(file => journal.safePath(dir, path.relative(dir, file))).find(file => fs.existsSync(file));
+  const info = require('./neural-models').inspectNeuralModelBinary(model);
+  const identity = {
+    modelId: info.valid ? info.modelId : null, modelVersion: info.valid ? info.version : null,
+    sha256: info.sha256 || null, architectures: info.architectures || []
+  };
+  const changed = Object.entries(identity).some(([key,value]) =>
+    JSON.stringify(manifest.neuralRendering[key]) !== JSON.stringify(value));
+  if (changed) Object.assign(manifest.neuralRendering, identity);
+  return changed;
+}
+async function applySelection(lib,dir,selection,{strict=false,previousSelection}={}){
   const packages=await prepare(lib,selection),{scan,manifest,rows}=await targets(dir,packages);
   const missing=packages.filter(p=>!rows.some(r=>r.p.id===p.id));
   if(strict&&missing.length)throw fail('请先通过安装路线启用这些组件，再独立更新：'+missing.map(p=>p.component).join('、'));
   const changed=rows.filter(r=>digest(r.file)!==r.f.sha256);
-  if(!changed.length)return{ok:true,changed:0,message:'已安装文件与所选版本一致。'};
+  if(!changed.length){
+    if (manifest && updateModelIdentity(dir, manifest, rows.map(row => row.file))) {
+      await require('./install-guards').assertGameClosed(dir,scan.chosen.path);
+      await journal.transaction(dir, () => require('./apply').saveActiveManifest(dir,manifest));
+    }
+    return{ok:true,changed:0,message:'已安装文件与所选版本一致。'};
+  }
   await require('./install-guards').assertGameClosed(dir,scan.chosen.path);
   return journal.transaction(dir,async()=>{
     const apply=require('./apply'),m=manifest||apply.beginManifest(dir,scan.chosen.path,scan.chosen.api||'dxgi');
-    const revision={id:crypto.randomUUID(),at:new Date().toISOString(),files:[],previousSelection:m.componentSelection||{}};
+    if (!manifest) m.componentOnlySince = m.date;
+    const historyManifest = { date: m.date, game: m.game, route: 'component-library', replaced: [] };
+    const revision={id:crypto.randomUUID(),at:new Date().toISOString(),files:[],previousSelection:previousSelection ?? m.componentSelection ?? {}};
     for(const [i,r] of changed.entries()){
       const rel=path.relative(dir,r.file),snapshot=`_DLSS5_Backup/component-revisions/${revision.id}/${i}.bin`,saved=journal.safePath(dir,snapshot);
       await journal.capture(dir,saved);await fs.promises.mkdir(path.dirname(saved),{recursive:true});await fs.promises.copyFile(r.file,saved);
-      revision.files.push({rel,snapshot,sha256:digest(saved),after:r.f.sha256});
+      const beforeHash = digest(saved);
+      revision.files.push({rel,snapshot,sha256:beforeHash,after:r.f.sha256});
+      historyManifest.replaced.push({ rel, oldVersion: pe.getFileVersion(saved), newVersion: r.f.version, beforeHash, afterHash: r.f.sha256 });
       await apply.copyTracked(m,dir,safe(lib.directory(r.p),r.f.rel),r.file,{kind:'component-library',newVersion:r.f.version});
     }
+    updateModelIdentity(dir, m, changed.map(row => row.file));
     m.componentHistory=[...(m.componentHistory||[]),revision];m.componentSelection=selection;
-    await apply.saveActiveManifest(dir,m);return{ok:true,changed:changed.length,restartRequired:true};
+    await apply.saveActiveManifest(dir,m);return{ok:true,changed:changed.length,restartRequired:true,historyManifest};
   });
 }
 async function rollback(lib,dir,snapshotId){
   const manifest=require('./backend-manager').readManifest(dir),revision=manifest?.componentHistory?.at(-1);
   if(!revision||revision.id!==snapshotId)throw fail('回滚记录已变化，请刷新列表');
-  for(const f of revision.files){
-    if(!f.snapshot.startsWith(`_DLSS5_Backup/component-revisions/${revision.id}/`)||digest(journal.safePath(dir,f.snapshot))!==f.sha256)throw fail('上一版组件快照损坏或缺失');
-    if(digest(journal.safePath(dir,f.rel))!==f.after)throw fail('游戏组件已被其他操作更改，不能覆盖；请先查看组件清单');
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(revision.id) || !Array.isArray(revision.files) || !revision.files.length) throw fail('上一版组件快照损坏或缺失');
+  const folder = `_DLSS5_Backup/component-revisions/${revision.id}`;
+  for(const [i,f] of revision.files.entries()){
+    if(!f || f.snapshot !== folder + '/' + i + '.bin') throw fail('上一版组件快照损坏或缺失');
+    const saved = journal.safePath(dir, f.snapshot), target = journal.safePath(dir, f.rel);
+    if(!fs.existsSync(saved) || digest(saved)!==f.sha256)throw fail('上一版组件快照损坏或缺失');
+    if(!fs.existsSync(target) || digest(target)!==f.after)throw fail('游戏组件已被其他操作更改，不能覆盖；请先查看组件清单');
   }
   const exe=journal.safePath(dir,manifest.game.exe);await require('./install-guards').assertGameClosed(dir,exe);
-  return journal.transaction(dir,async()=>{
-    const apply=require('./apply');for(const f of revision.files)await apply.copyTracked(manifest,dir,journal.safePath(dir,f.snapshot),journal.safePath(dir,f.rel),{kind:'component-rollback'});
+  const result = await journal.transaction(dir,async()=>{
+    const apply = require('./apply');
+    const historyManifest = { date: manifest.date, game: manifest.game, route: 'component-library', replaced: [] };
+    for (const f of revision.files) {
+      const saved = journal.safePath(dir, f.snapshot), target = journal.safePath(dir, f.rel);
+      const oldVersion = pe.getFileVersion(target), newVersion = pe.getFileVersion(saved);
+      historyManifest.replaced.push({ rel: f.rel, oldVersion, newVersion, beforeHash: f.after, afterHash: f.sha256 });
+      await apply.copyTracked(manifest, dir, saved, target, { kind: 'component-rollback', newVersion });
+      await journal.capture(dir, saved);
+      await fs.promises.unlink(saved);
+    }
+    updateModelIdentity(dir, manifest, revision.files.map(row => journal.safePath(dir, row.rel)));
     manifest.componentHistory.pop();manifest.componentSelection=revision.previousSelection||{};await apply.saveActiveManifest(dir,manifest);
-    return{ok:true,changed:revision.files.length,selection:manifest.componentSelection,restartRequired:true};
+    return{ok:true,changed:revision.files.length,selection:manifest.componentSelection,restartRequired:true,historyManifest};
   });
+  // Remove only an empty revision folder. User files and other revisions stay in place.
+  try { await fs.promises.rmdir(journal.safePath(dir, folder)); } catch { /* An unused directory can remain. */ }
+  return result;
 }
-module.exports={prepare,resolveSource,managed,applySelection,rollback};
+module.exports={prepare,resolveSource,resolveManagedSelection,claimGraphicsModel,managed,applySelection,rollback};
