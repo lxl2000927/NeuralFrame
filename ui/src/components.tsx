@@ -1,5 +1,5 @@
 import { t } from "./i18n";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Gamepad2, X, LoaderCircle } from "lucide-react";
 import type { Game } from "./types";
 export { Select } from "./Select";
@@ -17,14 +17,14 @@ export function Artwork({
   const url = typeof game.poster === "string" ? game.poster : game.poster?.url;
   const custom = typeof game.poster === "object" && game.poster?.custom;
   const hero = game.hero;
-  const candidates = layout === "cover"
-    ? (custom ? [url, game.tile, hero] : [game.tile, hero, url])
-    : (layout === "banner" && !custom ? [hero, url] : [url, hero]);
+  const candidates = layout === "thumbnail"
+    ? [url, hero]
+    : custom ? [url, game.tile, hero] : [game.tile, hero, url];
   const source = candidates.find((s) => s && !failed.includes(s));
   useEffect(() => setFailed([]), [url, hero, game.tile]);
   return (
     <span
-      className={`artwork ${large ? "large" : ""} ${source && source === hero ? "landscape" : ""}`}
+      className={`artwork ${large ? "large" : ""}`}
     >
       {source ? (
         <>
@@ -132,6 +132,7 @@ export function Modal({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const dialog = ref.current!;
     dialog.showModal();
@@ -141,13 +142,14 @@ export function Modal({
     <dialog
       ref={ref}
       className="modal"
+      aria-labelledby={titleId}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
       }}
     >
       <header>
-        <h2>{t(title)}</h2>
+        <h2 id={titleId}>{t(title)}</h2>
         <button
           className="icon-button"
           aria-label={t("关闭对话框")}

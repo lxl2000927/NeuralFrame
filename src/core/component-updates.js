@@ -1,10 +1,15 @@
 'use strict';
 const fs=require('fs'),path=require('path'),crypto=require('crypto');
-const {DEFINITIONS,PROVIDERS}=require('./component-definitions');
+const {DEFINITIONS,PROVIDERS,RANKFTW_NR_SFV2,RANKFTW_NR_310916}=require('./component-definitions');
 const {read,safe,hash,digest,fail}=require('./component-library');
+const {downloadAsset,sweepPartials}=require('./asset-download');
 const journal=require('./file-journal');
 const MB=1024*1024;
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const MODEL_PROVIDER = 'smartergamers-nr';
+const MODEL_NAME = 'nvngx_dlssnr.dll';
+const pinnedModels = [RANKFTW_NR_SFV2, RANKFTW_NR_310916];
+const MODEL_REPO = PROVIDERS[MODEL_PROVIDER].repo;
 const providersByRepo = new Map();
 for (const [provider, {repo}] of Object.entries(PROVIDERS)) {
   if (!providersByRepo.has(repo)) providersByRepo.set(repo, []);
@@ -22,11 +27,83 @@ function rateLimitDeadline(response, now) {
 function allowedAsset(url,repo){try{const u=new URL(url);return u.protocol==='https:'&&u.hostname==='github.com'&&u.pathname.startsWith('/'+repo+'/releases/download/')&&!u.username&&!u.password;}catch{return false;}}
 async function bounded(response,max){let size=0;const parts=[];for await(const chunk of response.body){size+=chunk.length;if(size>max)throw fail('响应超过大小限制');parts.push(Buffer.from(chunk));}return Buffer.concat(parts);}
 function stable(release){return !release.draft&&!release.prerelease&&!/(?:^|[-_.])(alpha|beta|rc|pre)(?:[-_.\d]|$)/i.test(release.tag_name);}
-function candidates(releases,provider){const def=PROVIDERS[provider],component=Object.keys(DEFINITIONS).find(c=>DEFINITIONS[c].online===provider);const out=[];
-  for(const r of releases.filter(stable))for(const a of r.assets||[])if(def.asset.test(a.name)&&allowedAsset(a.browser_download_url,def.repo)){
-    const sha=/^sha256:([a-f0-9]{64})$/i.exec(a.digest||'')?.[1]?.toLowerCase();
-    out.push({id:hash(JSON.stringify([provider,r.id,a.id,a.digest])),component,provider,repo:def.repo,tag:r.tag_name,name:a.name,url:a.browser_download_url,releaseUrl:`https://github.com/${def.repo}/releases/tag/${encodeURIComponent(r.tag_name)}`,size:a.size,sha256:sha||null,publishedAt:r.published_at,downloadable:!!sha&&a.size>0&&a.size<=512*MB});
-  }return out.slice(0,12);
+function componentFor(provider) {
+  return Object.keys(DEFINITIONS).find(id => DEFINITIONS[id].online === provider || DEFINITIONS[id].additionalOnline?.includes(provider));
+}
+function taggedModelPath(tag) {
+  if (typeof tag !== 'string' || !/^[\w.-]+(?:\/[\w.-]+)*$/.test(tag) ||
+      tag.split('/').some(part => part === '.' || part === '..')) return null;
+  return `${MODEL_REPO}/refs/tags/${tag}/resources/payload/streamline/${MODEL_NAME}`;
+}
+function validDownloadUrl(candidate, provider) {
+  if (allowedAsset(candidate.url,provider.repo)) return true;
+  const tagged = candidate.provider === MODEL_PROVIDER && candidate.name === MODEL_NAME && taggedModelPath(candidate.tag);
+  return !!tagged && candidate.url === 'https://media.githubusercontent.com/media/' + tagged;
+}
+function candidates(releases,provider) {
+  const def = PROVIDERS[provider], component = componentFor(provider), out = [];
+  for (const release of releases.filter(stable)) {
+    for (const asset of release.assets || []) {
+      if (!def.asset.test(asset.name) || !allowedAsset(asset.browser_download_url,def.repo)) continue;
+      const sha = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest || '')?.[1].toLowerCase();
+      out.push({
+        id:hash(JSON.stringify([provider,release.id,asset.id,asset.digest])),
+        component,provider,repo:def.repo,tag:release.tag_name,name:asset.name,url:asset.browser_download_url,
+        releaseUrl:`https://github.com/${def.repo}/releases/tag/${encodeURIComponent(release.tag_name)}`,
+        size:asset.size,sha256:sha || null,publishedAt:release.published_at,
+        downloadable:!!sha && Number.isSafeInteger(asset.size) && asset.size > 0 && asset.size <= 512 * MB
+      });
+    }
+  }
+  return out.slice(0,12);
+}
+async function taggedModel(release, fetcher) {
+  const tagged = taggedModelPath(release.tag_name);
+  if (!tagged) throw fail('不支持的版本标签');
+  const response = await fetcher('https://raw.githubusercontent.com/' + tagged, {signal:AbortSignal.timeout(15000)});
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw fail('模型指针返回 HTTP ' + response.status);
+  }
+  const pointer = (await bounded(response, 1024)).toString().trimEnd();
+  const match = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\r?\noid sha256:([a-f0-9]{64})\r?\nsize (\d+)$/.exec(pointer);
+  if (!match) throw fail('无效的 Git LFS 模型指针');
+  const [,sha256,length] = match, size = Number(length);
+  if (!Number.isSafeInteger(size) || size < 1 || size > 512*MB) throw fail('模型文件大小超出范围');
+  return {
+    id:hash(JSON.stringify([MODEL_PROVIDER,release.id,MODEL_NAME,sha256])),component:'dlss-nr',provider:MODEL_PROVIDER,
+    repo:MODEL_REPO,tag:release.tag_name,name:MODEL_NAME,url:'https://media.githubusercontent.com/media/' + tagged,
+    releaseUrl:`https://github.com/${MODEL_REPO}/releases/tag/${encodeURIComponent(release.tag_name)}`,
+    publishedAt:release.published_at,sha256,size,downloadable:true
+  };
+}
+async function smarterGamersModels(releases, fetcher, previous, errors) {
+  const stableReleases = releases.filter(stable).slice(0,12);
+  const results = await Promise.allSettled(stableReleases.map(async release => {
+    const assets = candidates([release], MODEL_PROVIDER);
+    return assets.some(c => c.downloadable) ? assets : [await taggedModel(release,fetcher)];
+  }));
+  const failed = [];
+  const items = results.flatMap((result,i) => {
+    if (result.status === 'fulfilled') return result.value;
+    const tag = stableReleases[i].tag_name;
+    failed.push(tag + ' · ' + result.reason.message);
+    return previous.filter(c => c.tag === tag).map(c => ({...c, stale:true}));
+  });
+  if (failed.length) errors.push({provider:MODEL_PROVIDER, message:failed.join(' / ')});
+  return items;
+}
+function pinnedModelFor(candidate) {
+  return pinnedModels.find(p => candidate.provider === p.provider && candidate.url === p.url && candidate.sha256 === p.sha256);
+}
+function findCachedPackage(packages, candidate, pinned) {
+  if (!candidate.sha256) return null;
+  if (pinned) return packages.find(p => p.component === 'dlss-nr' &&
+    p.files.some(f => f.rel === MODEL_NAME && f.sha256 === pinned.modelSha256));
+  const modelDigest = candidate.provider === MODEL_PROVIDER && candidate.name.toLowerCase() === MODEL_NAME ? candidate.sha256 : null;
+  return packages.find(p => p.component === candidate.component && (p.archiveSha256 === candidate.sha256 ||
+    p.releaseArchives?.some(a => a.sha256 === candidate.sha256) ||
+    (modelDigest && p.files.some(f => f.rel === 'nvngx_dlssnr.dll' && f.sha256 === modelDigest))));
 }
 async function unpack(file,dest,signal){let count=0,total=0;const names=new Set();await require('extract-zip')(file,{dir:dest,onEntry:entry=>{
   signal?.throwIfAborted();
@@ -45,13 +122,35 @@ async function mapFiles(root,component){const def=DEFINITIONS[component],all=fil
 class ComponentUpdates{
   constructor(library,{fetcher=globalThis.fetch,onProgress=()=>{}}={}){this.lib=library;this.fetcher=fetcher;this.onProgress=onProgress;this.cache=path.join(library.root,'updates.json');this.busy=false;this.controller=null;}
   cancel(){this.controller?.abort();return{ok:true};}
-  status(){return read(this.cache,{checkedAt:null,candidates:[],errors:[]});}
+  readIndex(){
+    const index = read(this.cache,{checkedAt:null,candidates:[],errors:[]});
+    if (index.sourcesVersion === 2) return index;
+    // A cached Enhanced release must not appear or delay the first check after upgrading.
+    return {...index, nextCheckAt:index.errors.some(e => e.message === 'GitHub 请求已限流') ? index.nextCheckAt : 0,
+      candidates:index.candidates.filter(c => Object.hasOwn(PROVIDERS,c.provider)),
+      errors:index.errors.filter(e => Object.hasOwn(PROVIDERS,e.provider)),
+      etags:Object.fromEntries(Object.entries(index.etags || {}).filter(([repo]) => providersByRepo.has(repo)))};
+  }
+  withLocalModels(index) {
+    const packages = this.lib.catalog().packages;
+    const {MODEL_DATABASE} = require('./neural-models');
+    return {...index, candidates:index.candidates.map(c => {
+      const pinned = pinnedModelFor(c);
+      const cached = findCachedPackage(packages,c,pinned);
+      if (c.component !== 'dlss-nr') return {...c, cachedPackageId:cached?.id};
+      const dllHash = c.name.toLowerCase() === MODEL_NAME ? c.sha256 :
+        pinned?.modelSha256 || cached?.files.find(file => file.rel === MODEL_NAME)?.sha256;
+      const catalogModelId = dllHash ? MODEL_DATABASE.find(model => model.sha256 === dllHash)?.id : undefined;
+      return {...c, cachedPackageId:cached?.id, downloadId:pinned?.id, catalogModelId};
+    })};
+  }
+  status(){return this.withLocalModels(this.readIndex());}
   async check() {
     if (this.pendingCheck) return this.pendingCheck;
     if (this.busy) throw fail('组件更新正在进行');
-    const old = this.status();
+    const old = this.readIndex();
     const nextCheckAt = old.nextCheckAt ?? (Date.parse(old.checkedAt) + CHECK_INTERVAL_MS);
-    if (Date.now() < nextCheckAt) return {ok:true, ...old, nextCheckAt, cached:true};
+    if (Date.now() < nextCheckAt) return {ok:true, ...this.withLocalModels(old), nextCheckAt, cached:true};
     this.busy = true;
     this.pendingCheck = this.refreshReleases(old).finally(() => {
       this.pendingCheck = null;
@@ -68,7 +167,7 @@ class ComponentUpdates{
       const previous = old.candidates.filter(item => providers.includes(item.provider));
       try {
         if (limitedUntil) throw fail('GitHub 请求已限流');
-        const headers = {Accept:'application/vnd.github+json', 'User-Agent':'Enhanced-Component-Library'};
+        const headers = {Accept:'application/vnd.github+json', 'User-Agent':'NeuralFrame-Component-Library'};
         if (etags[repo]) headers['If-None-Match'] = etags[repo];
         const response = await this.fetcher(`https://api.github.com/repos/${repo}/releases?per_page=100`, {
           headers, signal:AbortSignal.timeout(30000)
@@ -92,9 +191,11 @@ class ComponentUpdates{
         }
         const releases = JSON.parse((await bounded(response, 12 * MB)).toString());
         if (!Array.isArray(releases)) throw fail('版本列表格式错误');
-        items.push(...providers.flatMap(provider => candidates(releases, provider)));
+        const errorCount = errors.length;
+        if (repo === MODEL_REPO) items.push(...await smarterGamersModels(releases, this.fetcher, previous, errors));
+        else items.push(...providers.flatMap(provider => candidates(releases, provider)));
         const tag = response.headers.get('etag');
-        if (tag) etags[repo] = tag;
+        if (tag && errors.length === errorCount) etags[repo] = tag;
         else delete etags[repo];
       } catch (error) {
         for (const provider of providers) errors.push({provider, message:error.message});
@@ -102,27 +203,54 @@ class ComponentUpdates{
       }
     }
     const now = Date.now();
-    const result = {checkedAt:new Date(now).toISOString(), nextCheckAt:Math.max(now + CHECK_INTERVAL_MS, limitedUntil), candidates:items, errors};
+    const result = {sourcesVersion:2, checkedAt:new Date(now).toISOString(), nextCheckAt:Math.max(now + CHECK_INTERVAL_MS, limitedUntil), candidates:items, errors};
     await journal.atomicJson(this.cache, {...result, etags});
-    return {ok:true, ...result};
+    return {ok:true, ...this.withLocalModels(result)};
   }
-  async download(id){if(this.busy)throw fail('组件更新正在进行');this.busy=true;this.controller=new AbortController();const timer=setTimeout(()=>this.controller?.abort(),600000);let temp;
-    try{const c=this.status().candidates.find(c=>c.id===id),provider=c&&PROVIDERS[c.provider];
-      if(!c||!provider||DEFINITIONS[c.component]?.online!==c.provider||!c.downloadable||!allowedAsset(c.url,provider.repo)||!provider.asset.test(c.name)||!/^([a-f0-9]{64})$/.test(c.sha256))throw fail('下载记录无效或缺少 SHA-256，请重新检查更新');
+  async download(id){if(this.busy)throw fail('组件更新正在进行');this.busy=true;this.controller=new AbortController();let temp;
+    await sweepPartials(this.lib.root).catch(()=>{});
+    try{const c=pinnedModels.find(p=>p.id===id) || this.readIndex().candidates.find(c=>c.id===id),provider=c&&PROVIDERS[c.provider];
+      if(!c||!provider||componentFor(c.provider)!==c.component||!c.downloadable||!validDownloadUrl(c,provider)||!provider.asset.test(c.name)||!/^([a-f0-9]{64})$/.test(c.sha256))throw fail('下载记录无效或缺少 SHA-256，请重新检查更新');
+      this.onProgress({stage:'prepare',name:c.name,loaded:0,total:c.size});
+      const pinned = pinnedModelFor(c);
+      const cached = findCachedPackage(this.lib.catalog().packages, c, pinned);
+      if (cached) {
+        this.onProgress({stage:'verify',name:c.name,loaded:0,total:c.size});
+        const verified = await this.lib.verify(cached).catch(() => null);
+        this.controller.signal.throwIfAborted();
+        if (verified) return {ok:true,package:verified,compatibility:this.lib.compatibility(verified)};
+      }
+      if (c.stale) throw fail('下载记录无效或缺少 SHA-256，请重新检查更新');
       temp=safe(this.lib.root,'downloads/'+crypto.randomUUID());await fs.promises.mkdir(temp,{recursive:true});
-      this.onProgress({stage:'download',name:c.name,loaded:0,total:c.size});
-      const response=await this.fetcher(c.url,{signal:this.controller.signal});if(!response.ok)throw fail('下载服务返回 HTTP '+response.status);
-      const archive=safe(temp,c.name),handle=await fs.promises.open(archive,'wx');let size=0;const sha=crypto.createHash('sha256');
-      let last=0;try{for await(const chunk of response.body){size+=chunk.length;if(size>c.size||size>512*MB)throw fail('下载文件大小不符');sha.update(chunk);await handle.writeFile(chunk);if(Date.now()-last>200){this.onProgress({stage:'download',name:c.name,loaded:size,total:c.size});last=Date.now();}}}finally{await handle.close();}
-      if(size!==c.size||sha.digest('hex')!==c.sha256)throw fail('下载文件的 SHA-256 或大小不符，已取消入库');
-      this.onProgress({stage:'verify',name:c.name,loaded:size,total:c.size});
+      const archive=safe(temp,c.name);
+      try {
+        await downloadAsset(c, {
+          cacheRoot:this.lib.root, destination:archive, fetcher:this.fetcher, signal:this.controller.signal,
+          purgeOnAbort:true,
+          onProgress:loaded=>this.onProgress({stage:'download',name:c.name,loaded,total:c.size})
+        });
+      } catch (cause) { throw fail(cause.message); }
+      this.onProgress({stage:'verify',name:c.name,loaded:c.size,total:c.size});
       const signal = this.controller.signal;
       signal.throwIfAborted();
-      let files;if(/\.zip$/i.test(c.name)){const dest=safe(temp,'unpacked');await fs.promises.mkdir(dest);await unpack(archive,dest,signal);files=await mapFiles(dest,c.component);}else files={[c.name]:archive};
-      const p=await this.lib.importPackage({component:c.component,version:c.tag,files,source:provider.repo,releaseUrl:c.releaseUrl,archiveSha256:c.sha256,trustedAdapter:false},signal);
+      const modelRelease = c.provider === MODEL_PROVIDER;
+      let files;
+      if (/\.zip$/i.test(c.name)) {
+        const dest=safe(temp,'unpacked');
+        await fs.promises.mkdir(dest);
+        await unpack(archive,dest,signal);
+        files=await mapFiles(dest,c.component);
+      } else files = {[modelRelease ? MODEL_NAME : c.name]:archive};
+      if (pinned && require('./neural-models').inspectNeuralModelBinary(files[MODEL_NAME]).sha256 !== pinned.modelSha256) {
+        throw fail('RankFTW 发布包内的模型 DLL 指纹不匹配');
+      }
+      const p=await this.lib.importPackage({component:c.component,version:modelRelease || pinned ? undefined : c.tag,files,source:provider.repo,releaseUrl:c.releaseUrl,archiveSha256:c.sha256,trustedAdapter:false},signal);
       return{ok:true,package:p,compatibility:this.lib.compatibility(p)};
-    }catch(e){if(this.controller.signal.aborted)throw fail('下载已取消或超时，未修改游戏文件');throw e;}
-    finally{clearTimeout(timer);this.controller=null;try{if(temp)await fs.promises.rm(safe(this.lib.root,path.relative(this.lib.root,temp)),{recursive:true,force:true});}finally{this.busy=false;}}
+    }catch(e){
+      if(this.controller.signal.aborted)return{ok:false,cancelled:true,message:'下载已取消，未修改游戏文件'};
+      throw e;
+    }
+    finally{this.controller=null;try{if(temp)await fs.promises.rm(safe(this.lib.root,path.relative(this.lib.root,temp)),{recursive:true,force:true});}finally{this.busy=false;}}
   }
 }
 module.exports={ComponentUpdates,candidates,stable,allowedAsset,unpack,mapFiles};

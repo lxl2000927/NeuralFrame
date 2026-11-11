@@ -19,13 +19,18 @@ class GameInspection {
     if (this.worker) return this.worker;
     const worker = new Worker(path.join(__dirname, 'game-inspection-worker.js'));
     this.worker = worker;
-    worker.on('message', ({ id, result, error, code }) => {
+    worker.on('message', ({ id, phase, result, error, code }) => {
       if (this.worker !== worker || this.active?.id !== id) return;
       const request = this.active;
+      if (phase === 'details') {
+        request.details = result;
+        request.resolveDetails?.(result);
+        return;
+      }
       this.active = null;
       this.requests.delete(request.key);
       if (error) request.reject(Object.assign(new Error(error), {code}));
-      else request.resolve(result);
+      else request.resolve(request.details ? { ...request.details, ...result } : result);
       this.dispatch();
     });
     const failed = error => {
@@ -37,7 +42,7 @@ class GameInspection {
     worker.on('exit', code => failed(new Error(`后台检测已退出 (${code})`)));
     return worker;
   }
-  run(task, dir, options = {}, priority) {
+  run(task, dir, options = {}, priority, phase) {
     if (this.closed) return Promise.reject(new Error('检测服务已关闭'));
     let normalized = dir && path.resolve(dir);
     if (normalized && process.platform === 'win32') normalized = normalized.toLowerCase();
@@ -61,7 +66,13 @@ class GameInspection {
       request.explicit = true;
     }
     this.dispatch();
-    return request.promise;
+    if (phase !== 'details') return request.promise;
+    if (request.details) return Promise.resolve(request.details);
+    // Either the scan arrives first or the entire job fails/is superseded.
+    return request.detailsPromise ||= Promise.race([
+      request.promise,
+      new Promise(resolve => { request.resolveDetails = resolve; })
+    ]);
   }
   dispatch() {
     if (this.active) return;

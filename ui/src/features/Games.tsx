@@ -3,23 +3,25 @@ import { useEffect, useId, useRef, useState } from "react";
 import {
   Play,
   FolderOpen,
-  RefreshCw,
   ShieldAlert,
   ChevronRight,
   LockKeyhole,
   Copy,
-  Undo2,
 } from "lucide-react";
 import { getBridge } from "../bridge";
 import { useJobLog } from "../useJobLog";
+import { SessionLog } from "./SessionLog";
 import { Artwork, Empty, Loading, Row, Select } from "../components";
 import { GameBrowser } from "./GameBrowser";
 import type { GameMenuHandler } from "../GameCard";
-import { GameSetup } from "./GameSetup";
+import { GameSetup, resolveSetup, type SetupSelection } from "./GameSetup";
+import { GraphicsActions } from "./GraphicsActions";
 import { DiagnosticsPanel, ModelTable } from "./GameReports";
 import { GraphicsPanels } from "./GraphicsPanels";
 import { HardwareProfileChoices, hardwareProfileNotes } from "./HardwareProfileChoices";
 import "./GameGraphics.css";
+import { StandaloneRuntimeFacts } from "./StandaloneStatus";
+import { invalidateGameInspection, useGameDetails, useGameStatus } from "./useGameInspection";
 import { useProfileTarget } from "./useProfileTarget";
 import { useRestoreStatus } from "./useRestoreStatus";
 import {
@@ -30,7 +32,6 @@ import {
   readDraft,
 } from "../domain";
 import type {
-  Details,
   Draft,
   Game,
   Inventory,
@@ -44,6 +45,12 @@ export type Run = (
   operation: (token?: string) => Promise<Result>,
 ) => Promise<boolean>;
 type Props = {
+  onImportModel: (id: string) => void;
+  componentRevision: number;
+  runtimeRevision: number;
+  onTabChange: (tab: string) => void;
+  onBrowseModels: () => void;
+  onDownloadModel: (id: string) => void;
   games: Game[];
   grouped: boolean;
   openMenu: GameMenuHandler;
@@ -72,6 +79,10 @@ export function Games(props: Props) {
   );
 }
 function GameEditor({
+  componentRevision, runtimeRevision, onTabChange,
+  onImportModel,
+  onBrowseModels,
+  onDownloadModel,
   game,
   drafts,
   setDraft,
@@ -83,66 +94,48 @@ function GameEditor({
   refreshToken = 0,
 }: Props & { game: Game }) {
   const [tab, setTab] = useState("graphics"),
+    [setupSelection, setSetupSelection] = useState<SetupSelection | null>(null),
     [showAntiCheatNote, setShowAntiCheatNote] = useState(false),
-    [data, setData] = useState<{ details: Details; status: Status } | null>(
-      null,
-    ),
-    [error, setError] = useState(""),
     [revision, setRevision] = useState(0),
     [runtime, setRuntime] = useState<Runtime | null>(null);
-  const { lines: activity, clear: clearActivity } = useJobLog(game.dir);
+  useEffect(() => { if (active) onTabChange(tab); }, [tab, active, onTabChange]);
+  const { rows: logRows, lines: activity, clear: clearActivity } = useJobLog(game.dir);
   const panelId = useId();
   const recovery = useRestoreStatus(game.dir, active, revision, refreshToken);
-  const lastInspection = useRef<{ revision: number; refreshToken: number } | null>(null);
-  useEffect(() => {
-    if (!active || (lastInspection.current?.revision === revision && lastInspection.current.refreshToken === refreshToken)) return;
-    let current = true;
-    setError("");
-    Promise.all([
-      getBridge().details(game.dir, "selection"),
-      getBridge().enhancedStatus(game.dir, undefined, "selection"),
-    ])
-      .then(([details, status]) => {
-        if (current) {
-          lastInspection.current = { revision, refreshToken };
-          setData({ details, status });
-          if (!status.ok)
-            setError(
-              status.message || t("未识别到可配置的游戏程序，请核对游戏目录。"),
-            );
-        }
-      })
-      .catch((e) => {
-        if (current) setError(errorText(e));
-      });
-    return () => {
-      current = false;
-    };
-  }, [game.dir, active, revision, refreshToken]);
-  const currentInspection = lastInspection.current?.revision === revision && lastInspection.current.refreshToken === refreshToken;
-  const base = currentInspection && data?.status.ok ? readDraft(data.status) : null,
+  const detailRead = useGameDetails(game.dir, active, revision, refreshToken);
+  const statusRead = useGameStatus(game.dir, "", active, revision, refreshToken);
+  const details = detailRead?.value;
+  const status = statusRead?.value;
+  const statusError = statusRead?.error || (status && !status.ok && (status.message || t("未识别到可配置的游戏程序，请核对游戏目录。")));
+  const error = (tab === "graphics" || tab === "models") ? statusError : undefined;
+  const loadingPanel = (tab === "graphics" || tab === "models") && !status;
+  const base = status?.ok ? readDraft(status) : null,
     draft = drafts[game.dir] || base,
     changes = base && draft ? changedFields(base, draft) : [];
   const profileOverride = base && draft && draft.hardwareProfile !== base.hardwareProfile
     ? draft.hardwareProfile : "";
-  const projected = useProfileTarget(game.dir, profileOverride, active && !!profileOverride, revision, refreshToken, "selection");
-  const displayedStatus = currentInspection ? (profileOverride ? projected?.status : data?.status) : undefined;
-  const targets = data ? [data.details, ...(data.details.exes || [])] : [];
+  const projected = useProfileTarget(game.dir, profileOverride, active && !!profileOverride, revision, refreshToken);
+  const displayedStatus = profileOverride ? projected?.status : status;
+  const setupPending = !!setupSelection && !details?.launcherProtected && !status?.launcherProtected;
+  const targets = details ? [details, ...(details.exes || [])] : [];
   const antiCheatWarning = targets.some(target => target.antiCheatWarning);
   const antiCheatNames = [...new Set(targets.flatMap(target => target.antiCheatComponents || []))];
 
   const patchDraft = (patch: Partial<Draft>) => {
     if (draft) setDraft(game.dir, { ...draft, ...patch });
   };
-  const refresh = () => setRevision((v) => v + 1);
-  const execute = async (scope: "changed" | "neural" | "mfg" | "both" = "changed") => {
-    if (!base) return;
+  const refresh = () => {
+    invalidateGameInspection(game.dir);
+    setRevision((v) => v + 1);
+  };
+  const execute = async (scope: "changed" | "neural" | "mfg" | "both" | "enableBoth" = "changed") => {
+    if (!base || !displayedStatus?.ok) return;
     try {
-      const config = applyPatch(base, draft || base, scope);
+      const config = applyPatch(base, draft || base, scope, status?.launcherProtected);
       if (
         await run((token) => getBridge().enhancedApply(game.dir, config, token))
       ) {
-        if (scope === "both" || scope === "changed") setDraft(game.dir, undefined);
+        if (scope === "both" || scope === "enableBoth" || scope === "changed") setDraft(game.dir, undefined);
         refresh();
         setRuntime(null);
       }
@@ -150,15 +143,24 @@ function GameEditor({
       message(errorText(e));
     }
   };
-  const importModel = async () => {
-    try {
-      const result = await getBridge().enhancedImportModel();
-      if (result.cancelled) return;
-      if (!result.ok) throw Error(result.message || t("操作未完成"));
+  const installSetup = async () => {
+    if (!details || !setupPending) return;
+    const { exe, route } = resolveSetup(details, setupSelection);
+    if (!exe || !route) return;
+    if (await run(token => getBridge().install(game.dir, exe.path, route, exe.apiOverride || "auto", token))) {
+      setSetupSelection(null);
       refresh();
-      message(t("模型已导入"));
-    } catch (error) {
-      message(errorText(error));
+      setRuntime(null);
+    }
+  };
+  const restore = async () => {
+    if (!recovery?.canRestore || (ask && !(await ask(t("卸载并恢复游戏原始状态"),
+      t("将删除本次部署的文件，并从 _DLSS5_Backup 还原原始文件。游戏需要处于关闭状态。"), t("恢复"))))) return;
+    if (await run(token => getBridge().restoreGame(game.dir, token))) {
+      setDraft(game.dir, undefined);
+      setSetupSelection(null);
+      setRuntime(null);
+      refresh();
     }
   };
   return (
@@ -207,7 +209,7 @@ function GameEditor({
             </button>
             <button
               className="primary"
-              disabled={!data?.details.exePath || busy}
+              disabled={!details?.exePath || busy}
               onClick={() => {
                 void getBridge()
                   .launchGame(game.dir)
@@ -224,19 +226,19 @@ function GameEditor({
         </div>
         <div className="installed-strip">
           <span
-            title={data?.details.files
+            title={details?.files
               ?.map((f) => `${f.name} ${f.version || ""}`)
               .join("\n")}
           >
             {t("已检测组件：")}
-            {!data
+            {!details
               ? t("读取中…")
-              : data.details.files?.length
+              : details.files?.length
                 ? t("{0} 个文件 · {1}", [
-                    data.details.files.length,
-                    data.details.api || "API 待确认",
+                    details.files.length,
+                    details.api || "API 待确认",
                   ])
-                : [t("未发现 DLSS 运行库"), data.details.api].filter(Boolean).join(" · ")}
+                : [t("未发现 DLSS 运行库"), details.api].filter(Boolean).join(" · ")}
           </span>
           {antiCheatWarning && <button type="button" className="anti-cheat-badge"
             aria-expanded={showAntiCheatNote} aria-controls={`${panelId}-anti-cheat`}
@@ -252,24 +254,7 @@ function GameEditor({
                 ? t("游戏运行中")
                 : t(runtime.nr.label)
               : t("运行状态未检测")}
-            <button
-              className="icon-button"
-              aria-label={t("重新检测硬件与组件")}
-              title={t("重新检测硬件与组件")}
-              disabled={busy}
-              onClick={() => {
-                void getBridge()
-                  .enhancedHardware(true)
-                  .then(result => {
-                    if (!result.ok) throw Error(result.message || t("硬件检测失败"));
-                    refresh();
-                    message(t("已重新检测硬件与组件"));
-                  })
-                  .catch((e) => message(errorText(e)));
-              }}
-            >
-              <RefreshCw size={13} />
-            </button>
+
           </span>
         </div>
         {antiCheatWarning && <div className="game-anti-cheat-note" id={`${panelId}-anti-cheat`} hidden={!showAntiCheatNote}>
@@ -292,7 +277,6 @@ function GameEditor({
       }}>
         {[
           ["graphics", t("画质与补帧")],
-          ["setup", t("安装路线")],
           ["models", t("模型库")],
           ["components", t("组件与版本")],
           ["runtime", t("运行诊断")],
@@ -311,152 +295,92 @@ function GameEditor({
         ))}
       </div>
       <div className="detail-scroll" data-tab={tab} role="tabpanel" id={panelId} aria-labelledby={`${panelId}-${tab}`} tabIndex={0}>
-        {error && (
-          <div className="error" role="alert">
-            {t(error)}
-            <button onClick={refresh}>{t("重试")}</button>
-          </div>
-        )}
-        {!currentInspection && !error && <Loading text={t("读取游戏配置…")} skeleton="table" />}
-        {recovery?.error && (tab === "graphics" || tab === "components") &&
-          <p className="error" role="alert">{t(recovery.error)} <button onClick={refresh}>{t("重试")}</button></p>}
-        {data && tab === "graphics" && draft && (
-          <fieldset disabled={busy || !currentInspection || !data.status.ok}>
-            <section className="profile-picker game-profile-picker" aria-label={t("硬件专属优化档位")}>
-              <h2>{t("硬件专属优化档位")}</h2>
-              <HardwareProfileChoices game catalog={data.status.hardwareProfiles} profileId={draft.hardwareProfile}
-                source={profileOverride ? "selected" : data.status.hardwareProfileSource}
-                onSelect={id => patchDraft({ hardwareProfile: id, runtimeStack: defaultStack(id) })} />
-            </section>
-            {displayedStatus && <GraphicsPanels showGameDetails gameDir={game.dir} status={displayedStatus}
-              profileNotes={hardwareProfileNotes(displayedStatus.hardwareProfileInfo)}
-              exePath={data.details.exePath} draft={draft} onChange={patchDraft}
-              onApply={scope => void execute(scope)} onImport={importModel} />}
-            {profileOverride && !projected && <Loading text={t("读取游戏配置…")}/>}
-          </fieldset>
-        )}
-        {tab === "graphics" && (data || recovery?.canRestore) && (
-          <footer className="game-deploy-footer">
-            {data && draft && <p className="footnote">{t("这些是磁盘配置与待应用参数。实际渲染效果和补帧倍率请查看运行诊断。")}</p>}
-            <div className="game-deploy-actions">
-              <button
-                title={t("按当前选项预览并应用，保留已选择的关闭状态")}
-                disabled={busy || !displayedStatus?.ok || !draft}
-                onClick={() => {
-                  void execute("both");
-                }}
-              >
-                {t("应用神经渲染与补帧配置")}
-              </button>
-              <button
-                className="danger"
-                disabled={busy || !recovery?.canRestore}
-                onClick={() => {
-                  void (async () => {
-                    if (
-                      ask &&
-                      !(await ask(
-                        t("卸载并恢复游戏原始状态"),
-                        t(
-                          "将删除本次部署的文件，并从 _DLSS5_Backup 还原原始文件。游戏需要处于关闭状态。",
-                        ),
-                        t("恢复"),
-                      ))
-                    )
-                      return;
-                    void run((token) =>
-                      getBridge().restoreGame(game.dir, token),
-                    ).then((done) => {
-                      if (done) {
-                        setDraft(game.dir, undefined);
-                        setRuntime(null);
-                        refresh();
-                      }
-                    });
-                  })();
-                }}
-              >
-                <Undo2 size={16} />
-                {t("一键卸载并恢复")}
-              </button>
-              <button
-                className="icon-button"
-                aria-label={t("刷新状态")}
-                title={t("刷新状态")}
-                disabled={busy}
-                onClick={refresh}
-              >
-                <RefreshCw size={16} />
-              </button>
+        <div className="game-tab-content">
+          {details && <div hidden={tab !== "graphics"}>
+            <GameSetup dir={game.dir} details={details} status={displayedStatus} busy={busy}
+              selection={setupSelection} onChange={setSetupSelection} message={message} onUpdated={refresh} />
+          </div>}
+          {tab === "graphics" && detailRead?.error && <p className="error" role="alert">
+            {t(detailRead.error)} <button onClick={refresh}>{t("重试")}</button>
+          </p>}
+          {error && (
+            <div className="error" role="alert">
+              {t(error)}
+              <button onClick={refresh}>{t("重试")}</button>
             </div>
-          </footer>
-        )}
-        {profileOverride && (tab === "graphics" || tab === "models") && projected?.errors.map(detail =>
-          <p key={detail} className="error" role="alert">{t(detail)} <button onClick={refresh}>{t("重试")}</button></p>
-        )}
-        {tab === "models" && data && (profileOverride && !projected
-          ? <Loading text={t("读取游戏配置…")}/>
-          : <ModelTable models={profileOverride ? projected?.models || [] : data.status.neural?.availableModels || []} profileSm={displayedStatus?.hardwareProfileInfo?.sm} message={message} onImport={importModel} busy={busy} />)}
-        {tab === "setup" && data && <GameSetup dir={game.dir} details={data.details} busy={busy || !currentInspection} run={run} message={message} onUpdated={refresh} />}
-        {tab === "components" && (
-          <GameComponents
-            key={refreshToken}
-            active={active}
-            hasBackup={!!recovery?.canRestore}
-            onRefresh={refresh}
-            onRestore={() => { setDraft(game.dir, undefined); setRuntime(null); refresh(); }}
-            dir={game.dir}
-            run={run}
-            busy={busy}
-            message={message}
-          />
-        )}
-        {tab === "runtime" && (
-          <RuntimePanel
-            active={active}
-            dir={game.dir}
-            status={data?.status}
-            onRuntime={setRuntime}
-            message={message}
-          />
-        )}
-        {!!activity.length && <details className="advanced"><summary>{t("本次操作日志（最近 200 条）")}</summary><div className="inline-actions"><button onClick={() => void getBridge().copyText(activity.join("\n")).then(ok => message(t(ok ? "日志已复制" : "复制失败"))).catch(e => message(errorText(e)))}>{t("复制日志")}</button><button onClick={clearActivity}>{t("清空显示")}</button></div><pre className="operation-log">{activity.join("\n")}</pre></details>}
+          )}
+          {loadingPanel && !error && <Loading text={t("读取游戏配置…")} skeleton="table" />}
+          {recovery?.error && (tab === "graphics" || tab === "components") &&
+            <p className="error" role="alert">{t(recovery.error)} <button onClick={refresh}>{t("重试")}</button></p>}
+          {status?.ok && tab === "graphics" && draft && (
+            <fieldset disabled={busy}>
+              <section className="profile-picker game-profile-picker" aria-label={t("硬件专属优化档位")}>
+                <h2>{t("硬件专属优化档位")}</h2>
+                <HardwareProfileChoices game standalone={status.launcherProtected} catalog={status.hardwareProfiles} profileId={draft.hardwareProfile}
+                  source={profileOverride ? "selected" : status.hardwareProfileSource}
+                  onSelect={id => patchDraft({ hardwareProfile: id, runtimeStack: defaultStack(id) })} />
+              </section>
+              {displayedStatus && <GraphicsPanels active={active} onRuntime={setRuntime} showGameDetails gameDir={game.dir} status={displayedStatus}
+                profileNotes={hardwareProfileNotes(displayedStatus.hardwareProfileInfo)}
+                exePath={details?.exePath || displayedStatus.exePath} draft={draft} onChange={patchDraft}
+                onApply={scope => void execute(scope)}
+                onBrowseModels={() => setTab("models")} />}
+              {profileOverride && !projected && <Loading text={t("读取游戏配置…")}/>}
+            </fieldset>
+          )}
+          {tab === "graphics" && draft && <p className="footnote">{t("这些是磁盘配置与待应用参数。实际渲染效果和补帧倍率请查看运行诊断。")}</p>}
+          {profileOverride && (tab === "graphics" || tab === "models") && projected?.errors.map(detail =>
+            <p key={detail} className="error" role="alert">{t(detail)} <button onClick={refresh}>{t("重试")}</button></p>
+          )}
+          {tab === "models" && status?.ok && (profileOverride && !projected
+            ? <Loading text={t("读取游戏配置…")}/>
+            : <ModelTable models={profileOverride ? projected?.models || [] : status.neural?.availableModels || []} profileSm={displayedStatus?.hardwareProfileInfo?.sm} gpuSm={displayedStatus?.hardware?.gpu?.architecture?.sm} message={message} onImport={onImportModel} onChoose={id => {
+              patchDraft({ neuralModelId: id, neuralMode: id === "310.8.0-RTX40" ? "legacy" : "latest_compatible" });
+              setTab("graphics");
+            }} onBrowseModels={onBrowseModels} onDownload={onDownloadModel} busy={busy} />)}
+          {tab === "components" && (
+            <GameComponents
+              refreshToken={Math.max(refreshToken, componentRevision)}
+              active={active}
+              hasBackup={!!recovery?.canRestore}
+              onRefresh={refresh}
+              onRestore={() => { setDraft(game.dir, undefined); setRuntime(null); refresh(); }}
+              dir={game.dir}
+              run={run}
+              busy={busy}
+              message={message}
+            />
+          )}
+          {tab === "runtime" && (
+            <RuntimePanel refreshToken={Math.max(refreshToken, runtimeRevision)}
+              active={active}
+              dir={game.dir}
+              status={status}
+              onRuntime={setRuntime}
+              message={message}
+            />
+          )}
+          {tab === "graphics" && <SessionLog rows={logRows} clear={clearActivity} />}
+        </div>
       </div>
       <div className="apply-bar">
         <span>
           {tab === "graphics"
-            ? changes.length
+            ? setupPending ? t("安装方式待应用 · 画质与补帧修改 {0} 项", [changes.length]) : changes.length
               ? t("{0} 项待应用修改", [changes.length])
-              : t(currentInspection && data?.status.ok ? "配置已读取" : error ? "操作未完成" : "读取游戏配置…")
+              : t(status?.ok ? "配置已读取" : error ? "操作未完成" : "读取游戏配置…")
             : tab === "models"
               ? t("模型身份由文件 SHA-256 确定，架构匹配不代表已在游戏中生效")
-              : tab === "setup"
-                ? t("预览并安装所选路线")
               : tab === "components"
                 ? t("版本锁定与恢复由组件记录管理")
                 : t("仅显示当前进程和有效时间内的证据")}
         </span>
         <div>
           {tab === "graphics" ? (
-            <>
-              <button
-                disabled={!changes.length || busy}
-                onClick={() => {
-                  setDraft(game.dir, undefined);
-                }}
-              >
-                {t("撤销")}
-              </button>
-              <button
-                className="primary"
-                disabled={!changes.length || !displayedStatus?.ok || busy}
-                onClick={() => {
-                  void execute();
-                }}
-              >
-                {t("预览并应用")}
-              </button>
-            </>
+            <GraphicsActions draft={draft} status={displayedStatus} changed={!!changes.length || setupPending} busy={busy}
+              setupAction={setupPending ? () => void installSetup() : undefined}
+              canRestore={!!recovery?.canRestore} undo={() => { setDraft(game.dir, undefined); setSetupSelection(null); }}
+              apply={execute} restore={restore} />
           ) : (
             <button
               disabled={busy}
@@ -479,6 +403,7 @@ function GameEditor({
   );
 }
 function GameComponents({
+  refreshToken,
   active,
   hasBackup,
   onRefresh,
@@ -489,6 +414,7 @@ function GameComponents({
   message,
 }: {
   active: boolean;
+  refreshToken: number;
   hasBackup: boolean;
   onRefresh: () => void;
   onRestore: () => void;
@@ -497,6 +423,7 @@ function GameComponents({
   busy: boolean;
   message: (s: string) => void;
 }) {
+  const previousSelection = useRef<Record<string, string>>({});
   const [library, setLibrary] = useState<Library | null>(null),
     [error, setError] = useState(""),
     [rev, setRev] = useState(0),
@@ -510,7 +437,18 @@ function GameComponents({
           if (!l.ok || !l.inventory?.ok)
             throw Error(l.message || l.inventory?.message || t("组件读取失败"));
           setLibrary(l);
-          setSelection(l.profile?.selected || {});
+          const saved = l.profile?.selected || {};
+          const previous = previousSelection.current;
+          previousSelection.current = saved;
+          setSelection(draft => {
+            const next = { ...saved };
+            for (const key of Object.keys({ ...draft, ...previous })) {
+              if (draft[key] === previous[key]) continue;
+              if (draft[key]) next[key] = draft[key];
+              else delete next[key];
+            }
+            return next;
+          });
           setError("");
         }
       })
@@ -520,7 +458,7 @@ function GameComponents({
     return () => {
       alive = false;
     };
-  }, [dir, rev, active]);
+  }, [dir, rev, active, refreshToken]);
   const inventory = library?.inventory;
   const refresh = () => setRev((v) => v + 1);
   const refreshAll = () => {
@@ -559,10 +497,7 @@ function GameComponents({
     <>
       <div className="section-toolbar">
         <h2>{t("已安装组件与文件")}</h2>
-        <button onClick={refreshAll} disabled={busy}>
-          <RefreshCw size={15} />
-          {t("刷新")}
-        </button>
+
       </div>
       <div className="settings-table">
         <Row
@@ -713,6 +648,7 @@ const PIPELINE_GROUPS: [string, string[]][] = [
 const baseName = (row: { name?: string; rel?: string }) =>
   (row.rel || row.name || "").split(/[\\/]/).pop() || "";
 function RuntimePanel({
+  refreshToken,
   dir,
   status,
   onRuntime,
@@ -720,6 +656,7 @@ function RuntimePanel({
   active,
 }: {
   dir: string;
+  refreshToken: number;
   status?: Status;
   onRuntime: (r: Runtime | null) => void;
   message: (s: string) => void;
@@ -745,7 +682,7 @@ function RuntimePanel({
     return () => {
       alive = false;
     };
-  }, [dir, active]);
+  }, [dir, active, refreshToken]);
   useEffect(() => {
     if (!active) {
       setBusy(false);
@@ -784,7 +721,7 @@ function RuntimePanel({
       probeRef.current = () => {};
       document.removeEventListener("visibilitychange", probe);
     };
-  }, [dir, active, message, onRuntime]);
+  }, [dir, active, message, onRuntime, refreshToken]);
   useEffect(() => {
     if (!active || !auto) return;
     const timer = setInterval(() => probeRef.current(), 5000);
@@ -813,7 +750,7 @@ function RuntimePanel({
         <p>
           {stale ? t("超过 30 秒没有新遥测，请刷新检测。") : t(data.detail)}
         </p>
-        {data.requestedMultiplier && (
+        {data.requestedMode === 'dynamic' ? <p>{t("请求动态补帧")} · {t(data.appliedMode === 'dynamic' ? "组件已应用动态控制" : "尚未确认动态控制生效")}</p> : data.requestedMultiplier && (
           <p>
             {t("请求")}
             {data.requestedMultiplier}
@@ -850,15 +787,7 @@ function RuntimePanel({
             />
             {t("自动刷新")}
           </label>
-          <button
-            disabled={busy}
-            onClick={() => {
-              probeRef.current();
-            }}
-          >
-            <RefreshCw size={16} />
-            {busy ? t("检测中…") : t("刷新")}
-          </button>
+
         </div>
       </div>
       {result ? (
@@ -907,6 +836,7 @@ function RuntimePanel({
           ) : null}
           {item(t("DLSS 神经渲染"), result.nr)}
           {item(t("DLSS-G / 多帧生成"), result.mfg)}
+          {result.standalone && <section className="runtime-block"><h2>{t("独立加载实际参数")}</h2><StandaloneRuntimeFacts runtime={result} /></section>}
           <p className="muted">
             {t("检测于")}
             {new Date(result.checkedAt).toLocaleTimeString(locale())}
@@ -930,10 +860,15 @@ function RuntimePanel({
         <Empty>
           {busy
             ? t("正在检查游戏进程和运行日志…")
-            : t("暂无本次检测结果，请刷新。")}
+            : <>{t("暂无本次检测结果，请刷新。")} <button onClick={() => probeRef.current()}>{t("重试")}</button></>}
         </Empty>
       )}
-      {status?.diagnostics && <details className="advanced"><summary>{t("文件、配置与显存估算")}</summary><DiagnosticsPanel diagnostics={status.diagnostics} /></details>}
+      {status?.diagnostics && (
+        <details className="advanced game-diagnostics">
+          <summary>{t("文件、配置与显存估算")}</summary>
+          <DiagnosticsPanel diagnostics={status.diagnostics} />
+        </details>
+      )}
     </>
   );
 }

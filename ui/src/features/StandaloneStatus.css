@@ -1,0 +1,12 @@
+.standalone-status { grid-column: 1 / -1; padding: 18px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); min-width: 0; }
+.standalone-status header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.standalone-status h3 { margin: 0; }
+.standalone-status p { margin: 10px 0; line-height: 1.55; }
+.standalone-table { overflow-x: auto; }
+.standalone-table table { width: 100%; border-collapse: collapse; }
+.standalone-table th, .standalone-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.standalone-table tbody th { font-weight: 400; }
+.standalone-notice { color: var(--text); font-weight: 600; }
+.standalone-live { padding-top: 4px; overflow-wrap: anywhere; }
+.standalone-parameters { margin-top: 12px; border-top: 1px solid var(--border); }
+.standalone-parameters summary { padding: 10px 0; cursor: pointer; }

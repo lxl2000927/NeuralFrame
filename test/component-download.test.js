@@ -37,6 +37,22 @@ test('a failed transfer is reported as a network problem, not a bad file', async
   assert.equal(fs.existsSync(file), false, 'nothing may be written when the download fails');
 });
 
+test('cancelling a dependency transfer stops the fetch without retrying or publishing a cache file', async t => {
+  const file = tempFile(t), controller = new AbortController();
+  let attempts = 0;
+  const pending = components.fetchVerified('https://example.invalid/runtime.zip', sha, file, {
+    signal: controller.signal,
+    fetchBytes: async (_url, signal) => {
+      attempts++;
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), {once:true}));
+    }
+  });
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(attempts, 1);
+  assert.equal(fs.existsSync(file), false);
+});
+
 test('bytes that do not match the pinned checksum never reach the disk', async (t) => {
   const file = tempFile(t);
   await assert.rejects(

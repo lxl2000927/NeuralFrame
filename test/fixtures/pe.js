@@ -51,4 +51,17 @@ function writePe(file, { bitness = 64, text = '', size = 64 * 1024, version = nu
   fs.writeFileSync(file, bytes);
   return file;
 }
-module.exports = { writePe };
+// Non-executable fixture with NR identity symbols and one CUDA descriptor.
+function writeNr(file, version = '310.9.16.0', sm = 89) {
+  writePe(file, { version, text: 'nvngx_dlssnr.pdb DLSSNRGetStatsCallback source/features/dlssnr/' });
+  const fatbin = Buffer.alloc(81);
+  Buffer.from([0x50,0xed,0x55,0xba,1,0,0x10,0]).copy(fatbin);
+  fatbin.writeBigUInt64LE(65n, 8);
+  fatbin.writeUInt16LE(2, 16);
+  fatbin.writeUInt32LE(64, 20);
+  fatbin.writeBigUInt64LE(1n, 24);
+  fatbin.writeUInt32LE(sm, 44);
+  fs.appendFileSync(file, fatbin);
+  return file;
+}
+module.exports = { writePe, writeNr };

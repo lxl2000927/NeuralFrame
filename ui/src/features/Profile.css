@@ -78,11 +78,11 @@
 .profile-diagnostics .section-toolbar { gap: 4px 12px; margin: 0 0 8px; }
 .profile-diagnostics .section-toolbar h2 { margin: 0; font-size: 17px; line-height: 1.4; }
 .profile-diagnostics .section-toolbar p { margin: 2px 0 0; line-height: 1.4; }
-.profile-diagnostics .runtime-block + .profile-game-actions {
+.profile-diagnostics .profile-game-actions + .runtime-block {
   margin-top: 14px;
 }
 .profile-game-actions > button {
-  min-height: 38px;
+  min-height: 28px;
 }
 .profile-page .model-block {
   margin-top: 16px;
@@ -210,9 +210,6 @@
 }
 :root[data-theme="light"] .model-chip[data-tone="mismatch"] { color: #805119; }
 .model-chip + .model-file-state { display: block; margin-top: 6px; }
-.model-import-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding-top: 6px; }
-.model-import-bar p { margin: 0; font-size: 13px; }
-.model-import-bar button { margin-inline-start: auto; min-height: 30px; padding: 3px 10px; }
 .profile-page .model-table tbody :is(th, td) { padding-inline: 8px; }
 .profile-page .model-entry[data-compact] code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px/1.5 Consolas, monospace; }
 @container profile (max-width: 740px) {

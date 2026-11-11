@@ -15,6 +15,7 @@ const feederConfig = require('./feeder-config');
 const { scanGame } = require('./scan');
 const { apiPreferenceKey, withGameApi } = require('./game-api');
 const neuralModels = require('./neural-models');
+const wuwa = require('./wuthering-waves');
 const mfgManager = require('./mfg-manager');
 const { selectHardwareProfile } = require('./hardware-profile');
 
@@ -111,6 +112,10 @@ function estimateVramBudget({
   const baseGame1080pMB = desktop ? 6800 : 5400;
   const neuralOverheadMB = neuralMode === 'off' ? 0 : (desktop ? 920 : 680);
   const mfgCosts = desktop ? { x2: 420, x3: 620, x4: 820 } : { x2: 340, x3: 510, x4: 660 };
+  if (mfgMode !== 'off' && !Object.hasOwn(mfgCosts, mfgMode)) return {
+    hardwareProfile, level: 'unknown', vramTotalMB: vramTotalMB || null,
+    summary: '动态、跟随游戏或高倍率模式没有固定显存估算，请以游戏中的实际占用为准。'
+  };
   const mfgOverheadMB = mfgCosts[mfgMode] || 0;
   const totalAddedOverheadMB = neuralOverheadMB + mfgOverheadMB;
   const estimatedTotalMB = baseGame1080pMB + totalAddedOverheadMB;
@@ -134,7 +139,8 @@ function estimateVramBudget({
 }
 
 // 执行 7 项 DLSS 5 + MFG 联合运行深度兼容性检查
-function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, hardwareProfile = 'rtx40_laptop') {
+function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, hardwareProfile = 'rtx40_laptop',
+  launcherProtected = Boolean(wuwa.gameRoot(gameDir, scan.chosen?.path))) {
   const exeDir = scan.chosen ? path.dirname(scan.chosen.path) : gameDir;
   const bothActive = neuralStatus.mode !== 'off' && mfgStatus.currentConfig.mode !== 'off';
 
@@ -179,7 +185,7 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
   const motionVectorCheck = {
     ok: true,
     mitigationActive: bamMode === '1' || bamMode === '2' || mfgStatus.currentConfig.backend === 'mfg-unlocker-asi',
-    message: bothActive
+    message: mfgStatus.currentConfig.backend === 'wuwa-proxy' ? '由独立加载器使用游戏提供的 DLSS 资源。' : bothActive
       ? 'DLSS 5 神经渲染与 MFG 同时开启：已启用 Boundary Artifact Mitigation (边界伪影缓解) 与 Validated Warp Blend，保护运动矢量与遮挡边缘插值质量。'
       : '未同时激活双模块，无跨阶段运动矢量耦合影响。'
   };
@@ -221,6 +227,11 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
           ? `已检测到 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '内置'}) 与 Ada 硬件 Flip Metering，帧同步与 Reflex 低延迟控制有效。`
           : '未在游戏目录发现独立 sl.reflex.dll，可随 Streamline 运行时组件一并部署以确保 Reflex 延迟控制生效。'
   };
+  if (launcherProtected) {
+    slChainCheck.message = '保留游戏原生 Streamline；独立加载器在运行时接入，是否成功请看本次进程的遥测。';
+    hudFlickerCheck.message = '使用游戏原生输入；未配置 RenoDX QualityGuard，HUD 与 HDR 表现需要在游戏中验证。';
+    reflexCheck.message = '使用游戏及独立组件的 Reflex 与帧调度；此处的文件检查不代表低延迟控制已经生效。';
+  }
 
   // 7. 游戏关闭后能否完整恢复原状
   const manifest = backends.readManifest(gameDir);
@@ -301,7 +312,10 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     dlssCompatMode = 'low_dlss_ready';
     dlssCompatSummary = `检测到游戏内置低版本 DLSS (${lowVer.version}，位于 ${lowVer.rel})，点击应用即可自动原位升级至 DLSS 5 并保留原文件备份。`;
   }
-  if (safeHookInfo.avoidedConflict) {
+  if (launcherProtected) {
+    dlssCompatMode = 'wuwa-proxy';
+    dlssCompatSummary = '鸣潮保留启动器校验的 DLSS 文件。神经渲染与补帧使用主程序旁的 version.dll。';
+  } else if (safeHookInfo.avoidedConflict) {
     dlssCompatSummary += ` 检测到 ${safeHookInfo.avoidedConflict} 被学习补丁/Mod 占用，已自动改用 ${safeHookInfo.hook} 注入以保护补丁。`;
   }
 
@@ -317,8 +331,8 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     dlssCompat: {
       mode: dlssCompatMode,
       summary: dlssCompatSummary,
-      hook: safeHookInfo.hook,
-      avoidedConflict: safeHookInfo.avoidedConflict
+      hook: launcherProtected ? 'version.dll' : safeHookInfo.hook,
+      avoidedConflict: launcherProtected ? null : safeHookInfo.avoidedConflict
     }
   };
 }
@@ -342,12 +356,14 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     .filter(entry => neuralModels.RUNTIME_STACKS.some(stack => stack.id === entry?.runtimeStack))
     .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0];
 
-  const [neuralStatus, mfgStatus] = await Promise.all([
+  const protectedRoot = wuwa.gameRoot(gameDir, scan.chosen?.path);
+  const [neuralStatus, mfgStatus, nativeRuntimeStack] = await Promise.all([
     neuralModels.inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuName, hardwareProfile: effectiveProfile, scanResult: scan }),
-    mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion, hardwareProfile: effectiveProfile, scanResult: scan })
+    mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion, hardwareProfile: effectiveProfile, scanResult: scan }),
+    protectedRoot ? wuwa.inspectNativeStack(protectedRoot) : null
   ]);
 
-  const coExecution = evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, effectiveProfile);
+  const coExecution = evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, effectiveProfile, Boolean(protectedRoot));
 
   // 汇总错误日志
   const errorLogs = [
@@ -382,6 +398,13 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     hardwareProfileSource: selection.source,
     hardwareProfileInfo: neuralModels.getHardwareProfileInfo(effectiveProfile),
     configuredRuntimeStack: configuredStack?.runtimeStack || null,
+    launcherProtected: Boolean(protectedRoot),
+    nativeRuntimeStack,
+    standaloneProfile: protectedRoot ? {
+      target: require('./wuwa-profile').neuralSettings(effectiveProfile),
+      saved: mfgStatus.currentConfig?.backend === 'wuwa-proxy' ? mfgStatus.currentConfig.settings : null,
+      adapterVersion: manifest?.neuralRendering?.profileAdapterVersion || null
+    } : null,
     hardwareProfiles: neuralModels.HARDWARE_PROFILES,
     hardware: {
       ...hardware,
@@ -445,6 +468,15 @@ async function applyCombinedStages(gameDir, config, onLog) {
   const exeDir = path.dirname(exePath);
 
   await require('./install-guards').assertGameClosed(gameDir, exePath);
+  const protectedRoot = wuwa.gameRoot(gameDir, exePath);
+  if (protectedRoot) {
+    const result = await wuwa.configure(gameDir, protectedRoot, scan, {
+      ...config, payloadDir:effectivePayloadDir, gpuName, hardwareProfile:effectiveProfile,
+    }, onLog);
+    result.status = await inspectCombinedStatus(gameDir, {apiOverride:config.apiOverride, payloadDir:effectivePayloadDir,
+      userDataDir, hardwareProfile:effectiveProfile});
+    return result;
+  }
 
   // 判断游戏是否自带原生 DLSS 或 Streamline（排除由本软件在过往会话中新增的 DLL）
   const prevManifest = backends.readManifest(gameDir);
@@ -498,6 +530,10 @@ async function applyCombinedStages(gameDir, config, onLog) {
     const localModels = neuralMode && neuralMode !== 'off' && checkLocalModel
       ? neuralModels.listNeuralModels({payloadDir:effectivePayloadDir,userDataDir:effectiveUserDataDir,gpuName,hardwareProfile:effectiveProfile}) : [];
     const customModel = Boolean(neuralModels.findLocalModel(localModels, neuralModelId, config.neuralModelSha256));
+    const release = localModels.find(model => model.id === neuralModelId && model.downloadId);
+    if (release && !customModel) {
+      throw Object.assign(new Error(`请先在模型库中将 ${release.version} 下载入库。`), {code:'errModelNotOnDisk'});
+    }
     const isOpti = prevManifest?.route === 'optiscaler' || scan.install?.optiscaler?.installed ||
       (fs.existsSync(path.join(exeDir,'OptiScaler.ini')) && !fs.existsSync(path.join(exeDir,'renodx-dlss5.addon64')));
     await config.requirePayload({kind:'enhanced',config:{...config,neuralModelId,hardwareProfile:effectiveProfile,runtimeStack:effectiveRuntimeStack},

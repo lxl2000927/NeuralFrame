@@ -10,7 +10,7 @@ test('lightweight IPC prepares cache before real native preview, then installs a
  const cache=new RuntimePayload(profile,{bundledRoot:path.resolve(__dirname,'../dist/runtime-bootstrap'),legacyRoots:[path.resolve(__dirname,'../payload')],fetcher:()=>{throw Error('offline');}});
  const stubs={electron:{app:{isPackaged:true,setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>profile},ipcMain:{handle:(n,f)=>handlers.set(n,f)},dialog:{showMessageBox:async()=>({response:0})}},'./src/core/install-guards':{assertGameClosed:async()=>{},gpuInfo:async()=>[],driverNeuralFault:()=>false}};
  const packagedProcess=Object.create(process,{resourcesPath:{value:path.join(root,'resources')}});
- const context=vm.createContext({require:n=>stubs[n]||requireReal(n),__dirname:path.dirname(main),process:packagedProcess,Buffer,console,testCache:cache});vm.runInContext(fs.readFileSync(main,'utf8'),context,{filename:main});vm.runInContext('runtimeCache=testCache',context);
+ const context=vm.createContext({require:n=>stubs[n]||requireReal(n),__dirname:path.dirname(main),process:packagedProcess,AbortController,Buffer,console,testCache:cache});vm.runInContext(fs.readFileSync(main,'utf8'),context,{filename:main});vm.runInContext('runtimeCache=testCache',context);
  const event={sender:{send(){},isDestroyed:()=>false}},operation=token=>handlers.get('install')(event,game,exe,'native','d3d12',token);
  // A partially populated cache is normal: an SR-only download has no addon.
  await cache.prepare(['sr-baseline']);

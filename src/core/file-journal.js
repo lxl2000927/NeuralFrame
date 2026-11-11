@@ -164,7 +164,10 @@ async function recoverPending(gameDir) {
     const target = safePath(gameDir, item.rel);
     if (item.existed) {
       await fs.promises.mkdir(path.dirname(target), { recursive: true });
-      await replaceFile.copyFile(safePath(gameDir, item.snapshot), target);
+      const snapshot = safePath(gameDir, item.snapshot);
+      await replaceFile.copyFile(snapshot, target);
+      const plan = require('./preview-fs').active();
+      if (plan) (plan.recoveredSources ||= new Map()).set(rootKey(target), rootKey(snapshot));
     } else if (fs.existsSync(target)) await fs.promises.unlink(target);
   }
   for (const dir of removedDirs) await fs.promises.mkdir(safePath(gameDir, dir), { recursive: true });

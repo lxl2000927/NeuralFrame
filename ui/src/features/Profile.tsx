@@ -6,13 +6,12 @@ import {
   Zap,
   RefreshCw,
   FolderOpen,
-  Download,
-  Undo2,
 } from "lucide-react";
 import { getBridge } from "../bridge";
 import { Loading, Select } from "../components";
 import {
   applyPatch,
+  changedFields,
   defaultStack,
   errorText,
   profiles,
@@ -20,8 +19,10 @@ import {
 } from "../domain";
 import type { Draft, Game, HardwareResult, UpdateInfo } from "../types";
 import { DiagnosticsPanel, ModelTable } from "./GameReports";
+import { GraphicsActions } from "./GraphicsActions";
 import { GraphicsPanels } from "./GraphicsPanels";
 import { useProfileTarget } from "./useProfileTarget";
+import { invalidateGameInspection } from "./useGameInspection";
 import { useRestoreStatus } from "./useRestoreStatus";
 import type { Run } from "./Games";
 import { openProjectLink, releaseText } from "./About";
@@ -29,6 +30,9 @@ import { HardwareProfileChoices, hardwareProfileNotes } from "./HardwareProfileC
 import "./Profile.css";
 
 export function Profile({
+  onBrowseModels,
+  onImportModel,
+  onDownloadModel,
   message,
   refreshToken = 0,
   active = true,
@@ -43,6 +47,9 @@ export function Profile({
   ask,
   run,
 }: {
+  onBrowseModels: () => void;
+  onImportModel: (id: string) => void;
+  onDownloadModel: (id: string) => void;
   message: (s: string) => void;
   refreshToken?: number;
   active?: boolean;
@@ -60,18 +67,21 @@ export function Profile({
   const [data, setData] = useState<HardwareResult | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  const generation = useRef(0),
+  const hardwareToken = useRef<number | undefined>(undefined),
+    generation = useRef(0),
     locked = useRef(false);
   const [revision, setRevision] = useState(0);
   const [pending, setPending] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo>();
   const load = useCallback(async (force: boolean) => {
     const revision = ++generation.current;
+    hardwareToken.current = undefined;
     setBusy(true);
     try {
       const result = await getBridge().enhancedHardware(force);
       if (!result.ok) throw Error(result.message || t("硬件检测失败"));
       if (revision === generation.current) {
+        hardwareToken.current = refreshToken;
         setData(result);
         setError("");
       }
@@ -80,9 +90,9 @@ export function Profile({
     } finally {
       if (revision === generation.current) setBusy(false);
     }
-  }, []);
+  }, [refreshToken]);
   useEffect(() => {
-    if (active) void load(false);
+    if (active && hardwareToken.current !== refreshToken) void load(false);
     return () => {
       ++generation.current;
     };
@@ -92,7 +102,7 @@ export function Profile({
   const baseline = useProfileTarget(
     dir,
     dir ? "" : data?.hardwareProfile || "",
-    active && !!data,
+    active && (!!dir || !!data),
     revision,
     refreshToken,
   );
@@ -110,12 +120,16 @@ export function Profile({
     status?.hardwareProfile ||
     data?.hardwareProfile ||
     "";
-  const profile = data?.hardwareProfiles[profileId];
+  const profileCatalog = data?.hardwareProfiles || status?.hardwareProfiles;
+  const profile = profileCatalog?.[profileId];
   const profileNotes = hardwareProfileNotes(profile);
   const profileName = t(profiles.find(([id]) => id === profileId)?.[1] || profile?.shortLabel || "未识别");
   const draft = savedDraft || base;
-  const disabled = operationBusy || pending || busy;
-  const refreshTarget = () => setRevision((value) => value + 1);
+  const disabled = operationBusy || pending;
+  const refreshTarget = () => {
+    invalidateGameInspection(dir);
+    setRevision((value) => value + 1);
+  };
   const perform = async (action: () => Promise<void>) => {
     if (locked.current || operationBusy) return;
     locked.current = true;
@@ -145,21 +159,14 @@ export function Profile({
       onChanged?.();
       message(t("默认档位已保存，应用到游戏后才会改变游戏配置。"));
     });
-  const importModel = () =>
-    perform(async () => {
-      const result = await getBridge().enhancedImportModel();
-      if (result.cancelled) return;
-      if (!result.ok) throw Error(result.message || t("操作未完成"));
-      onChanged?.();
-      refreshTarget();
-      message(t("模型已导入"));
-    });
-  const apply = (scope: "neural" | "mfg" | "both") =>
+  const modelSection = useRef<HTMLDivElement>(null);
+  const graphicsSection = useRef<HTMLFieldSetElement>(null);
+  const apply = (scope: NonNullable<Parameters<typeof applyPatch>[2]>) =>
     perform(async () => {
       if (!dir || !base || !draft) return;
-      const config = applyPatch(base, draft, scope);
+      const config = applyPatch(base, draft, scope, status?.launcherProtected);
       if (await run((token) => getBridge().enhancedApply(dir, config, token))) {
-        if (scope === "both") setDraft(dir, undefined);
+        if (scope === "both" || scope === "enableBoth" || scope === "changed") setDraft(dir, undefined);
         refreshTarget();
       }
     });
@@ -192,15 +199,7 @@ export function Profile({
             )}
           </p>
         </div>
-        <button
-          disabled={disabled}
-          onClick={() => {
-            void load(true).then(refreshTarget);
-          }}
-        >
-          <RefreshCw size={16} />
-          {t(busy ? "检测中…" : "重新检测")}
-        </button>
+
       </div>
       {error && (
         <p className="error" role="alert">
@@ -284,14 +283,11 @@ export function Profile({
             <FolderOpen size={15} aria-hidden="true" />
             <span>{t("浏览并添加游戏目录…")}</span>
           </button>
-          <button disabled={disabled} aria-label={t("导入模型 DLL…")} title={t("导入模型 DLL…")} onClick={() => void importModel()}>
-            <Download size={15} aria-hidden="true" />
-            <span>{t("导入模型 DLL…")}</span>
-          </button>
+
           <button
             disabled={disabled}
-            aria-label={t("检查更新")}
-            title={t("检查更新")}
+            aria-label={t("检查软件更新")}
+            title={t("检查软件更新")}
             onClick={() =>
               void perform(async () => {
                 setUpdate(undefined);
@@ -300,7 +296,7 @@ export function Profile({
             }
           >
             <RefreshCw size={15} aria-hidden="true" />
-            <span>{t("检查更新")}</span>
+            <span>{t("检查软件更新")}</span>
           </button>
         </div>
       </div>
@@ -320,12 +316,12 @@ export function Profile({
           )}
         </div>
       )}
-      {data && (
+      {profileCatalog && (
         <section className="profile-picker" aria-label={t("硬件专属优化档位")}>
           <header className="profile-picker-heading">
             <h2>{t("硬件专属优化档位")}</h2>
             <p className="muted">
-              {data.hardwareProfile !== profileId && (
+              {data && data.hardwareProfile !== profileId && (
                 <>
                   {t("默认硬件档位")} ·{" "}
                   {t(
@@ -338,9 +334,9 @@ export function Profile({
               {t("按显卡选择神经渲染和多帧生成的默认策略，应用到游戏后生效。")}
             </p>
           </header>
-          <HardwareProfileChoices catalog={data.hardwareProfiles} profileId={profileId}
-            source={dir ? (profileOverride ? "selected" : status?.hardwareProfileSource) : data.hardwareProfileSource}
-            disabled={disabled || !target} onSelect={choose} />
+          <HardwareProfileChoices standalone={status?.launcherProtected} catalog={profileCatalog} profileId={profileId}
+            source={dir ? (profileOverride ? "selected" : status?.hardwareProfileSource) : data?.hardwareProfileSource}
+            disabled={disabled || busy || !target} onSelect={choose} />
         </section>
       )}
       {data && !target && <Loading text={t("读取游戏配置…")} />}
@@ -350,16 +346,17 @@ export function Profile({
         </p>
       ))}
       {status && draft && (
-        <fieldset disabled={disabled}>
+        <fieldset ref={graphicsSection} disabled={disabled}>
           <GraphicsPanels
+            active={active}
             profileNotes={profileNotes}
             gameDir={dir}
             status={status}
             exePath={status.exePath}
             draft={draft}
             onChange={(patch) => setDraft(dir, { ...draft, ...patch })}
-            onApply={(scope) => void apply(scope)}
-            onImport={() => void importModel()}
+            onApply={scope => void apply(scope)}
+            onBrowseModels={() => modelSection.current?.scrollIntoView({ block: "start" })}
           />
         </fieldset>
       )}
@@ -371,36 +368,18 @@ export function Profile({
       )}
       {dir && (status || recovery?.canRestore) && (
         <div className="profile-diagnostics">
-          {status?.diagnostics && (
-            <DiagnosticsPanel diagnostics={status.diagnostics} />
-          )}
           <div className="profile-game-actions">
-            {status && draft && (
-              <button
-                className="primary"
-                disabled={disabled}
-                onClick={() => void apply("both")}
-              >
-                <span className="action-symbol" aria-hidden="true">🚀</span>
-                {t("应用神经渲染与补帧配置")}
-              </button>
-            )}
-            <button
-              className="danger"
-              disabled={operationBusy || pending || !recovery?.canRestore}
-              onClick={() => void restore()}
-            >
-              <Undo2 size={15} />
-              {t("一键卸载并恢复")}
-            </button>
-            <button disabled={disabled} onClick={refreshTarget}>
-              <RefreshCw size={15} />
-              {t("刷新状态")}
-            </button>
+            <GraphicsActions draft={draft} status={status} changed={!!(base && draft && changedFields(base, draft).length)}
+              busy={disabled} canRestore={!!recovery?.canRestore} undo={() => setDraft(dir, undefined)}
+              apply={apply} restore={restore} />
           </div>
+          {status?.diagnostics && <DiagnosticsPanel diagnostics={status.diagnostics} />}
         </div>
       )}
-      {target && <ModelTable profileView models={target.models} profileSm={profile?.sm} profileName={profile ? profileName : undefined} message={message} onImport={importModel} busy={disabled} />}
+      {target && <div ref={modelSection}><ModelTable profileView models={target.models} profileSm={profile?.sm} gpuSm={status?.hardware?.gpu?.architecture?.sm || gpu?.architecture?.sm} profileName={profile ? profileName : undefined} message={message} onImport={onImportModel} onChoose={dir && draft ? id => {
+          setDraft(dir, { ...draft, neuralModelId: id, neuralMode: id === "310.8.0-RTX40" ? "legacy" : "latest_compatible" });
+          graphicsSection.current?.scrollIntoView({ block: "start" });
+        } : undefined} onBrowseModels={onBrowseModels} onDownload={onDownloadModel} busy={disabled} /></div>}
     </div>
   );
 }

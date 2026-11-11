@@ -46,6 +46,10 @@ class ComponentReview {
     for (const rel of Object.keys(record.receipts)) add(rel);
     for (const rel of Object.keys(record.lock?.files || {})) add(rel);
     const exeDir = scan.chosen ? path.dirname(scan.chosen.path) : null;
+    if (exeDir && require('./wuthering-waves').gameRoot(dir, scan.chosen.path)) {
+      const proxy = path.join(exeDir, 'version.dll');
+      if (fs.existsSync(proxy)) add(path.relative(dir, proxy));
+    }
     if (exeDir) for (const folder of [exeDir, path.join(exeDir, 'host64'), path.join(exeDir, 'OptiScaler', 'plugins')]) {
       if (!fs.existsSync(folder)) continue;
       journal.safePath(dir, path.relative(dir, path.join(folder, '.component-check')));
@@ -175,6 +179,9 @@ class ComponentReview {
       }
     }
     const inventory = await this.inventory(dir, inspectFile, recoveredManifest);
+    const wuwa = require('./wuthering-waves');
+    const gameRoot = wuwa.gameRoot(dir, inventory.exePath);
+    if (gameRoot) wuwa.checkPreview(gameRoot, dir, rows, state, request.kind);
     for (const row of inventory.rows) {
       const planned = rows.find(r => r.scope === row.scope && r.rel.toLowerCase() === row.rel.toLowerCase());
       if (planned) planned.backup = row.backup || (row.present && planned.action === 'replace' ? { version: row.version, create: true } : null);
@@ -200,19 +207,20 @@ class ComponentReview {
     if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) throw err('errUnsafeTarget', '无效的游戏目录');
     const now = Date.now();
     for (const [id, value] of this.pending) if (value.expires < now) this.pending.delete(id);
-    let prior;
     if (token) {
-      prior = this.pending.get(token); this.pending.delete(token);
+      const prior = this.pending.get(token); this.pending.delete(token);
       if (!prior || prior.expires < now || prior.dir !== key(dir) || JSON.stringify(prior.request) !== JSON.stringify(request)) throw err('errPreviewExpired', '预览已失效或操作参数已改变，请重新预览。');
+      return require('./wuthering-waves').withRtxLock(dir, () => this.confirm(dir, request, work, prior.signature));
     }
     const plan = await this.plan(dir, request, work);
-    if (!token) {
-      const id = crypto.randomUUID();
-      if (this.pending.size > 8) this.pending.delete(this.pending.keys().next().value);
-      this.pending.set(id, { dir: key(dir), request, signature: plan.signature, expires: now + 10 * 60 * 1000 });
-      return { ok: true, preview: { ...plan, token: id, dir, kind: request.kind, expires: now + 10 * 60 * 1000 } };
-    }
-    if (plan.signature !== prior.signature) throw err('errPreviewChanged', '游戏文件、组件来源或安装选择已变化，请重新查看预览后再应用。');
+    const id = crypto.randomUUID();
+    if (this.pending.size > 8) this.pending.delete(this.pending.keys().next().value);
+    this.pending.set(id, { dir: key(dir), request, signature: plan.signature, expires: now + 10 * 60 * 1000 });
+    return { ok: true, preview: { ...plan, token: id, dir, kind: request.kind, expires: now + 10 * 60 * 1000 } };
+  }
+  async confirm(dir, request, work, signature) {
+    const plan = await this.plan(dir, request, work);
+    if (plan.signature !== signature) throw err('errPreviewChanged', '游戏文件、组件来源或安装选择已变化，请重新查看预览后再应用。');
     if (plan.conflicts.length) throw err('errVersionLocked', '版本锁定已阻止组件变更。请在组件清单中查看差异并手动解锁。');
     const result = await work();
     if (result?.ok === false) return result;

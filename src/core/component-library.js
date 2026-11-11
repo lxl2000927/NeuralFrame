@@ -102,26 +102,31 @@ class ComponentLibrary {
     }
     const id=hash(JSON.stringify([spec.component,entries.map(f=>[f.rel,f.sha256])])),catalog=this.catalog();
     const existing=catalog.packages.find(p=>p.id===id);
-    const promoted = existing && !existing.trustedAdapter && spec.trustedAdapter === true
+    let updated = existing && !existing.trustedAdapter && spec.trustedAdapter === true
       ? { ...existing, trustedAdapter: true, version: String(spec.version || existing.version).slice(0,100), source: String(spec.source || '已适配组件缓存').slice(0,200) }
       : null;
     if(existing){
+      if (spec.archiveSha256 && spec.archiveSha256 !== existing.archiveSha256 &&
+          !existing.releaseArchives?.some(a => a.sha256 === spec.archiveSha256)) {
+        const archive = {sha256:spec.archiveSha256, releaseUrl:spec.releaseUrl || null};
+        updated = {...(updated || existing), releaseArchives:[...(existing.releaseArchives || []), archive]};
+      }
       let valid = true;
       try { await this.verify(existing); } catch { valid = false; }
       signal?.throwIfAborted();
       if (valid) {
-        if (!promoted) return existing;
+        if (!updated) return existing;
         // The catalog is the publication point. If it fails, seeding retries
         // on the next read, without copying or duplicating identical binaries.
-        await journal.atomicJson(safe(this.directory(existing), 'package.json'), promoted);
-        catalog.packages[catalog.packages.indexOf(existing)] = promoted;
+        await journal.atomicJson(safe(this.directory(existing), 'package.json'), updated);
+        catalog.packages[catalog.packages.indexOf(existing)] = updated;
         await journal.atomicJson(path.join(this.root, 'catalog.json'), catalog);
-        return promoted;
+        return updated;
       }
     }
     const temp=path.join(this.root,'staging',crypto.randomUUID());await fs.promises.mkdir(temp,{recursive:true});
     try{for(const f of entries){const dest=safe(temp,f.rel);await fs.promises.mkdir(path.dirname(dest),{recursive:true});await fs.promises.copyFile(spec.files[f.rel],dest);if(await digest(dest)!==f.sha256)throw fail('复制期间组件发生变化');}
-      const p=existing?{...(promoted || existing),files:entries}:{id,component:spec.component,version:String(spec.version||entries[0]?.version||'手动导入').slice(0,100),files:entries,source:String(spec.source||'手动导入').slice(0,200),releaseUrl:spec.releaseUrl||null,archiveSha256:spec.archiveSha256||null,at:new Date().toISOString(),trustedAdapter:spec.trustedAdapter===true};
+      const p=existing?{...(updated || existing),files:entries}:{id,component:spec.component,version:String(spec.version||entries[0]?.version||'手动导入').slice(0,100),files:entries,source:String(spec.source||'手动导入').slice(0,200),releaseUrl:spec.releaseUrl||null,archiveSha256:spec.archiveSha256||null,at:new Date().toISOString(),trustedAdapter:spec.trustedAdapter===true};
       await journal.atomicJson(path.join(temp,'package.json'),p);
       const dest=this.directory(p);await fs.promises.mkdir(path.dirname(dest),{recursive:true});
       // Publication cannot be interrupted once the first file has been committed.

@@ -14,7 +14,8 @@ export type Model = {
   name: string;
   version?: string;
   catalogDate?: string;
-  catalogAliases?: string[];
+  downloadId?: string;
+  downloadSize?: number;
   importedAt?: string;
   availableOnDisk?: boolean;
   role?: string;
@@ -26,6 +27,7 @@ export type Model = {
   compatBadge?: string;
   compatReason?: string;
   sourceType?: string;
+  upstreamRepo?: string;
   description?: string;
   bundled?: boolean;
   downloadable?: boolean;
@@ -77,7 +79,16 @@ export type StatusDiagnostics = {
     };
   };
 };
+type NativeRuntimeFile = { rel: string; version: string | null };
 export type Status = {
+  standaloneProfile?: { target: ProxySettings; saved: ProxySettings | null; adapterVersion: number | null } | null;
+  launcherProtected?: boolean;
+  nativeRuntimeStack?: {
+    indexAvailable: boolean;
+    sr?: NativeRuntimeFile;
+    fg?: NativeRuntimeFile;
+    streamline?: NativeRuntimeFile;
+  } | null;
   configuredRuntimeStack?: string | null;
   ok: boolean;
   message?: string;
@@ -119,6 +130,12 @@ export type Status = {
 };
 export type Details = {
   ok: boolean;
+  launcherProtected?: boolean;
+  currentDlss?: { rel: string; version?: string | null; bitness?: number } | null;
+  newDlss?: string | null;
+  addon?: boolean;
+  reshade?: { installed?: boolean; version?: string | null };
+  optiscaler?: { installed?: boolean; version?: string | null };
   reason?: string;
   exePath?: string;
   api?: string;
@@ -148,6 +165,9 @@ export type Draft = {
   hdrCompatibility: boolean;
 };
 export type RuntimeItem = {
+  requestedMode?: string;
+  appliedMode?: string;
+  dynamicSupported?: boolean | null;
   state: string;
   label: string;
   detail: string;
@@ -161,6 +181,13 @@ export type RuntimeItem = {
   evidence?: string;
 };
 export type Runtime = {
+  standalone?: {
+    at: number; settings: ProxySettings; enabled: boolean; pending: boolean;
+    evaluations: number; failures: number;
+    actual: { stage: number; scale: number; passes: number; width: number; height: number;
+      extentWidth: number; extentHeight: number; gpuMs: number } | null;
+    stack: { fg: string | null; streamline: string | null; ota: boolean };
+  };
   ok: boolean;
   message?: string;
   checkedAt: number;
@@ -170,6 +197,7 @@ export type Runtime = {
   warnings?: string[];
   modules?: { name: string; path: string }[];
 };
+export type ProxySettings = Record<string, number | boolean | string>;
 export type FileRow = {
   name: string;
   rel: string;
@@ -219,6 +247,9 @@ export type Progress = {
   stage: string;
   loaded?: number;
   total?: number;
+  index?: number;
+  count?: number;
+  id?: string;
 };
 export type Library = {
   ok: boolean;
@@ -258,6 +289,10 @@ export type Updates = {
     name: string;
     size: number;
     repo: string;
+    provider?: string;
+    downloadId?: string;
+    cachedPackageId?: string;
+    catalogModelId?: string;
     downloadable: boolean;
     stale?: boolean;
   }[];
@@ -327,7 +362,7 @@ export interface Lab {
     config: Partial<Draft>,
     token?: string,
   ): Promise<Result>;
-  enhancedImportModel(): Promise<Result>;
+  enhancedImportModel(filePath?: string, meta?: {expectedModelId: string}): Promise<Result & {model?: Model & {compatibility?: {status: string}}}>;
   componentInventory(dir: string): Promise<Inventory>;
   componentRuntime(dir: string): Promise<Runtime>;
   componentLock(dir: string, on: boolean): Promise<Result>;
@@ -444,7 +479,7 @@ export type HardwareProfile = {
   description?: string;
 };
 export type HardwareProfileSource = "selected" | "manifest" | "default" | "detected" | "blackwell-mobile" | "low-vram" | "fallback";
-export type HardwareInfo = { cpu: string; cpuCores: number; ramGB: number; os: string; gpu: { name: string; driver: string; detected?: boolean; vramTotalMB: number | null; vramUsedMB: number | null; powerDefaultW: number | null; powerMaxW: number | null }; display?: { resolution?: string; refreshRateHz?: number } | null };
+export type HardwareInfo = { cpu: string; cpuCores: number; ramGB: number; os: string; gpu: { name: string; driver: string; detected?: boolean; architecture?: {sm?: string | null}; vramTotalMB: number | null; vramUsedMB: number | null; powerDefaultW: number | null; powerMaxW: number | null }; display?: { resolution?: string; refreshRateHz?: number } | null };
 export type HardwareResult = Result & { hardwareProfile: string; hardwareProfileSource?: HardwareProfileSource; hardwareProfiles: Record<string, HardwareProfile>; hardware: HardwareInfo };
 export type RuntimeStack = { id: string; name: string; dlssVersion: string; dlssgVersion?: string; streamlineVersion: string; feederVersion: string };
 

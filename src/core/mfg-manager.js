@@ -488,7 +488,9 @@ async function inspectGameMfgStatus(gameDir, {
     filesCount: scan.streamlineFiles.length
   };
 
-  const currentConfig = readCurrentMfgConfiguration(exeDir);
+  const wuwa = require('./wuthering-waves');
+  const proxy = exePath && wuwa.gameRoot(gameDir, exePath) && wuwa.inspectProxy(exeDir);
+  const currentConfig = proxy?.mfg || readCurrentMfgConfiguration(exeDir);
   const conflicts = detectMfgInjectorConflicts(gameDir, exeDir, scan);
   const runtimeVerification = verifyMfgRuntimeStatus(gameDir, exeDir);
 

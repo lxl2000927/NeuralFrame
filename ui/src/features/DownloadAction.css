@@ -1,0 +1,3 @@
+.download-active { display:inline-grid; grid-template-columns:minmax(0,1fr) auto; gap:3px 6px; align-items:center; max-width:100%; }
+.download-active > span { font-size:12px; font-variant-numeric:tabular-nums; color:var(--muted); }
+.download-active progress { grid-column:1/-1; width:100%; height:4px; accent-color:var(--accent); }

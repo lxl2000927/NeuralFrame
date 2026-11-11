@@ -15,6 +15,9 @@
 .module-fields { display:grid; gap:16px; }
 .module-field { display:grid; gap:8px; min-width:0; }
 .module-field > span { font-size:13px; color:var(--text); font-weight:600; }
+.native-stack h3 { margin:0; font-size:13px; }
+.native-stack .module-facts { margin:0; padding:0 12px; border:1px solid var(--border); border-radius:7px; }
+.native-stack .module-facts > div:last-child { border-bottom:0; }
 .module-field .select-trigger {
   width: 100%;
   max-width: 100%;
@@ -43,6 +46,5 @@
 .module-command { min-height:36px; padding:6px 13px; max-width:100%; white-space:normal; }
 .module-actions small { width:100%; color:var(--muted); font-size:12px; }
 /* Use available editor width, not the window width occupied by the library. */
-.detail-scroll { container-type:inline-size; }
 @container (max-width:780px) { .graphics-modules { grid-template-columns:minmax(0,1fr); } }
 @container (max-width:420px) { .graphics-module { padding:14px; } }

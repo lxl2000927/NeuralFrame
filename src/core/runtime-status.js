@@ -128,13 +128,19 @@ function parseEvents(events, now) {
   }
   return {nr,mfg,requested,evidence:evidence.slice(-12)};
 }
-function parseMfgStatus(log, proc, now) {
+function readStatus(log, proc, now) {
   if(!log || log.size>MAX_LOG || log.mtime<ms(proc.startedAt) || now-log.mtime>FRESH_MS || log.mtime>now+2000)return null;
   let s;try{s=JSON.parse(log.text);}catch{return null;}
   if(!s || Number(s.pid)!==proc.pid)return null;
   const birth=log.text.match(/"processBirth"\s*:\s*"?(\d+)/)?.[1];
   if(birth && proc.processBirth && birth!==proc.processBirth)return null;
+  return s;
+}
+function parseMfgStatus(log, proc, now) {
+  const s=readStatus(log,proc,now);if(!s)return null;
   const extra={at:log.mtime,source:log.file,requestedMultiplier:Number(s.multiplier)||null,appliedMultiplier:Number(s.appliedMultiplier)||null,pending:s.pending===true,
+    requestedMode:s.followGame ? 'follow' : s.mode, appliedMode:s.appliedMode,
+    dynamicSupported:s.dynamicMfgSupportKnown === true ? s.dynamicMfgSupported === true : null,
     evidence:`PID=${s.pid}; getStateResult=${s.getStateResult}; dlssgStatus=${s.dlssgStatus}; actualFramesPresented=${s.actualFramesPresented}; stateSampleAgeMs=${s.stateSampleAgeMs}`};
   if(s.restartRequired || s.streamlineRebuildRequired)return state('restart','需要重启游戏','插件明确报告重建或重启请求。',extra);
   if(s.getStateSeen && (s.getStateResult!==0 || s.dlssgStatus!==0))return state('error','帧生成报告错误','DLSS-G 状态调用或运行状态返回错误。',extra);
@@ -156,7 +162,7 @@ function parseMfgStatus(log, proc, now) {
         extra.sourceFps=s.realFpsMilli/1000;extra.reportedOutputFps=s.dlssFpsMilli/1000;
       }
     }
-    return state(count>=2?'active':'idle',count>=2?`帧生成生效 · 提供程序 ${count} 帧`:'当前未观察到补帧',`已应用请求 ${s.appliedMultiplier || '—'}×；提供程序呈现 ${count} 帧${s.pending?'，新倍率请求仍在等待应用':''}。`,extra);
+    return state(count>=2?'active':'idle',count>=2?`帧生成生效 · 提供程序 ${count} 帧`:'当前未观察到补帧',`${s.appliedMode === 'dynamic' ? '已应用动态补帧' : `已应用请求 ${s.appliedMultiplier || '—'}×`}；提供程序呈现 ${count} 帧${s.pending?'，新请求仍在等待应用':''}。`,extra);
   }
   return state('waiting','插件在线，等待输出采样','已读到当前游戏的状态文件；尚无新鲜、成功的 DLSS-G 输出状态。',extra);
 }
@@ -172,7 +178,7 @@ function moduleState(runtime, file) {
 class RuntimeStatus {
   constructor({scanGame,query=queryProcesses,clock=Date.now,temp=os.tmpdir()}={}) {
     this.scan=scanGame || require('./scan').scanGame;this.query=query;this.clock=clock;this.temp=temp;
-    this.history=new Map();this.cache=new Map();this.scans=new Map();this.inflight=new Map();this.ambiguousLogs=new Map();
+    this.history=new Map();this.cache=new Map();this.scans=new Map();this.inflight=new Map();this.ambiguousLogs=new Map();this.proxyHistory=new Map();
   }
   inspect(dir) {
     if(typeof dir!=='string' || !path.isAbsolute(dir))return Promise.reject(Error('无效的游戏目录'));
@@ -214,10 +220,18 @@ class RuntimeStatus {
     // Only status files with the exact PID (and process birth when provided)
     // are accepted. No recursive disk scan and no arbitrary log paths followed.
     try{let budget=60;for(const entry of fs.readdirSync(this.temp,{withFileTypes:true})){if(!/^RTXMFG/i.test(entry.name)||--budget<0)continue;const p=path.join(this.temp,entry.name);if(entry.isFile() && /status\.json$/i.test(entry.name))files.set(key(p),p);else if(entry.isDirectory())for(const n of fs.readdirSync(p).slice(0,60))if(/status\.json$/i.test(n))files.set(key(path.join(p,n)),path.join(p,n));}}catch{}
-    const events=[],warnings=[],statuses=[];
+    const events=[],warnings=[],statuses=[],proxies=[];
     for(const file of files.values()) {
       const log=readTail(file);if(!log)continue;
-      if(/status\.json$/i.test(file)){const status=parseMfgStatus(log,proc,now);if(status)statuses.push(status);else warnings.push(`${path.basename(file)}：旧状态、不同进程或缺少有效会话信息，已忽略。`);continue;}
+      if(/status\.json$/i.test(file)){
+        const status=parseMfgStatus(log,proc,now);
+        if(status)statuses.push(status);else warnings.push(`${path.basename(file)}：旧状态、不同进程或缺少有效会话信息，已忽略。`);
+        const raw=readStatus(log,proc,now), hk=session+'|'+key(file);
+        const proxy=raw && require('./standalone-runtime').parseStandalone(raw,log,now,this.proxyHistory.get(hk));
+        if(proxy){proxies.push(proxy);this.proxyHistory.set(hk,proxy.history);}
+        else this.proxyHistory.delete(hk);
+        continue;
+      }
       const hk=session+'|'+key(file),last=this.history.get(hk);
       const prev=continuesLog(log,last)?last:null;
       const fresh=logEvents(log,proc,now,prev);
@@ -229,13 +243,15 @@ class RuntimeStatus {
       if(log.mtime<ms(proc.startedAt))warnings.push(`${path.basename(file)}：早于本次启动，已忽略。`);
     }
     while(this.history.size>150)this.history.delete(this.history.keys().next().value);
+    while(this.proxyHistory.size>64)this.proxyHistory.delete(this.proxyHistory.keys().next().value);
     const parsed=parseEvents(events,now),has=regex=>modules.some(m=>regex.test(m.name));
     const fallback=(loaded)=>proc.moduleError?state('unreadable','模块读取受限','游戏进程存在，但系统不允许枚举模块；请使用相同权限运行管理器与游戏。'):loaded?state('loaded','已加载，等待运行证据','模块已进入游戏；当前插件尚未提供可确认成功执行的新遥测。进入实际场景后刷新；仅加载 DLL 不代表生效。'):state('not_loaded','未发现运行模块','系统模块表未发现对应运行库 / 插件。检查是否安装到实际游戏 EXE 目录；手动映射的插件需以日志为准。');
     if (parsed.mfg) statuses.push(parsed.mfg);
     const observed = statuses.filter(s => s.state !== 'waiting' && s.state !== 'stale');
     const mfg=(observed.length ? observed : statuses).sort((a,b)=>b.at-a.at)[0] || fallback(has(/nvngx_dlssg|renodx-mfg|MFGUnlock/i));
-    const nr=parsed.nr || fallback(has(/nvngx_dlssnr|renodx-dlss|dlss5-feed/i));
-    return {ok:true,checkedAt:now,processState:'running',process:proc,modules,nr,mfg,warnings:[...new Set(warnings)].slice(0,8),evidence:parsed.evidence,requestedMultiplier:mfg.requestedMultiplier||parsed.requested};
+    const proxy=proxies.sort((a,b)=>b.standalone.at-a.standalone.at)[0];
+    const nr=proxy?.nr || parsed.nr || fallback(has(/nvngx_dlssnr|renodx-dlss|dlss5-feed/i));
+    return {ok:true,checkedAt:now,processState:'running',process:proc,modules,nr,mfg,standalone:proxy?.standalone,warnings:[...new Set(warnings)].slice(0,8),evidence:parsed.evidence,requestedMultiplier:mfg.requestedMultiplier||parsed.requested};
   }
   empty(code,label,detail){return{ok:true,checkedAt:this.clock(),processState:code,process:null,modules:[],nr:state(code,label,detail),mfg:state(code,label,detail),warnings:[],evidence:[]};}
 }

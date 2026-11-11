@@ -91,7 +91,7 @@ function validatePayload(root, release = RELEASE) {
     if (!fs.existsSync(safePath(root, rel))) throw fail('errOptiPayload');
   }
 }
-async function ensureOptiScaler(cacheRoot, version) {
+async function ensureOptiScaler(cacheRoot, version, signal) {
   const release = releaseFor(version);
   const base = path.join(path.resolve(cacheRoot), 'components', `OptiScaler-${release.version}`);
   const archive = base + '.zip';
@@ -99,15 +99,16 @@ async function ensureOptiScaler(cacheRoot, version) {
     try { if (cached(archive, release.sha256) && require('./cache-proof').valid(base, release.sha256)) { validatePayload(base, release); return base; } } catch {}
     require('./preview-fs').external('需要先准备 OptiScaler 缓存（不会修改游戏）', 'optiscaler:' + release.version);
   }
-  if (!cached(archive, release.sha256)) await fetchVerified(release.url, release.sha256, archive);
+  if (!cached(archive, release.sha256)) await fetchVerified(release.url, release.sha256, archive, {signal});
   // Re-extract verified bytes on every install. The installer below copies an
   // explicit file list, not unknown files that may have appeared in the cache.
+  signal?.throwIfAborted();
   await extractZip(archive, { dir: base });
   // One build publishes its licence beside the archive; the other carries it
   // inside. Either way what reaches the game is verified bytes.
   if (release.licenseUrl) {
     const license = path.join(base, 'OptiScaler-GPL-3.0.txt');
-    if (!cached(license, release.licenseHash)) await fetchVerified(release.licenseUrl, release.licenseHash, license);
+    if (!cached(license, release.licenseHash)) await fetchVerified(release.licenseUrl, release.licenseHash, license, {signal});
   }
   validatePayload(base, release);
   require('./cache-proof').save(base, release.sha256);

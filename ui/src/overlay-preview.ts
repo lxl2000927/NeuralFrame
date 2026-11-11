@@ -15,7 +15,7 @@ import type { OverlayPrefs } from "./types";
 const runtime = window as typeof window & {
   mountOverlayLive: (
     root: HTMLElement,
-    options: { designOnly: boolean; translate: typeof t; thumbnail: boolean },
+    options: { designOnly: boolean; translate: typeof t },
   ) => void;
   applyOverlayTheme: (
     root: HTMLElement,
@@ -23,8 +23,7 @@ const runtime = window as typeof window & {
   ) => void;
 };
 const panel = document.getElementById("panel")!;
-let currentLanguage = "",
-  currentThumbnail = false;
+let currentLanguage = "";
 const reportSize = () =>
   parent.postMessage(
     {
@@ -54,18 +53,12 @@ window.addEventListener("message", (event) => {
     typeof config.hotkey === "string" ? config.hotkey.slice(0, 64) : "F8";
   setLanguage(config.language, false);
   runtime.applyOverlayTheme(panel, { theme: config.theme, custom });
-  if (
-    currentLanguage !== config.language ||
-    currentThumbnail !== Boolean(config.thumbnail)
-  ) {
+  if (currentLanguage !== config.language) {
     currentLanguage = config.language;
-    currentThumbnail = Boolean(config.thumbnail);
     runtime.mountOverlayLive(panel, {
       designOnly: true,
       translate: t,
-      thumbnail: currentThumbnail,
     });
-    panel.inert = currentThumbnail;
   }
   const footer = panel.querySelector(".ol-live-hotkey");
   if (footer)

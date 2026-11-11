@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   Copy,
   FolderOpen,
-  RefreshCw,
   Trash2,
   ChevronRight,
   Search,
@@ -71,10 +70,12 @@ export function History({
   message,
   ask,
   active = true,
+  refreshToken = 0,
 }: {
   message: (s: string) => void;
   ask: (title: string, body: string, confirm?: string) => Promise<boolean>;
   active?: boolean;
+  refreshToken?: number;
 }) {
   const [rows, setRows] = useState<HistoryRow[] | null>(null),
     [error, setError] = useState(""),
@@ -101,7 +102,7 @@ export function History({
   useEffect(() => {
     if (active) void load();
     return () => { ++request.current; };
-  }, [active]);
+  }, [active, refreshToken]);
   const copyHistory = async () => {
     if (!rows?.length) return;
     const text = rows.map(row => [
@@ -129,14 +130,7 @@ export function History({
           <button disabled={!rows?.length} onClick={() => void copyHistory()}>
             <Copy size={16} />{t("复制全部历史")}
           </button>
-          <button
-            onClick={() => {
-              void load();
-            }}
-          >
-            <RefreshCw size={16} />
-            {t("刷新")}
-          </button>
+
           <button
             className="danger"
             disabled={!rows?.length && !warning}
@@ -213,7 +207,7 @@ export function History({
           {t("条记录")}
         </small>
       </div>
-      {error && <p className="error">{t(error)}</p>}
+      {error && <p className="error">{t(error)} <button onClick={() => void load()}>{t("重试")}</button></p>}
       {warning && <p className="error" role="alert">{t("部分历史记录无法读取。")}</p>}
       {!rows ? (
         !error && <Loading skeleton="rows" />

@@ -4,28 +4,27 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { writePe } = require('./fixtures/pe');
+const { writePe, writeNr } = require('./fixtures/pe');
 const models = require('../src/core/neural-models');
 const { estimateVramBudget } = require('../src/core/combined-manager');
-const payloadDir = path.resolve(__dirname, '../payload');
+const payloadDir = process.env.NEURALFRAME_TEST_PAYLOAD_DIR || path.resolve(__dirname, '../payload');
 
 function scratch(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-identity-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
-// Non-executable fixture: PE metadata, NR identity symbols and one CUDA descriptor.
-function writeNr(file, version = '310.9.16.0') {
-  writePe(file, { version, text: 'nvngx_dlssnr.pdb DLSSNRGetStatsCallback source/features/dlssnr/' });
-  const fatbin = Buffer.alloc(81);
-  Buffer.from([0x50,0xed,0x55,0xba,1,0,0x10,0]).copy(fatbin);
-  fatbin.writeBigUInt64LE(65n, 8);
-  fatbin.writeUInt16LE(2, 16);
-  fatbin.writeUInt32LE(64, 20);
-  fatbin.writeBigUInt64LE(1n, 24);
-  fatbin.writeUInt32LE(89, 44);
-  fs.appendFileSync(file, fatbin);
-}
+
+test('a version-specific import rejects a different NR fingerprint before publishing any files', t => {
+  const dir = scratch(t), user = path.join(dir, 'profile');
+  const file = writeNr(path.join(dir, 'extracted', 'nvngx_dlssnr.dll'), '310.8.0.0');
+  for (const expectedModelId of ['310.8.SF', '310.9.16-oct2026']) {
+    assert.throws(() => models.importNeuralModel(file, user, {expectedModelId}), {code: 'errModelFingerprintMismatch'});
+  }
+  assert.equal(fs.existsSync(user), false);
+  const imported = models.importNeuralModel(file, user);
+  assert.equal(imported.id, models.inspectNeuralModelBinary(file).modelId);
+});
 
 test('the component selection resolves catalog aliases by identity and leaves other components in the plan', () => {
   const deploy = require('../src/core/component-deploy');
@@ -159,6 +158,10 @@ test('actual 310.9.16 NR files have a distinct hash identity and no invented per
   const list = await first;
   assert.deepEqual(list, models.listNeuralModels(options));
   assert.equal(list.find(m => m.id === '310.8.SF-v2').availableOnDisk, false);
+  const rank = list.find(m => m.id === '310.9.16');
+  assert.equal(rank.downloadId, 'rankftw-nr-310.9.16');
+  assert.equal(rank.availableOnDisk, false, 'a different DLL with the same PE version must not satisfy the pinned model');
+  assert.notEqual(rank.sha256, list.find(m => m.id === '310.8.SF-v2').sha256);
   const local = list.filter(m => m.availableOnDisk);
   assert.equal(local.length, 1);
   assert.equal(local[0].id, info.modelId);
@@ -233,6 +236,22 @@ test('explicit unavailable model fails without silently installing another model
   writePe(path.join(dir, 'Game.exe'), { text:'D3D12CreateDevice' });
   await assert.rejects(models.applyNeuralModelSelection(dir, { modelId:'310.8.0-RTX40', payloadDir }), { code:'errModelNotOnDisk' });
   assert.equal(fs.existsSync(path.join(dir, 'nvngx_dlssnr.dll')), false);
+});
+
+test('Blackwell-only models can be stored on Ada but applying fails before and after import', async t => {
+  const dir = scratch(t), game = path.join(dir, 'game'), user = path.join(dir, 'user');
+  writePe(path.join(game, 'Game.exe'), {text:'D3D12CreateDevice'});
+  const applyModel = modelId => models.applyNeuralModelSelection(game, {
+    modelId, gpuName:'RTX 4070 Laptop GPU', hardwareProfile:'rtx50_desktop', payloadDir:dir, userDataDir:user
+  });
+  for (const id of ['310.8.Lecram', '310.8.0-stock']) {
+    await assert.rejects(applyModel(id), {code:'errModelGpuIncompatible'});
+  }
+  const file = writeNr(path.join(dir, 'input/nvngx_dlssnr.dll'), '310.8.0.0', 120);
+  const imported = models.importNeuralModel(file, user);
+  assert.ok(fs.existsSync(imported.filePath));
+  await assert.rejects(applyModel(imported.id), {code:'errModelGpuIncompatible'});
+  assert.equal(fs.existsSync(path.join(game, 'nvngx_dlssnr.dll')), false);
 });
 
 test('legacy alias does not receive a fictional VRAM discount and GPU labels cannot fake validation', () => {

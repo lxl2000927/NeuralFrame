@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('fs'),path=require('path'),os=require('os');
-const {writePe}=require('./fixtures/pe');
+const {writePe,writeNr}=require('./fixtures/pe');
 const {ComponentLibrary,digest,hash,safe}=require('../src/core/component-library');
 const {ComponentUpdates,candidates,allowedAsset,unpack,mapFiles}=require('../src/core/component-updates');
 const {ComponentReview}=require('../src/core/component-review');
@@ -152,6 +152,15 @@ test('release parsing requires fixed upstream HTTPS URL, stable version and SHA-
 });
 test('online download verifies bytes, stays separate from game, and cleans failed downloads',async t=>{const f=fixture(t),bytes=fs.readFileSync(f.b),url='https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1.8.2/renodx-mfgunlock.addon64',item={id:'one',provider:'mfg',component:'mfg-renodx',name:'renodx-mfgunlock.addon64',tag:'1.8.2',url,size:bytes.length,sha256:hash(bytes),downloadable:true};
   const updater=new ComponentUpdates(f.library,{fetcher:async()=>new Response(bytes)});await journal.atomicJson(updater.cache,{candidates:[item],errors:[]});const result=await updater.download('one');assert.equal(result.compatibility.ready,false);assert.equal(fs.existsSync(path.join(f.game,'renodx-mfgunlock.addon64')),false);
+  let requests = 0;
+  updater.fetcher = async () => { requests++; return new Response(bytes); };
+  assert.equal(updater.status().candidates[0].cachedPackageId, result.package.id);
+  assert.equal((await updater.download('one')).package.id, result.package.id);
+  assert.equal(requests, 0);
+  fs.writeFileSync(path.join(f.library.directory(result.package), item.name), Buffer.alloc(bytes.length));
+  await updater.download('one');
+  assert.equal(requests, 1);
+  await f.library.verify(result.package);
   await journal.atomicJson(updater.cache,{candidates:[{...item,sha256:'0'.repeat(64)}],errors:[]});await assert.rejects(updater.download('one'),/SHA-256/);assert.deepEqual(fs.readdirSync(path.join(f.library.root,'downloads')),[]);
 });
 test('offline check preserves old candidate with stale indicator, never claims success per source',async t=>{const f=fixture(t),updater=new ComponentUpdates(f.library,{fetcher:async()=>{throw Error('offline');}});await journal.atomicJson(updater.cache,{candidates:[{id:'old',provider:'mfg'}],errors:[]});const result=await updater.check();assert.ok(result.errors.length);assert.equal(result.candidates[0].stale,true);});
@@ -172,7 +181,7 @@ test('update checks coalesce, survive restart and revalidate each repository ind
     const names = repo === mirror && phase !== 'changed' ? ['nvngx_dlssnr_1.zip', 'nvngx_dlss_1.zip'] : [];
     const assets = names.map((name, id) => ({id, name, size:1, digest:'sha256:' + 'a'.repeat(64),
       browser_download_url:`https://github.com/${repo}/releases/download/v1/${name}`}));
-    return Response.json([{id:1, tag_name:'v1', assets}], {headers:{etag:'"' + repo + '"'}});
+    return Response.json(repo === modelRepo ? [] : [{id:1, tag_name:'v1', assets}], {headers:{etag:'"' + repo + '"'}});
   };
   const updater = new ComponentUpdates(library, {fetcher});
   const [first, parallel] = await Promise.all([updater.check(), updater.check()]);
@@ -227,12 +236,138 @@ function zip(entries){const locals=[],central=[];let offset=0;for(const [name,by
  const h=Buffer.alloc(30);h.writeUInt32LE(0x04034b50);h.writeUInt16LE(20,4);h.writeUInt32LE(crc,14);h.writeUInt32LE(b.length,18);h.writeUInt32LE(b.length,22);h.writeUInt16LE(n.length,26);locals.push(h,n,b);
  const c=Buffer.alloc(46);c.writeUInt32LE(0x02014b50);c.writeUInt16LE(0x0314,4);c.writeUInt16LE(20,6);c.writeUInt32LE(crc,16);c.writeUInt32LE(b.length,20);c.writeUInt32LE(b.length,24);c.writeUInt16LE(n.length,28);c.writeUInt32LE((mode*65536)>>>0,38);c.writeUInt32LE(offset,42);central.push(c,n);offset+=h.length+n.length+b.length;}
  const body=Buffer.concat(central),end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(entries.length,8);end.writeUInt16LE(entries.length,10);end.writeUInt32LE(body.length,12);end.writeUInt32LE(offset,16);return Buffer.concat([...locals,body,end]);}
+const modelRepo = 'SmarterGamers/SmarterGamers-DLSS5-Swapper';
+const modelProvider = 'smartergamers-nr';
+const modelFile = 'nvngx_dlssnr.dll';
+function modelRelease(tag, names = []) {
+  return {id:1, tag_name:tag, assets:names.map(([name,bytes],id) => ({
+    id,name,size:bytes.length,digest:'sha256:' + hash(bytes),
+    browser_download_url:`https://github.com/${modelRepo}/releases/download/${tag}/${name}`
+  }))};
+}
+function lfsPointer(bytes) {
+  return `version https://git-lfs.github.com/spec/v1\noid sha256:${hash(bytes)}\nsize ${bytes.length}\n`;
+}
+const lfsPath = tag => `${modelRepo}/refs/tags/${tag}/resources/payload/streamline/${modelFile}`;
+
+test('SmarterGamers checks tagged LFS pointers, migrates the old update source and verifies the model on download', async t => {
+  const f = fixture(t), tag = 'v2.3.0';
+  const bytes = fs.readFileSync(writeNr(path.join(f.source,'nr.dll')));
+  const release = modelRelease(tag,[['SmarterGamers.DLSS.5.Swapper.2.3.0.exe','exe'],['SmarterGamers.DLSS.5.Swapper.Setup.2.3.0.exe','setup']]);
+  const pointer = 'https://raw.githubusercontent.com/' + lfsPath(tag);
+  const media = 'https://media.githubusercontent.com/media/' + lfsPath(tag);
+  let requests = 0, fetched = bytes;
+  const updater = new ComponentUpdates(f.library,{fetcher:async url => {
+    if (url === pointer) return new Response(lfsPointer(bytes));
+    if (url === media) { requests++; return new Response(fetched); }
+    assert.ok(url.startsWith('https://api.github.com/repos/'));
+    return Response.json(url.includes(modelRepo) ? [release,{...release,tag_name:'v4-beta',prerelease:true}] : []);
+  }});
+  await journal.atomicJson(updater.cache,{nextCheckAt:Date.now()+60000,candidates:[{provider:'enhanced-nr',id:'old'}],errors:[]});
+  assert.deepEqual(updater.status().candidates,[]);
+  await assert.rejects(updater.download('old'),/下载记录无效/);
+  const result = await updater.check();
+  assert.deepEqual(result.errors,[]);
+  assert.equal(requests,0);
+  assert.equal(result.candidates.length,1);
+  const [candidate] = result.candidates;
+  assert.equal(candidate.url,media);
+  assert.equal(candidate.sha256,hash(bytes));
+  assert.equal(candidate.size,bytes.length);
+  fetched = Buffer.alloc(bytes.length);
+  await assert.rejects(updater.download(candidate.id),/SHA-256/);
+  assert.equal(f.library.catalog().packages.length,0);
+  fetched = bytes;
+  const {package:imported} = await updater.download(candidate.id);
+  assert.equal(imported.version,'310.9.16.0');
+  assert.equal(imported.source,modelRepo);
+  assert.equal(imported.releaseUrl,candidate.releaseUrl);
+  await updater.download(candidate.id);
+  assert.equal(requests,2);
+  for (const url of [media.replace('refs/tags/'+tag,'main'),media.replace(modelRepo,'other/repo'),media+'?file=other']) {
+    await journal.atomicJson(updater.cache,{...result,candidates:[{...candidate,url}]});
+    await assert.rejects(updater.download(candidate.id),/下载记录无效/);
+  }
+  assert.equal(requests,2);
+});
+
+test('SF-v2 downloads from the two sources resolve to separate catalog entries and cached DLLs', () => {
+  const {RANKFTW_NR_SFV2:rank} = require('../src/core/component-definitions');
+  const {MODEL_DATABASE} = require('../src/core/neural-models');
+  const smarter = MODEL_DATABASE.find(m => m.id === '310.8.SF-v2');
+  const rankModel = MODEL_DATABASE.find(m => m.downloadId === rank.id);
+  assert.equal(rankModel.version, '310.8.2.0');
+  assert.notEqual(smarter.sha256, rankModel.sha256);
+  const candidates = [
+    {component:'dlss-nr',provider:'smartergamers-nr',name:modelFile,sha256:smarter.sha256},
+    {...rank,id:'upstream-asset'}
+  ];
+  const packages = [];
+  const updates = new ComponentUpdates({root:os.tmpdir(),catalog:()=>({packages})});
+  const status = () => updates.withLocalModels({candidates}).candidates.map(c => [c.catalogModelId,c.cachedPackageId]);
+  packages.push({id:'smarter',component:'dlss-nr',files:[{rel:modelFile,sha256:smarter.sha256}]});
+  assert.deepEqual(status(), [[smarter.id,'smarter'],[rankModel.id,undefined]]);
+  packages.push({id:'rank',component:'dlss-nr',files:[{rel:modelFile,sha256:rank.modelSha256}]});
+  assert.deepEqual(status(), [[smarter.id,'smarter'],[rankModel.id,'rank']]);
+});
+
+test('SmarterGamers uses standalone release assets and deduplicates them against existing models', async t => {
+  const f=fixture(t), bytes=fs.readFileSync(writeNr(path.join(f.source,'nr.dll')));
+  const archive=zip([['model/nvngx_dlssnr.dll',bytes]]);
+  const current=modelRelease('v3.0.0',[[modelFile,bytes]]);
+  const next=modelRelease('v4.0.0',[['nvngx_dlssnr_new.zip',archive]]);
+  let downloads=0;
+  const updater=new ComponentUpdates(f.library,{fetcher:async url => {
+    if (url === next.assets[0].browser_download_url) { downloads++; return new Response(archive); }
+    assert.ok(url.startsWith('https://api.github.com/'));
+    return Response.json(url.includes(modelRepo) ? [current,next] : []);
+  }});
+  const seeded=await f.library.importPackage({component:'dlss-nr',source:'existing',files:{[modelFile]:path.join(f.source,'nr.dll')}});
+  const r=await updater.check();
+  assert.deepEqual(r.errors,[]);
+  assert.equal(r.candidates[0].cachedPackageId,seeded.id);
+  for(const c of r.candidates) assert.equal((await updater.download(c.id)).package.id,seeded.id);
+  const reopened=new ComponentUpdates(f.library,{fetcher:()=>assert.fail('unexpected download')});
+  assert.ok(reopened.status().candidates.every(c=>c.cachedPackageId===seeded.id));
+  assert.equal((await reopened.download(r.candidates[1].id)).package.id,seeded.id);
+  assert.equal(downloads,1);
+});
+
+test('invalid tagged metadata leaves only that tag stale and retries even when the release list is unchanged', async t => {
+  const f=fixture(t), bytes=Buffer.from('model');
+  const releases=[modelRelease('v4'),modelRelease('v3')];
+  let damaged=false, etag;
+  const updater=new ComponentUpdates(f.library,{fetcher:async (url,{headers}) => {
+    if (url.startsWith('https://raw.githubusercontent.com/')) return new Response(damaged && url.includes('/v3/') ? 'not a pointer' : lfsPointer(bytes));
+    if (!url.includes(modelRepo)) return Response.json([]);
+    etag=headers['If-None-Match'];
+    return Response.json(releases,{headers:{etag:'"stable"'}});
+  }});
+  const first=await updater.check();
+  assert.deepEqual(first.errors,[]);
+  const expire=()=>journal.atomicJson(updater.cache,{...updater.readIndex(),nextCheckAt:0});
+  damaged=true;await expire();
+  const partial=await updater.check();
+  assert.equal(partial.errors.length,1);
+  assert.match(partial.errors[0].message,/v3/);
+  assert.ok(!partial.candidates[0].stale && partial.candidates[1].stale);
+  assert.ok(!updater.readIndex().etags[modelRepo]);
+  damaged=false;await expire();
+  const recovered=await updater.check();
+  assert.equal(etag,undefined);
+  assert.deepEqual(recovered.errors,[]);
+  assert.ok(recovered.candidates.every(c=>!c.stale));
+});
 test('archives reject traversal, symlinks, case collisions and conflicting component binaries',async t=>{const f=fixture(t);for(const [i,entries]of [[[['../escape.dll','x']]],[[['link.dll','x',0xa000]]],[[['A.dll','x'],['a.dll','x']]]].map((x,i)=>[i,x[0]])){
  const file=path.join(f.root,`bad${i}.zip`),dest=path.join(f.root,`out${i}`);fs.writeFileSync(file,zip(entries));fs.mkdirSync(dest);await assert.rejects(unpack(file,dest));}
  const file=path.join(f.root,'versions.zip'),dest=path.join(f.root,'unpack');fs.writeFileSync(file,zip([['one/MFGUnlocker.dll',fs.readFileSync(f.a)],['two/MFGUnlocker.dll',fs.readFileSync(f.b)]]));fs.mkdirSync(dest);await unpack(file,dest);await assert.rejects(mapFiles(dest,'mfg-universal'),/多个不同版本/);assert.equal(fs.existsSync(path.join(f.root,'escape.dll')),false);
 });
 test('cancel aborts a transfer without publishing a package or leaving partial files',async t=>{const f=fixture(t),updater=new ComponentUpdates(f.library,{fetcher:async(_url,{signal})=>new Promise((_resolve,reject)=>{signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true});setTimeout(()=>updater.cancel(),10);})});
- await journal.atomicJson(updater.cache,{candidates:[{id:'x',provider:'mfg',component:'mfg-renodx',name:'renodx-mfgunlock.addon64',url:'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1/file',size:100,sha256:'a'.repeat(64),downloadable:true}],errors:[]});await assert.rejects(updater.download('x'),/已取消/);assert.equal(updater.busy,false);assert.equal(f.library.catalog().packages.length,0);assert.deepEqual(fs.readdirSync(path.join(f.library.root,'downloads')),[]);
+ await journal.atomicJson(updater.cache,{candidates:[{id:'x',provider:'mfg',component:'mfg-renodx',name:'renodx-mfgunlock.addon64',url:'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1/file',size:100,sha256:'a'.repeat(64),downloadable:true}],errors:[]});
+ // A cancellation is reported back as an outcome, so the window can close
+ // quietly instead of surfacing an error the person did not cause.
+ const cancelled=await updater.download('x');assert.equal(cancelled.cancelled,true);
+ assert.equal(updater.busy,false);assert.equal(f.library.catalog().packages.length,0);assert.deepEqual(fs.readdirSync(path.join(f.library.root,'downloads')),[]);
 });
 
 test('cancel during verification leaves the optional download out of the catalogue', async t => {
@@ -246,7 +381,8 @@ test('cancel during verification leaves the optional download out of the catalog
     name: 'renodx-mfgunlock.addon64', url: 'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1/file',
     size: bytes.length, sha256: hash(bytes), downloadable: true };
   await journal.atomicJson(updater.cache, {candidates:[candidate], errors:[]});
-  await assert.rejects(updater.download(candidate.id), /已取消/);
+  const cancelled = await updater.download(candidate.id);
+  assert.equal(cancelled.cancelled, true);
   assert.equal(f.library.catalog().packages.length, 0);
   assert.deepEqual(fs.readdirSync(path.join(f.library.root, 'downloads')), []);
 });

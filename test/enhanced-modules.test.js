@@ -35,7 +35,7 @@ test('模块 A：真实 nvngx_dlssnr.dll CUDA Fatbin 架构扫描与 RTX 4070 La
   assert.equal(compat4070.status, 'verified');
   assert.equal(compat4070.badge, '架构匹配（需游戏验证）');
 
-  // 仅包含 sm_120 的模型 (310.8.Lecram / 310.9.16 原厂版) 在 RTX 4070 Laptop 上应明确标记为不兼容
+  // 仅包含 sm_120 的 310.8.Lecram 在 RTX 4070 Laptop 上应明确标记为不兼容
   const lecram = neuralModels.MODEL_DATABASE.find((m) => m.id === '310.8.Lecram');
   const compatLecram = neuralModels.evaluateModelGpuCompatibility(lecram, 'NVIDIA GeForce RTX 4070 Laptop GPU');
   assert.equal(compatLecram.compatible, false);
@@ -271,10 +271,15 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
       hardwareProfile: profileId
     });
     const sfV2 = models.find((m) => m.id === '310.8.SF-v2');
-    const oct16 = models.find((m) => m.id === '310.9.16-oct2026');
+    // Older manifests used this alias for the bundled SF-v2 binary.
+    assert.ok(!models.some(m => m.id === '310.9.16-oct2026'));
+    const rank = models.find(m => m.id === '310.9.16');
+    assert.equal(rank.version, '310.9.16.0');
+    assert.equal(rank.downloadId, 'rankftw-nr-310.9.16');
+    assert.notEqual(rank.sha256, sfV2.sha256);
+    assert.equal(rank.availableOnDisk, false, 'the bundled SF-v2 cannot satisfy the separate RankFTW download');
     assert.equal(sfV2.availableOnDisk, true, `${profileId} 下 310.8.SF-v2 必须本地就绪`);
     assert.equal(sfV2.compatStatus, 'verified', `${profileId} 下 310.8.SF-v2 必须验证兼容`);
-    assert.equal(oct16, undefined);
     assert.equal(sfV2.version, '310.8.0.0');
     assert.equal(models.filter(m => m.sha256 === sfV2.sha256).length, 1);
     assert.ok(models.filter(m => !m.availableOnDisk).every(m => m.compatStatus === 'untested'));
@@ -293,7 +298,7 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
   fs.writeFileSync(exePath, Buffer.concat([fs.readFileSync(hostExeSrc), Buffer.from('\0D3D12CreateDevice\0')]));
   fs.writeFileSync(path.join(gameDir, 'nvngx_dlss.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlss.dll')));
 
-  // 测试档位 2：40 系桌面卡 (rtx40_desktop) + 310.9.16-oct2026 模型 + MFG x3
+  // 测试档位 2：旧 310.9.16-oct2026 别名解析为 SF-v2，运行时栈独立使用 310.9.16。
   const resDesktop40 = await combinedManager.applyCombinedConfiguration(gameDir, {
     hardwareProfile: 'rtx40_desktop',
     neuralMode: 'oct2026_faster',

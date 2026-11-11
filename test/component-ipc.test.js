@@ -49,7 +49,7 @@ test('real main IPC previews before install, records only committed work, enforc
  const main=path.resolve(__dirname,'../main.js'),realRequire=createRequire(main),handlers=new Map(),jobs=[];
  const stubs={electron:{app:{setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>path.join(root,'Profile')},ipcMain:{handle:(n,f)=>handlers.set(n,f)},dialog:{showMessageBox:async()=>({response:0})}},
  './src/core/install-guards':{assertGameClosed:async()=>{},gpuInfo:async()=>[],driverNeuralFault:()=>false}};
- const context=vm.createContext({require:name=>stubs[name]||realRequire(name),__dirname:path.dirname(main),process,Buffer,console});
+ const context=vm.createContext({require:name=>stubs[name]||realRequire(name),__dirname:path.dirname(main),process:require('./fixtures/offline-process')(),Buffer,console});
  vm.runInContext(fs.readFileSync(main,'utf8'),context,{filename:main});
  const event={sender:{send:(_n,e)=>jobs.push(e)}};
  const operation=token=>handlers.get('install')(event,game,exe,'native','d3d12',token);

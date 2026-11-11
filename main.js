@@ -9,7 +9,9 @@ const { ComponentReview } = require('./src/core/component-review');
 let componentReview;
 const reviews = () => componentReview || (componentReview = new ComponentReview(app.getPath('userData')));
 let unifiedComponents, componentUpdates, runtimeCache;
-const onDemandPayload = () => app.isPackaged || process.env.DLSS5_LIGHTWEIGHT === '1';
+// Development uses the same verified, on-demand cache as packaged builds.
+// Full offline payload checkouts can explicitly opt out for fixture testing.
+const onDemandPayload = () => app.isPackaged || process.env.DLSS5_LIGHTWEIGHT !== '0';
 function runtimes() {
   return runtimeCache ||= new (require('./src/core/runtime-payload').RuntimePayload)(app.getPath('userData'), {
     bundledRoot: app.isPackaged ? path.join(process.resourcesPath,'payload') : path.join(__dirname,'dist/runtime-bootstrap'),
@@ -68,7 +70,7 @@ function inspections() {
 function inspectInventory(dir) {
   return inspections().run('inventory', dir, {userDataDir: app.getPath('userData')});
 }
-function inspectForUi(dir, profileOverride, priority) {
+function inspectForUi(dir, profileOverride, priority, phase) {
   const state = loadState();
   return inspections().run('inspect', dir, {
     payloadDir: resolvePayloadRoot(),
@@ -76,7 +78,7 @@ function inspectForUi(dir, profileOverride, priority) {
     hardwareProfile: profileOverride,
     defaultHardwareProfile: state.hardwareProfile,
     apiOverrides: state.apiOverrides || {}
-  }, priority);
+  }, priority, phase);
 }
 const { folder, dedupe, isInside, steam } = require('./src/library');
 const { contextForSteamGame, createSetupRunner } = require('./src/core/proton');
@@ -1436,7 +1438,7 @@ ipcMain.handle('update-check', (_event, refresh) => {
 ipcMain.handle('details', async (_event, dir, priority) => {
   let inspection;
   try {
-    inspection = await inspectForUi(dir, undefined, priority);
+    inspection = await inspectForUi(dir, undefined, priority, 'details');
   } catch (error) {
     if (error.code === 'SELECTION_SUPERSEDED') return { ok: false, cancelled: true };
     throw error;
@@ -1479,6 +1481,7 @@ ipcMain.handle('details', async (_event, dir, priority) => {
     via: scan.chosen ? scan.chosen.via : null,
     emulator: scan.emulator,
     installedRoute: scan.install && scan.install.route,
+    launcherProtected: !!require('./src/core/wuthering-waves').gameRoot(dir, scan.chosen?.path),
     ...compatibility.antiCheatDetails(dir, scan.chosen?.path, antiCheatDirectories),
     installedApi: scan.install && scan.install.api,
     installedExe: scan.install && scan.install.exe,
@@ -1862,7 +1865,9 @@ ipcMain.handle('enhanced-import-model', (_event, filePath, meta) => exclusiveMut
     let targetPath = filePath;
     if (!targetPath) {
       const res = await dialog.showOpenDialog(win, {
-        title: '导入合法来源的 DLSS 5 神经渲染模型 (nvngx_dlssnr.dll)',
+        title: meta?.expectedModelId
+          ? uiText(`为 ${meta.expectedModelId} 选择 nvngx_dlssnr.dll`, `Choose nvngx_dlssnr.dll for ${meta.expectedModelId}`)
+          : uiText('选择模型文件 nvngx_dlssnr.dll', 'Choose the model file nvngx_dlssnr.dll'),
         filters: [{ name: 'DLSS 5 Neural Rendering DLL', extensions: ['dll'] }],
         properties: ['openFile']
       });
@@ -1870,7 +1875,7 @@ ipcMain.handle('enhanced-import-model', (_event, filePath, meta) => exclusiveMut
       targetPath = res.filePaths[0];
     }
     const record = neuralModels.importNeuralModel(targetPath, app.getPath('userData'), meta || {});
-    await components().importPackage({component:'dlss-nr',version:record.version,files:{'nvngx_dlssnr.dll':record.filePath},source:'模型页导入'});
+    await components().importPackage({component:'dlss-nr',version:record.version,files:{'nvngx_dlssnr.dll':record.filePath},source:'手动导入'});
     const hw = await combinedManager.detectHardwareEnvironment();
     const state = loadState();
     const activeProfile = combinedManager.resolveHardwareProfile(state.hardwareProfile, hw.gpu.name, null, null, hw.gpu.vramTotalMB);
@@ -1951,8 +1956,16 @@ ipcMain.handle('library-check', async () => {
   try { return await updates().check(); }
   catch (error) { return { ok: false, code: error.code, message: error.message }; }
 });
-ipcMain.handle('library-download', (event, id) => exclusiveMutation(async()=>{await components().init();updates().onProgress=p=>{if(!event.sender.isDestroyed())event.sender.send('library-progress',p);};try{return await updates().download(id);}finally{updates().onProgress=()=>{};}}));
-ipcMain.handle('library-cancel',()=>updates().cancel());
+let libraryTransferSender;
+ipcMain.handle('library-download', (event, id) => exclusiveMutation(async () => {
+  await components().init();
+  libraryTransferSender = event.sender;
+  const updater = updates();
+  updater.onProgress = p => { if (!event.sender.isDestroyed()) event.sender.send('library-progress', p); };
+  try { return await updater.download(id); }
+  finally { updater.onProgress = () => {}; libraryTransferSender = null; }
+}));
+ipcMain.handle('library-cancel', event => { if (libraryTransferSender === event.sender) return updates().cancel(); });
 function recordComponentChange(dir, result, action) {
   if (!result.ok || !result.historyManifest) return;
   saveOperation(dir, result.historyManifest, action, ({ params }) => {
@@ -2010,21 +2023,44 @@ ipcMain.handle('component-lock', (_event, dir, enabled) => exclusiveMutation(asy
   if (typeof enabled !== 'boolean') throw new Error('无效的锁定状态');
   return reviews().setLock(dir, enabled);
 }));
-ipcMain.handle('component-cancel-prepare', () => runtimes().cancel());
+let preparation;
+ipcMain.handle('component-cancel-prepare', event => {
+  if (preparation?.sender !== event.sender) return;
+  preparation.controller.abort();
+  runtimes().cancel();
+});
 ipcMain.handle('component-prepare', (event, dependencies) => exclusiveMutation(async () => {
   if (!Array.isArray(dependencies) || dependencies.length > 24) throw new Error('无效的缓存准备请求');
-  const runtimeIds=dependencies.filter(d=>typeof d==='string'&&d.startsWith('runtime:')).map(d=>d.slice(8));
-  if(runtimeIds.length){
-    const cache=runtimes();cache.onProgress=p=>{if(!event.sender.isDestroyed())event.sender.send('component-progress',p);};
-    try{await cache.prepare(runtimeIds);if(unifiedComponents)unifiedComponents.initialized=false;}
-    finally{cache.onProgress=()=>{};}
-  }
-  for (const dependency of new Set(dependencies.filter(d=>!runtimeIds.some(id=>d==='runtime:'+id)))) {
-    if (dependency === 'dgvoodoo') await ensureDgVoodoo(app.getPath('userData'));
-    else if (dependency === 'lumenite') await ensureLumenite(app.getPath('userData'));
-    else if (typeof dependency === 'string' && dependency.startsWith('optiscaler:') && optiscaler.RELEASES.some(r => r.version === dependency.slice(11))) await optiscaler.ensureOptiScaler(app.getPath('userData'), dependency.slice(11));
-    else throw new Error('未知的缓存组件');
-  }
-  return { ok: true };
+  const controller = new AbortController(), {signal} = controller;
+  preparation = {sender:event.sender, controller};
+  const cache = runtimes();
+  const send = p => { if (!event.sender.isDestroyed()) event.sender.send('component-progress', p); };
+  cache.onProgress = send;
+  try {
+    const selected = [...new Set(dependencies)];
+    const runtimeIds = selected.filter(d => typeof d === 'string' && d.startsWith('runtime:')).map(d => d.slice(8));
+    if (runtimeIds.length) {
+      send({stage:'prepare', name:cache.pack(runtimeIds[0]).name});
+      const result = await cache.prepare(runtimeIds);
+      if (result.cancelled) return result;
+      if (unifiedComponents) unifiedComponents.initialized = false;
+    }
+    const dir = app.getPath('userData');
+    for (const dependency of selected) {
+      signal.throwIfAborted();
+      if (typeof dependency === 'string' && dependency.startsWith('runtime:')) continue;
+      send({stage:'prepare', name:dependency});
+      if (dependency === 'dgvoodoo') await ensureDgVoodoo(dir, signal);
+      else if (dependency === 'lumenite') await ensureLumenite(dir, signal);
+      else if (typeof dependency === 'string' && optiscaler.RELEASES.some(r => dependency === 'optiscaler:' + r.version))
+        await optiscaler.ensureOptiScaler(dir, dependency.slice(11), signal);
+      else throw new Error('未知的缓存组件');
+    }
+    signal.throwIfAborted();
+    return {ok:true};
+  } catch (error) {
+    if (signal.aborted) return {ok:false, cancelled:true};
+    throw error;
+  } finally { cache.onProgress = () => {}; preparation = null; }
 }));
 

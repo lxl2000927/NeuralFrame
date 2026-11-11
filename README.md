@@ -1,16 +1,16 @@
 # NeuralFrame
 
-NeuralFrame 0.1.0 是 Windows x64 游戏画质工具，用于按游戏管理 DLSS 超分辨率、神经渲染（NR）、多帧生成（MFG）和游戏内面板。你可以先看将要修改哪些文件，再应用或恢复配置。
+NeuralFrame 0.1.1 是 Windows x64 游戏画质工具，用于按游戏管理 DLSS 超分辨率、神经渲染（NR）、多帧生成（MFG）和游戏内面板。你可以先看将要修改哪些文件，再应用或恢复配置。
 
-**[下载 0.1.0](https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.0)** · [项目进度与待办](PROJECT_STATUS.md) · [开发与构建](docs/BUILDING.md) · [第三方声明](THIRD_PARTY_NOTICES.md)
+**[下载 0.1.1](https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.1)** · [项目进度与待办](PROJECT_STATUS.md) · [开发与构建](docs/BUILDING.md) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
 ## 下载与使用
 
 | 文件 | 用途 |
 | --- | --- |
-| `NeuralFrame-0.1.0-Portable-x64.exe` | 直接运行的便携单文件 |
-| `NeuralFrame-0.1.0-Setup-x64.exe` | 支持选择路径、创建快捷方式及卸载的安装程序 |
-| `NeuralFrame-0.1.0-Source.zip` | 带已验证原生启动组件与 F8 桥接的源码，可用于重新打包 |
+| `NeuralFrame-0.1.1-Portable-x64.exe` | 直接运行的便携单文件 |
+| `NeuralFrame-0.1.1-Setup-x64.exe` | 支持选择路径、创建快捷方式及卸载的安装程序 |
+| `NeuralFrame-0.1.1-Source.zip` | 带已验证原生启动组件与 F8 桥接的源码，可用于重新打包 |
 | `SHA256SUMS.txt` | 三个发布文件的 SHA-256，可用 PowerShell 的 `Get-FileHash` 对照 |
 
 1. 打开「游戏」，选择自动识别的游戏，或手动添加游戏目录。遇到带反作弊的游戏，先查看该游戏说明并确认游戏方允许第三方插件。
@@ -39,6 +39,7 @@ NeuralFrame 从 skyi7943-cmd 的 Enhanced 2.3.0 代码继续开发。其基础�
 | --- | --- | --- |
 | NVIDIA Streamline、DLSS / NGX | 提供 SR、FG、RR 等运行库和游戏集成接口；组件目录记录具体版本。 | [Streamline](https://github.com/NVIDIA-RTX/Streamline) · [DLSS](https://github.com/NVIDIA/DLSS) |
 | RenoDX DLSS 5 / DLSS Tool | 通用和多通道神经渲染插件。NR 模型 DLL 独立选择，以文件 SHA-256 区分模型。 | [ShortFuse / RenoDX](https://github.com/clshortfuse/renodx) · [RHI 发布源](https://github.com/RankFTW/rhi-repo/releases) |
+| SmarterGamers 模型发布包 | 提供独立标注来源的 NR 模型；与 RankFTW 同名版本分别记录下载包和 DLL 指纹。 | [SmarterGamers 发布源](https://github.com/SmarterGamers/SmarterGamers-DLSS5-Swapper/releases) |
 | MFGAdaUnlock-RenoDx 1.5.5 / MFG-Unlocker 1.7.0 | 两种独立维护的补帧插件，分别提供 ReShade add-on 和 Universal 接入方式。 | [mavismmg](https://github.com/mavismmg/MFGAdaUnlock-RenoDx) · [dashdogy](https://github.com/dashdogy/MFG-Unlocker) |
 | ReShade、DLSS5-Feeder 1.17 / 1.19 | 加载游戏内 add-on，通过着色器和辅助进程把相应输入送入渲染链。 | [ReShade](https://github.com/crosire/reshade) · [DLSS5-Feeder](https://github.com/jlrouzies-fr/DLSS5-Feeder) |
 | OptiScaler DLSS-NR 与 Pre-SR Multipass | 提供可选的替换和多通道路线，按游戏、图形 API 与所选版本部署。 | [DLSS-NR](https://github.com/Dagherbou/OptiScaler_DLSSNR) · [Pre-SR 上游](https://github.com/wilsjo2/OptiScaler-DLSSNR-PreSR-Multipass) · [配套构建](https://github.com/jlrouzies-fr/OptiScaler-DLSSNR-PreSR-Multipass) |

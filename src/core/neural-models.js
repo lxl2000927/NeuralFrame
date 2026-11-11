@@ -6,6 +6,7 @@
 const fs = require('./preview-fs').fs;
 const path = require('path');
 const { resolvePayloadDir } = require('./payload-root');
+const { PROVIDERS, RANKFTW_NR_SFV2, RANKFTW_NR_310916 } = require('./component-definitions');
 const crypto = require('crypto');
 const pe = require('./pe');
 const journal = require('./file-journal');
@@ -125,7 +126,8 @@ const MODEL_DATABASE = Object.freeze([
   Object.freeze({
     id: '310.8.SF-v2',
     catalogDate: '2026-09-25',
-    name: 'DLSS 5 NR · 310.8.SF-v2',
+    name: '310.8.SF-v2 · SmarterGamers',
+    upstreamRepo: PROVIDERS['smartergamers-nr'].repo,
     role: 'latest_compatible',
     version: '310.8.0.0',
     sha256: '8270b350cd82de5ce89806872cdd6b6a9249b80836b91bbeb3573470744cc206',
@@ -137,6 +139,36 @@ const MODEL_DATABASE = Object.freeze([
     rtx40Badge: '架构匹配（需游戏验证）',
     sourceType: '随包内置 (Payload Bundled)',
     description: '随包模型的文件版本为 310.8.0.0，包含 sm_75/86/89/120 CUDA 模块。架构匹配不代表已在当前游戏中加载或生效。'
+  }),
+  Object.freeze({
+    id: '310.8.SF-v2-rankftw',
+    name: '310.8.SF-v2 · RankFTW',
+    upstreamRepo: RANKFTW_NR_SFV2.repo,
+    catalogDate: '2026-11-11',
+    role: 'release',
+    version: '310.8.2.0',
+    sha256: RANKFTW_NR_SFV2.modelSha256,
+    size: 165830144,
+    architectures: Object.freeze(['75', '86', '89', '120']),
+    smCounts: Object.freeze({ '75': 15, '86': 15, '89': 15, '120': 23 }),
+    bundled: false,
+    downloadId: RANKFTW_NR_SFV2.id,
+    downloadSize: RANKFTW_NR_SFV2.size
+  }),
+  Object.freeze({
+    id: '310.9.16',
+    name: 'DLSS 5 NR 310.9.16.0 · RankFTW',
+    catalogDate: '2026-10-16',
+    version: '310.9.16.0',
+    role: 'release',
+    sha256: RANKFTW_NR_310916.modelSha256,
+    size: 276162560,
+    architectures: Object.freeze(['75', '86', '89', '120']),
+    smCounts: Object.freeze({ '75': 15, '86': 15, '89': 15, '120': 29 }),
+    bundled: false,
+    sourceType: RANKFTW_NR_310916.repo,
+    downloadId: RANKFTW_NR_310916.id,
+    downloadSize: RANKFTW_NR_310916.size
   }),
   Object.freeze({
     id: '310.8.0-RTX40',
@@ -228,7 +260,7 @@ const RUNTIME_STACKS = Object.freeze([
     renodxVersion: '8.5.0-rc10',
     status: 'experimental',
     badge: '实验性支持',
-    description: '随包可选的 NGX / Streamline / Feeder 组件组合；310.9.16 是运行库版本，不是神经渲染模型版本，也不代表性能提升。'
+    description: '此组合使用 310.9.16.0 版 NGX 运行库。神经渲染模型可在模型库中独立选择。'
   })
 ]);
 
@@ -535,7 +567,7 @@ function listNeuralModels({ payloadDir, userDataDir, gpuName = '', hardwareProfi
       id: info.modelId,
       // 旧版自定义 ID 用 8 位哈希，导入记录用 12 位；两种形式均可读取。
       aliases: [`custom-${info.sha256.slice(0, 8)}`, `custom-${info.sha256.slice(0, 12)}`],
-      name: info.name || entry.name || info.modelName,
+      name: entry.upstreamRepo ? entry.name : info.name || entry.name || info.modelName,
       role: entry.role || 'custom',
       version: info.version,
       sha256: info.sha256,
@@ -553,14 +585,15 @@ function listNeuralModels({ payloadDir, userDataDir, gpuName = '', hardwareProfi
       compatReason: compat.reason
     };
   };
-  const models = MODEL_DATABASE.map(record => {
-    const entry = { ...record, catalogAliases: Object.keys(MODEL_ALIASES).filter(alias => MODEL_ALIASES[alias] === record.id) };
+  const models = MODEL_DATABASE.map(entry => {
     const local = localSources.find(info => entry.sha256 && info.sha256 === entry.sha256);
     if (local) return asLocalModel(local, entry);
-    const downloadable=entry.id==='310.8.SF-v2';
-    return { ...entry, availableOnDisk: false, filePath: null, downloadable, downloadSize:downloadable?require('./runtime-catalog.json').packs.find(p=>p.id==='nr-3108').size:0,
+    const bundledDownload = entry.id === '310.8.SF-v2';
+    const downloadable = bundledDownload || !!entry.downloadId;
+    return { ...entry, availableOnDisk: false, filePath: null, downloadable,
+      downloadSize:bundledDownload ? require('./runtime-catalog.json').packs.find(p=>p.id==='nr-3108').size : entry.downloadSize || 0,
       compatStatus: 'untested', compatBadge: '未导入',
-      compatReason: '仅为历史目录记录；本地无匹配文件，未进行二进制校验。' };
+      compatReason: downloadable ? '下载入库后可查看本地 DLL 的架构校验结果。' : '仅为历史目录记录；本地无匹配文件，未进行二进制校验。' };
   });
   for (const info of localSources) {
     if (!models.some(m => m.sha256 === info.sha256)) models.push(asLocalModel(info));
@@ -584,6 +617,11 @@ function importNeuralModel(sourceFilePath, userDataDir, meta = {}) {
     });
   }
 
+  if (meta.expectedModelId && info.knownModel?.id !== normalizeModelId(meta.expectedModelId)) {
+    throw Object.assign(new Error(`所选 DLL 与 ${meta.expectedModelId} 的目录指纹不符。如需导入这个文件，请在「组件库 → 导入」中按实际版本入库。`), {
+      code: 'errModelFingerprintMismatch'
+    });
+  }
   const id = info.knownModel ? info.knownModel.id : (`custom-${info.sha256.slice(0, 12)}`);
   const targetDir = path.join(customModelsRoot(userDataDir), info.sha256.slice(0, 16));
   fs.mkdirSync(targetDir, { recursive: true });
@@ -704,6 +742,9 @@ async function inspectGameNeuralStatus(gameDir, {
   const consumerAddons = ['renodx-dlss5.addon64', 'renodx-dlss.addon64', 'dlss5-feed.addon64', 'dlss5-feed.addon32']
     .filter((name) => fs.existsSync(path.join(exeDir, name)) || fs.existsSync(path.join(targetDir, name)));
   const optiInstalled = Boolean(scan.install?.optiscaler?.installed);
+  const wuwa = require('./wuthering-waves');
+  const proxy = exePath && wuwa.gameRoot(gameDir, exePath) && wuwa.inspectProxy(exeDir);
+  if (proxy) consumerAddons.push('version.dll');
 
   const dependencies = {
     hasNeuralDll: Boolean(activeModelInfo && activeModelInfo.valid),
@@ -743,10 +784,10 @@ async function inspectGameNeuralStatus(gameDir, {
   const config = require('./feeder-config');
   const optiEnabled = optiInstalled && !/^(false|0)$/i.test(config.getIni(config.readText(optiIni), 'DlssNr', 'Enabled'));
   const savedEnabled = manifestNr?.mode && manifestNr.mode !== 'off';
-  if (activeModelInfo?.valid && (savedEnabled || consumerAddons.length || optiEnabled)) {
+  if (activeModelInfo?.valid && (proxy ? proxy.nr : (savedEnabled || consumerAddons.length || optiEnabled))) {
     if (manifestNr && manifestNr.mode && manifestNr.mode !== 'off') {
       mode = manifestNr.mode === 'oct2026_faster' ? 'latest_compatible' : manifestNr.mode;
-    } else if (activeModelInfo.modelId === '310.8.SF-v2') {
+    } else if (activeModelInfo.modelId === '310.8.SF-v2' || activeModelInfo.knownModel?.role === 'release') {
       mode = 'latest_compatible';
     } else {
       mode = 'legacy';
@@ -915,8 +956,16 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     }
 
     if (!chosenModel || !chosenModel.availableOnDisk || !chosenModel.filePath) {
+      const entry = modelId && MODEL_DATABASE.find(m => m.id === modelId);
+      if (entry && !options.allowIncompatibleGpu) {
+        const compat = evaluateModelGpuCompatibility(entry, gpuName);
+        if (compat.status === 'incompatible') {
+          throw Object.assign(new Error(compat.reason), { code: 'errModelGpuIncompatible', compatibility: compat });
+        }
+      }
       throw Object.assign(
-        new Error(`所选模型 (${modelId || mode}) 当前未在本地磁盘就绪，请先通过“手动导入”导入合法的 nvngx_dlssnr.dll 文件。`),
+        new Error(entry?.downloadId ? `请先在模型库中将 ${entry.version} 下载入库。` :
+          `所选模型 (${modelId || mode}) 尚未入库。请在模型库下载，或在「组件库 → 导入」中选择 nvngx_dlssnr.dll。`),
         { code: 'errModelNotOnDisk' }
       );
     }

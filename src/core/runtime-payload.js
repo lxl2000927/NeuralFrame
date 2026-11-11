@@ -6,14 +6,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { digest, safe } = require('./component-library');
+const { downloadAsset, sweepPartials } = require('./asset-download');
 const { unpack, allowedAsset } = require('./component-updates');
 const catalog = require('./runtime-catalog.json');
 const error = message => Object.assign(new Error(message), {code:'errRuntimeComponents'});
 const nonempty = value => value !== undefined && value !== 'off';
 
-function requiredPacks({kind, config = {}, route, mfgRoute, target = {}, scan = {}, customModel = false} = {}) {
+function requiredPacks({kind, config = {}, route, mfgRoute, target = {}, scan = {}, customModel = false, reuseProxy = false} = {}) {
   if (kind === 'restore') return [];
   const ids = new Set();
+  if (route === 'wuwa-proxy') {
+    if (!reuseProxy) ids.add('mfg-universal');
+    if (nonempty(config.neuralMode) && !customModel) ids.add('nr-3108');
+    return [...ids];
+  }
   const modern = config.runtimeStack === 'oct2026-310.9.16' || (!config.runtimeStack && config.hardwareProfile === 'rtx50_desktop');
   const stack = modern ? 'modern' : 'baseline';
   const nr = kind === 'install' || nonempty(config.neuralMode);
@@ -113,7 +119,8 @@ class RuntimePayload {
     // not silently alter a validated cache or an older game's rollback source.
     await fs.promises.copyFile(source,dest);
   }
-  async obtain(p,index,temp) {
+  async obtain(p,index,temp,position={}) {
+    const tag={id:p.id,name:p.name,index:position.index,count:position.count};
     let local=true;
     for(const f of p.files) {
       this.checkCancelled();
@@ -125,18 +132,17 @@ class RuntimePayload {
     }
     if(local) return;
     if(p.bundled) throw error('中文适配组件不完整，请重新下载管理器。');
-    this.onProgress({stage:'download',id:p.id,name:p.name,loaded:0,total:p.size});
-    const response=await this.fetcher(p.url,{signal:this.controller.signal});
-    if(!response.ok) throw error(`无法下载 ${p.name}（HTTP ${response.status}）。已缓存的组件仍可使用，请稍后重试。`);
-    const archive=safe(temp,'__archive.zip'),handle=await fs.promises.open(archive,'wx');
-    const sha=crypto.createHash('sha256');let count=0,last=0;
-    try { for await(const chunk of response.body) {
-      this.checkCancelled(); count+=chunk.length;if(count>p.size)throw error('组件下载大小超出清单');
-      sha.update(chunk);await handle.writeFile(chunk);
-      if(Date.now()-last>150) {this.onProgress({stage:'download',id:p.id,name:p.name,loaded:count,total:p.size});last=Date.now();}
-    }} finally {await handle.close();}
-    if(count!==p.size || sha.digest('hex')!==p.sha256)throw error('组件下载不完整或 SHA-256 不匹配，请重试。');
-    this.checkCancelled();this.onProgress({stage:'verify',id:p.id,name:p.name,loaded:count,total:p.size});
+    const archive = safe(temp,'__archive.zip');
+    try {
+      await downloadAsset(p, {
+        cacheRoot: this.root, destination: archive, fetcher: this.fetcher, signal: this.controller.signal,
+        // Stopping a transfer is a decision, not an accident: no partial
+        // ranges and no staging archive may outlive it.
+        purgeOnAbort: true,
+        onProgress: loaded => this.onProgress({stage:'download',...tag,loaded,total:p.size})
+      });
+    } catch (cause) { throw error(`无法下载 ${p.name}：${cause.message}`); }
+    this.checkCancelled();this.onProgress({stage:'verify',...tag,loaded:p.size,total:p.size});
     const extracted=safe(temp,'__unpacked');await fs.promises.mkdir(extracted);await unpack(archive,extracted,this.controller.signal);
     if(!await this.complete(extracted,p))throw error('组件压缩包内容与固定清单不一致');
     for(const f of p.files) await this.copy(safe(extracted,f.path),safe(temp,f.path));
@@ -145,18 +151,23 @@ class RuntimePayload {
   async prepare(ids) {
     if(this.controller)throw error('组件准备正在进行');
     const packs=[...new Set(ids)].map(id=>this.pack(id));
-    this.controller=new AbortController();const timer=setTimeout(()=>this.controller?.abort(),15*60*1000);
+    this.controller=new AbortController();
     try {
+      await this.sweepStale();
       const index=await this.localCandidates();
-      for(const p of packs) {
+      for(const [position,p] of packs.entries()) {
+        const at={index:position+1,count:packs.length};
         this.checkCancelled();
-        if(await this.complete(this.payloadDir,p))continue;
+        this.onProgress({stage:'verify',id:p.id,name:p.name,loaded:0,total:p.size||0,...at});
+        const ready=await this.complete(this.payloadDir,p);
+        this.checkCancelled();
+        if(ready)continue;
         const stored=this.directory(p);
         if(!await this.complete(stored,p)) {
           const temp=safe(this.root,'staging/'+crypto.randomUUID());await fs.promises.mkdir(temp,{recursive:true});
           try {
-            this.onProgress({stage:'prepare',id:p.id,name:p.name,loaded:0,total:p.size||0});
-            await this.obtain(p,index,temp);this.checkCancelled();
+            this.onProgress({stage:'prepare',id:p.id,name:p.name,loaded:0,total:p.size||0,...at});
+            await this.obtain(p,index,temp,at);this.checkCancelled();
             if(!await this.complete(temp,p))throw error('组件缓存校验失败');
             await fs.promises.mkdir(stored,{recursive:true});
             for(const f of p.files) {const dest=safe(stored,f.path);await fs.promises.mkdir(path.dirname(dest),{recursive:true});await fs.promises.rename(safe(temp,f.path),dest);}
@@ -170,11 +181,27 @@ class RuntimePayload {
           try {try{await fs.promises.link(source,pending);}catch{await fs.promises.copyFile(source,pending);}await fs.promises.rename(pending,dest);}
           finally {await fs.promises.rm(pending,{force:true});}
         }
-        this.onProgress({stage:'ready',id:p.id,name:p.name,loaded:p.size||0,total:p.size||0});
+        this.onProgress({stage:'ready',id:p.id,name:p.name,loaded:p.size||0,total:p.size||0,...at});
       }
       return {ok:true};
-    } catch(e) {if(this.controller.signal.aborted)throw error('组件下载已取消或超时，游戏文件未修改。');throw e;}
-    finally {clearTimeout(timer);this.controller=null;}
+    } catch(e) {
+      // A cancellation is a normal outcome the caller reports in place, not a
+      // failure that has to reach the person as an error string.
+      if(this.controller.signal.aborted) return {ok:false,cancelled:true,message:'组件下载已取消，游戏文件未修改。'};
+      throw e;
+    }
+    finally {
+      this.controller=null;
+      // The parent is only a container; leaving an empty one behind invites
+      // the next crash to look like a leak.
+      await fs.promises.rmdir(safe(this.root,'staging')).catch(()=>{});
+    }
+  }
+  // staging/ only exists for the run that created it, and partial ranges are
+  // reusable for a day. Anything older is the remains of a killed process.
+  async sweepStale() {
+    await fs.promises.rm(safe(this.root,'staging'),{recursive:true,force:true}).catch(()=>{});
+    await sweepPartials(this.root).catch(()=>{});
   }
 }
 module.exports={RuntimePayload,requiredPacks};

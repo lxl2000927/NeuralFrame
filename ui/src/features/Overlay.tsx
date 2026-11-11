@@ -5,15 +5,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import {
-  Check,
-  Code2,
-  Keyboard,
-  Palette,
-  Plus,
-  RefreshCw,
-  Trash2,
-} from "lucide-react";
+import { Check, Code2, Keyboard, Palette, Plus, Trash2 } from "lucide-react";
 import { getBridge } from "../bridge";
 import { Empty, Loading, Modal } from "../components";
 import { errorText } from "../domain";
@@ -33,7 +25,9 @@ function overlayThemeVars(accent?: string): Record<string, string> {
   if (!hex) return {};
   const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
   const pair = (v: number) =>
-    Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, "0");
+    Math.round(Math.min(255, Math.max(0, v)))
+      .toString(16)
+      .padStart(2, "0");
   const mix = (c: number, target: number, amount: number) =>
     pair(c + (target - c) * amount);
   return {
@@ -49,16 +43,38 @@ const THEMES = [
   { id: "purple", name: "紫晶", accent: "#b45dea" },
 ];
 
+function ThemeThumbnail() {
+  return (
+    <div className="overlay-thumbnail" aria-hidden="true">
+      <div className="overlay-thumbnail-panel">
+        <strong>{t("NeuralFrame 控制面板")}</strong>
+        <div className="overlay-thumbnail-tabs">
+          <b>DLSS 5</b>
+          <span>Feeder</span>
+          <span>{t("着色器")}</span>
+          <span>{t("状态")}</span>
+        </div>
+        <div className="overlay-thumbnail-setting">
+          <span>{t("神经渲染总强度")}</span>
+          <i />
+        </div>
+        <div className="overlay-thumbnail-setting">
+          <span>{t("结构细节强度")}</span>
+          <i />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Preview({
   theme,
   custom,
   hotkey,
-  thumbnail = false,
 }: {
   theme: string;
   custom: OverlayPrefs["custom"];
   hotkey: OverlayPrefs["hotkey"];
-  thumbnail?: boolean;
 }) {
   const language = useLanguage();
   const frame = useRef<HTMLIFrameElement>(null),
@@ -74,11 +90,10 @@ function Preview({
           custom,
           hotkey: keyLabel(hotkey),
           language,
-          thumbnail,
         },
         "*",
       ),
-    [theme, custom, hotkey.key, hotkey.mods, language, thumbnail],
+    [theme, custom, hotkey.key, hotkey.mods, language],
   );
   useEffect(configure, [configure]);
   useEffect(() => {
@@ -104,17 +119,14 @@ function Preview({
   return (
     <div
       ref={stage}
-      className={`overlay-preview-stage ${thumbnail ? "is-thumbnail" : ""}`}
-      style={{ height: height * scale }}
+      className="overlay-preview-stage"
+      style={{ aspectRatio: `534 / ${height}` }}
     >
       <iframe
         ref={frame}
         src="./overlay-preview.html"
         onLoad={configure}
-        title={t(thumbnail ? "主题缩略图" : "交互式面板预览")}
-        tabIndex={thumbnail ? -1 : 0}
-        aria-hidden={thumbnail || undefined}
-        inert={thumbnail}
+        title={t("交互式面板预览")}
         style={{ height, transform: `scale(${scale})` }}
       />
     </div>
@@ -124,19 +136,22 @@ function Preview({
 export function Overlay({
   message,
   active = true,
+  refreshToken = 0,
 }: {
   message: (s: string) => void;
   active?: boolean;
+  refreshToken?: number;
 }) {
   const [prefs, setPrefs] = useState<OverlayPrefs | null>(null);
   const [library, setLibrary] = useState<OverlayLibrary | null>(null);
   const [bridge, setBridge] = useState<OverlayBridgeState | null>(null);
-  const [error, setError] = useState(""),
+  const [prefsError, setPrefsError] = useState(""),
+    [libraryError, setLibraryError] = useState(""),
     [bridgeError, setBridgeError] = useState("");
-  const [busy, setBusy] = useState(false),
-    [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
   const locked = useRef(false),
-    generation = useRef(0);
+    prefsRevision = useRef(0),
+    libraryRevision = useRef(0);
   const [preview, setPreview] = useState<string | null>(null),
     [creating, setCreating] = useState(false);
   const [name, setName] = useState(""),
@@ -146,33 +161,39 @@ export function Overlay({
   const [keyError, setKeyError] = useState("");
   const capture = useRef<HTMLButtonElement>(null);
   const refreshBridge = useRef<() => void>(() => {});
-  const refresh = useCallback(async () => {
-    refreshBridge.current();
-    const revision = ++generation.current;
-    setLoading(true);
+  const readPrefs = useCallback(async () => {
+    const revision = ++prefsRevision.current;
+    setPrefsError("");
     try {
-      const [settings, entries] = await Promise.all([
-        getBridge().overlayPreferences(),
-        getBridge().overlays(),
-      ]);
-      if (revision !== generation.current) return;
+      const settings = await getBridge().overlayPreferences();
+      if (revision !== prefsRevision.current) return;
       if (!settings.ok) throw Error(settings.error);
-      if (!entries.ok) throw Error(entries.error);
       setPrefs(settings.value);
-      setLibrary(entries.value);
-      setError("");
     } catch (e) {
-      if (revision === generation.current) setError(errorText(e));
-    } finally {
-      if (revision === generation.current) setLoading(false);
+      if (revision === prefsRevision.current) setPrefsError(errorText(e));
+    }
+  }, []);
+  const readLibrary = useCallback(async () => {
+    const revision = ++libraryRevision.current;
+    setLibraryError("");
+    try {
+      const entries = await getBridge().overlays();
+      if (revision !== libraryRevision.current) return;
+      if (!entries.ok) throw Error(entries.error);
+      setLibrary(entries.value);
+    } catch (e) {
+      if (revision === libraryRevision.current) setLibraryError(errorText(e));
     }
   }, []);
   useEffect(() => {
-    if (active) void refresh();
+    if (!active) return;
+    void readPrefs();
+    void readLibrary();
     return () => {
-      ++generation.current;
+      ++prefsRevision.current;
+      ++libraryRevision.current;
     };
-  }, [active, refresh]);
+  }, [active, refreshToken, readPrefs, readLibrary]);
   // The install preference says nothing about service or game connection health.
   // Poll only this lightweight status while the page and window are visible.
   useEffect(() => {
@@ -213,7 +234,7 @@ export function Overlay({
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [active]);
+  }, [active, refreshToken]);
   useEffect(() => {
     if (hotkey) capture.current?.focus();
   }, [Boolean(hotkey)]);
@@ -226,9 +247,9 @@ export function Overlay({
     try {
       const result = await getBridge().saveOverlayPreferences(patch);
       if (!result.ok) throw Error(result.error);
-      ++generation.current;
+      ++prefsRevision.current;
       setPrefs(result.value);
-      setLoading(false);
+      setPrefsError("");
       message(t("叠加层设置已保存。"));
       return true;
     } catch (e) {
@@ -252,8 +273,11 @@ export function Overlay({
       const result = await fn();
       if (!result.ok) throw Error(result.error);
       // null is the native dialog's cancelled result, never an installation.
-      if (result.value != null && success) message(t(success));
-      await refresh();
+      if (result.value !== null && success) {
+        message(t(success));
+        await readLibrary();
+        refreshBridge.current();
+      }
     } catch (e) {
       message(errorText(e));
     } finally {
@@ -293,7 +317,9 @@ export function Overlay({
     <div className="page-scroll overlay-page">
       <div className="overlay-head">
         <div>
-          <h2>{t("面板主题")} <small className="overlay-beta">Beta</small></h2>
+          <h2>
+            {t("面板主题")} <small className="overlay-beta">Beta</small>
+          </h2>
           <p className="muted">
             {t("选择配色风格，先预览，再应用到游戏内面板。")}
           </p>
@@ -301,15 +327,13 @@ export function Overlay({
         <div className="overlay-toolbar">
           <label
             className="check-label overlay-switch"
-            title={t(
-              "从「游戏 → 安装路线」安装 DLSS 时，一并安装内置面板。",
-            )}
+            title={t("从「游戏 → 安装路线」安装 DLSS 时，一并安装内置面板。")}
           >
             <input
               type="checkbox"
               aria-label={t("随 DLSS 安装叠加层")}
               checked={prefs?.enabled ?? false}
-              disabled={!prefs || busy || loading}
+              disabled={!prefs || busy}
               onChange={(e) => void save({ enabled: e.target.checked })}
             />
             {t("随 DLSS 安装叠加层")}
@@ -357,104 +381,101 @@ export function Overlay({
             <Plus size={16} />
             {t("添加叠加层")}
           </button>
-          <button
-            className="icon-button"
-            aria-label={t("刷新叠加层列表")}
-            disabled={busy || loading}
-            onClick={() => void refresh()}
-          >
-            <RefreshCw size={16} />
-          </button>
         </div>
       </div>
       <p className="overlay-install-hint muted">
-        {t("通过档位配置的游戏，可在下方选择「单独安装…」添加面板。主题和快捷键会同步到已连接的内置面板。")}
+        {t(
+          "通过档位配置的游戏，可在下方选择「单独安装…」添加面板。主题和快捷键会同步到已连接的内置面板。",
+        )}
       </p>
       <div className="overlay-status" data-state={status[0]} role="status">
         <i />
         <div>
           {t(status[1], [prefs ? keyLabel(prefs.hotkey) : "…"])}
-          {bridgeError && <small>{t(bridgeError)}</small>}
+          {bridgeError && (
+            <small>
+              {t(bridgeError)}{" "}
+              <button onClick={() => refreshBridge.current()}>
+                {t("重试")}
+              </button>
+            </small>
+          )}
           {bridge?.addon === false && bridge.addonFile && (
             <small className="path">{bridge.addonFile}</small>
           )}
         </div>
       </div>
-      {error && (
+      {prefsError && (
         <p className="error" role="alert">
-          {t(error)}{" "}
-          <button disabled={loading} onClick={() => void refresh()}>
-            {t("重试")}
-          </button>
+          {t(prefsError)}{" "}
+          <button onClick={() => void readPrefs()}>{t("重试")}</button>
         </p>
       )}
-      {!prefs || !library ? (
-        !error && <Loading text={t("读取叠加层设置…")} />
+      <div className="overlay-themes" aria-busy={!prefs && !prefsError}>
+        {themes.map((theme) => (
+          <article
+            key={theme.id}
+            className={`overlay-theme-card ${prefs?.theme === theme.id ? "selected" : ""}`}
+            data-overlay-theme={theme.id}
+            style={
+              theme.id === "custom"
+                ? (overlayThemeVars(theme.accent) as CSSProperties)
+                : undefined
+            }
+          >
+            <ThemeThumbnail />
+            <div className="overlay-theme-bottom">
+              <h3 title={theme.id === "custom" ? theme.name : undefined}>
+                {theme.id === "custom" ? theme.name : t(theme.name)}
+              </h3>
+              <div className="inline-actions">
+                <button
+                  aria-pressed={prefs?.theme === theme.id}
+                  disabled={!prefs || busy || prefs.theme === theme.id}
+                  onClick={() => void save({ theme: theme.id })}
+                >
+                  {prefs?.theme === theme.id && <Check size={14} />}
+                  {t(prefs?.theme === theme.id ? "已选中" : "选择")}
+                </button>
+                <button
+                  disabled={!prefs}
+                  onClick={() => {
+                    setDialogError("");
+                    setPreview(theme.id);
+                  }}
+                >
+                  {t("预览")}
+                </button>
+                {theme.id === "custom" && prefs && (
+                  <button
+                    className="icon-button danger"
+                    aria-label={t("删除自定义主题")}
+                    disabled={busy}
+                    onClick={() =>
+                      void save({
+                        custom: null,
+                        theme: prefs.theme === "custom" ? "green" : prefs.theme,
+                      })
+                    }
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+      {libraryError && (
+        <p className="error" role="alert">
+          {t(libraryError)}{" "}
+          <button onClick={() => void readLibrary()}>{t("重试")}</button>
+        </p>
+      )}
+      {!library ? (
+        !libraryError && <Loading text={t("读取组件与版本记录…")} />
       ) : (
         <>
-          <div className="overlay-themes">
-            {themes.map((theme) => (
-              <article
-                key={theme.id}
-                className={`overlay-theme-card ${prefs.theme === theme.id ? "selected" : ""}`}
-                data-overlay-theme={theme.id}
-                style={
-                  {
-                    "--theme-accent": theme.accent,
-                    ...(theme.id === "custom"
-                      ? overlayThemeVars((theme as { accent?: string }).accent)
-                      : {}),
-                  } as CSSProperties
-                }
-              >
-                {active && (
-                  <Preview
-                    theme={theme.id}
-                    custom={prefs.custom}
-                    hotkey={prefs.hotkey}
-                    thumbnail
-                  />
-                )}
-                <div className="overlay-theme-bottom">
-                  <h2>{theme.id === "custom" ? theme.name : t(theme.name)}</h2>
-                  <div className="inline-actions">
-                    <button
-                      aria-pressed={prefs.theme === theme.id}
-                      disabled={busy}
-                      onClick={() => void save({ theme: theme.id })}
-                    >
-                      {prefs.theme === theme.id && <Check size={14} />}
-                      {t(prefs.theme === theme.id ? "已选中" : "选择")}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setDialogError("");
-                        setPreview(theme.id);
-                      }}
-                    >
-                      {t("预览")}
-                    </button>
-                    {theme.id === "custom" && (
-                      <button
-                        className="icon-button danger"
-                        aria-label={t("删除自定义主题")}
-                        disabled={busy}
-                        onClick={() =>
-                          void save({
-                            custom: null,
-                            theme:
-                              prefs.theme === "custom" ? "green" : prefs.theme,
-                          })
-                        }
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
           <div className="overlay-builtin">
             <div>
               <strong>{t("内置 F8 面板插件")}</strong>
@@ -493,7 +514,9 @@ export function Overlay({
                       {t("外部原生插件不支持此处的主题预览。")}
                     </p>
                     <small>{entry.architecture}-bit</small>
-                    {!entry.ready && <small className="error">{t("不可用")}</small>}
+                    {!entry.ready && (
+                      <small className="error">{t("不可用")}</small>
+                    )}
                   </div>
                   <div className="inline-actions">
                     <button
@@ -510,7 +533,10 @@ export function Overlay({
                     <button
                       disabled={busy}
                       onClick={() =>
-                        void action(() => getBridge().overlayRemove(entry.id), "已移除")
+                        void action(
+                          () => getBridge().overlayRemove(entry.id),
+                          "已移除",
+                        )
                       }
                     >
                       {t("从组件库移除")}
@@ -544,7 +570,10 @@ export function Overlay({
                   <button
                     disabled={busy}
                     onClick={() =>
-                      void action(() => getBridge().overlayUninstall(entry.id), "已移除")
+                      void action(
+                        () => getBridge().overlayUninstall(entry.id),
+                        "已移除",
+                      )
                     }
                   >
                     {t("仅移除叠加层")}

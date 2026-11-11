@@ -2,6 +2,7 @@ import { locale, t } from "./i18n";
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Modal } from "./components";
+import type { DownloadKind } from "./features/DownloadAction";
 import { getBridge } from "./bridge";
 import { errorText, size } from "./domain";
 import type { Preview, Result } from "./types";
@@ -60,6 +61,18 @@ function FileChanges({ rows }: { rows: Preview["rows"] }) {
     </div>
   );
 }
+type Transfer = {
+  kind: "prepare" | DownloadKind;
+  id?: string;
+  name: string;
+  stage: string;
+  loaded: number;
+  total: number;
+  index?: number;
+  count?: number;
+  speed: number;
+  note?: string;
+};
 type Prompt = {
   title: string;
   body: ReactNode;
@@ -67,14 +80,42 @@ type Prompt = {
   blocked?: boolean;
   resolve: (v: boolean) => void;
 };
+const percentOf = (t: Transfer) =>
+  t.total > 0 ? Math.max(0, Math.min(100, (t.loaded / t.total) * 100)) : 0;
+const speedText = (bytes: number) => (bytes > 0 ? `${size(bytes)}/s` : "");
+function remainingText(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  if (seconds < 60) return t("剩余约 {0} 秒", [Math.max(1, Math.round(seconds))]);
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return t("剩余约 {0} 分 {1} 秒", [minutes, rest]);
+}
 export function useOperation(
-  onMessage: (s: string) => void,
+  onMessage: (s: string, tone?: "ok" | "error") => void,
   onCompleted?: () => void,
 ) {
   const running = useRef(false);
+  const rate = useRef({ key: "", at: 0, bytes: 0, speed: 0 });
+  const lastPaint = useRef(0);
   const [busy, setBusy] = useState(false),
     [prompt, setPrompt] = useState<Prompt | null>(null),
-    [progress, setProgress] = useState<string | null>(null);
+    [cancelling, setCancelling] = useState(false),
+    [progress, setProgress] = useState<Transfer | null>(null);
+  // A single monotonic sample per asset keeps the speed honest when ranges
+  // arrive in parallel and the reported byte count jumps.
+  const absorb = (next: Omit<Transfer, "speed">) => {
+    const key = `${next.name}|${next.stage}`;
+    const now = Date.now();
+    const seen = rate.current;
+    if (seen.key !== key) rate.current = { key, at: now, bytes: next.loaded, speed: 0 };
+    else if (next.stage === "download" && now - lastPaint.current < 120 && next.loaded < next.total) return;
+    else if (now - seen.at >= 500) {
+      const speed = ((next.loaded - seen.bytes) * 1000) / (now - seen.at);
+      rate.current = { key, at: now, bytes: next.loaded, speed: Math.max(0, speed) };
+    }
+    lastPaint.current = now;
+    setProgress({ ...next, speed: rate.current.speed });
+  };
   const ask = (
     title: string,
     body: ReactNode,
@@ -112,11 +153,21 @@ export function useOperation(
           ))
         )
           return false;
-        setProgress(t("检查本地缓存…"));
+        rate.current = { key: "", at: 0, bytes: 0, speed: 0 };
+        setCancelling(false);
+        absorb({ kind: "prepare", name: t("组件"), stage: "queued", loaded: 0, total: 0, note: t("检查本地缓存…") });
         const dispose = getBridge().onComponentProgress((p) =>
-          setProgress(
-            `${t(p.name)} · ${p.stage === "download" ? `${size(p.loaded || 0)} / ${size(p.total || 0)}` : p.stage === "verify" ? t("校验文件") : p.stage === "ready" ? t("已就绪") : t("检查缓存")}`,
-          ),
+          absorb({
+            kind: "prepare",
+            name: p.name || t("组件"),
+            stage: p.stage || "prepare",
+            loaded: p.loaded || 0,
+            total: p.total || 0,
+            index: p.index,
+            count: p.count,
+            note: p.stage === "verify" ? t("正在校验下载内容，请稍候。")
+              : p.stage === "ready" ? t("已就绪，正在写入缓存…") : undefined,
+          }),
         );
         try {
           const prepared = await getBridge().componentPrepare(
@@ -128,6 +179,7 @@ export function useOperation(
         } finally {
           dispose();
           setProgress(null);
+          setCancelling(false);
         }
         result = await operation();
       }
@@ -192,17 +244,48 @@ export function useOperation(
       const completion = result.mfgResult?.skipped
         ? t("神经渲染配置已处理，当前游戏的 API 或位数不支持多帧生成。")
         : t("操作完成。");
-      onMessage(result.recordWarning || completion);
+      if (result.recordWarning) onMessage(result.recordWarning);
+      else onMessage(completion, "ok");
       onCompleted?.();
       return true;
     } catch (e) {
-      onMessage(errorText(e));
+      onMessage(errorText(e), "error");
       return false;
     } finally {
       running.current = false;
       setBusy(false);
     }
   }
+  const runTransfer = (kind: DownloadKind, id: string, cached: boolean) => run(async () => {
+    const bridge = getBridge();
+    rate.current = { key: "", at: 0, bytes: 0, speed: 0 };
+    setCancelling(false);
+    const subscribe = kind === "library" ? bridge.onLibraryProgress : bridge.onComponentProgress;
+    const dispose = subscribe(p => absorb({
+      kind, id,
+      name: p.name || t("组件"),
+      stage: p.stage || "download",
+      loaded: p.loaded || 0,
+      total: p.total || 0,
+      note: p.stage === "verify" ? t("正在校验下载内容，请稍候。") : undefined,
+    }));
+    absorb({ kind, id, name: t("组件"), stage: cached ? "checking" : "queued", loaded: 0, total: 0 });
+    try {
+      return kind === "library" ? await bridge.libraryDownload(id) : await bridge.componentPrepare(["runtime:" + id]);
+    } finally {
+      dispose();
+      setProgress(null);
+      setCancelling(false);
+    }
+  });
+  const downloadVersion = (id: string, cached = false) => runTransfer("library", id, cached);
+  const downloadRuntime = (id: string, cached: boolean) => runTransfer("runtime", id, cached);
+  const cancelProgress = () => {
+    if (!progress || cancelling || progress.stage === "queued") return;
+    setCancelling(true);
+    void (progress.kind === "library" ? getBridge().libraryCancel() : getBridge().componentCancelPrepare())
+      .catch(error => { setCancelling(false); onMessage(errorText(error), "error"); });
+  };
   const dialog = (
     <>
       {prompt && (
@@ -225,27 +308,55 @@ export function useOperation(
           {prompt.body}
         </Modal>
       )}
-      {progress && (
-        <Modal
-          title={t("准备组件")}
-          onClose={() => {
-            void getBridge().componentCancelPrepare();
-          }}
-          footer={
-            <button
-              onClick={() => {
-                void getBridge().componentCancelPrepare();
-              }}
-            >
-              {t("取消下载")}
-            </button>
-          }
-        >
-          <p role="status">{progress}</p>
-          <progress />
-        </Modal>
-      )}
+      {progress?.kind === "prepare" && (() => {
+        const percent = percentOf(progress);
+        const downloading = progress.stage === "download";
+        const stageLabel = progress.stage === "verify" ? t("校验文件")
+          : progress.stage === "ready" ? t("已就绪")
+            : downloading ? t("下载中") : t("准备中");
+        const eta = downloading && progress.speed > 0 && progress.total > progress.loaded
+          ? remainingText((progress.total - progress.loaded) / progress.speed)
+          : "";
+        return (
+          <Modal
+            title={t("准备组件")}
+            onClose={cancelProgress}
+            footer={
+              <button onClick={cancelProgress} disabled={cancelling || progress.stage === "queued"}>
+                {t(cancelling ? "正在取消…" : "取消下载")}
+              </button>
+            }
+          >
+            <div className="transfer">
+              <p className="transfer-head" role="status">
+                <span className="transfer-name">
+                  {progress.count && progress.count > 1 && progress.index
+                    ? `${progress.index}/${progress.count} · `
+                    : ""}
+                  {progress.name}
+                </span>
+                <span className="transfer-stage">{stageLabel}</span>
+              </p>
+              <progress
+                max={100}
+                value={downloading ? percent : undefined}
+                aria-label={t("下载进度")}
+              />
+              <p className="transfer-meta">
+                {downloading && progress.total > 0 && (
+                  <span>{size(progress.loaded)} / {size(progress.total)} · {percent.toFixed(0)}%</span>
+                )}
+                {downloading && progress.speed > 0 && <span>{speedText(progress.speed)}</span>}
+                {eta && <span>{eta}</span>}
+                {progress.note && <span>{progress.note}</span>}
+              </p>
+            </div>
+          </Modal>
+        );
+      })()}
     </>
   );
-  return { run, ask, busy, dialog };
+  const row = progress && progress.kind !== "prepare" && progress.id
+    ? { ...progress, kind: progress.kind, id: progress.id, cancelling, cancel: cancelProgress } : null;
+  return { run, ask, busy, dialog, downloadVersion, downloads: { row, downloadRuntime } };
 }

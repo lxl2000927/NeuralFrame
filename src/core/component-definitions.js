@@ -6,7 +6,7 @@ const DEFINITIONS = Object.freeze({
   'dlss-fg': {name:'DLSS 帧生成运行库', files:['nvngx_dlssg.dll'], online:'rhi-fg'},
   'streamline': {name:'Streamline 配套运行库',files:[],managedRoute:true},
   'dlss-rr': {name:'DLSS 光线重建',files:['nvngx_dlssd.dll'],managedRoute:true},
-  'dlss-nr': {name:'DLSS 神经渲染模型', files:['nvngx_dlssnr.dll'], online:'rhi-nr'},
+  'dlss-nr': {name:'DLSS 神经渲染模型', files:['nvngx_dlssnr.dll'], online:'rhi-nr', additionalOnline:['smartergamers-nr']},
   'renodx-nr': {name:'RenoDX 神经渲染插件', files:['renodx-dlss5.addon64'], online:'renodx'},
   'renodx-multipass': {name:'RenoDX 多通道插件', files:['renodx-dlss.addon64'], online:'multipass'},
   'mfg-renodx': {name:'MFG 解锁插件 · RenoDX', files:['renodx-mfgunlock.addon64'], online:'mfg'},
@@ -20,6 +20,7 @@ const DEFINITIONS = Object.freeze({
 });
 const PROVIDERS = Object.freeze({
   mfg:{repo:'mavismmg/MFGAdaUnlock-RenoDx',asset:/^renodx-mfgunlock\.addon64$/i},
+  'smartergamers-nr':{repo:'SmarterGamers/SmarterGamers-DLSS5-Swapper',asset:/^nvngx_dlssnr(?:\.dll|(?:_[\w.-]+)?\.zip)$/i},
   universal:{repo:'dashdogy/MFG-Unlocker',asset:/^(?:MFGUnlocker|RTXMFG)-.+\.zip$/i},
   renodx:{repo:'RankFTW/rhi-repo',asset:/^renodx-dlss5_[\w.-]+\.zip$/i},
   multipass:{repo:'RankFTW/rhi-repo',asset:/^renodx-dlss_SF_[\w.-]+\.zip$/i},
@@ -28,6 +29,27 @@ const PROVIDERS = Object.freeze({
   'rhi-fg':{repo:'RankFTW/rhi-repo',asset:/^nvngx_dlssg_[\w.-]+\.zip$/i},
   feeder:{repo:'jlrouzies-fr/DLSS5-Feeder',asset:/^DLSS5-Feeder-[\w.-]+\.zip$/i},
   optiscaler:{repo:'Dagherbou/OptiScaler_DLSSNR',asset:/^OptiScaler.*\.zip$/i}
+});
+// The release ZIP and the model DLL inside it have distinct fingerprints.
+function rankFtwModel(version, integrity) {
+  const repo = PROVIDERS['rhi-nr'].repo;
+  const tag = 'dlssnr-' + version;
+  const name = 'nvngx_dlssnr_' + version + '.zip';
+  return Object.freeze({
+    id:'rankftw-nr-' + version, provider:'rhi-nr', component:'dlss-nr', repo, tag, name, downloadable:true,
+    url:`https://github.com/${repo}/releases/download/${tag}/${name}`,
+    releaseUrl:`https://github.com/${repo}/releases/tag/${tag}`, ...integrity
+  });
+}
+const RANKFTW_NR_SFV2 = rankFtwModel('310.8.SF-v2', {
+  size:116693212,
+  sha256:'1da35941894994eb087e017577829e492454e9bae3a6a9397027069ceb74955c',
+  modelSha256:'6eb209e764f39872625debd6abaf45e2bb6322f6f270f781f70c059ae30b3927'
+});
+const RANKFTW_NR_310916 = rankFtwModel('310.9.16', {
+  size:192378839,
+  sha256:'dbeb1f2790b5c621887db99b1a56ac8bd5cb35207e8c074cbb806710f7460cab',
+  modelSha256:'cdfa6c1ec784867182164c7836f324f087b5c9f374d0c9fe46f54999feabf3ed'
 });
 function builtins(payload, overlayDir) {
   const path=require('path'),fs=require('fs'),result=[];
@@ -49,4 +71,4 @@ function builtins(payload, overlayDir) {
   if(overlayDir)add('overlay','zh1.10',{'dlss5-lab-overlay.addon64':path.join(overlayDir,'dlss5-lab-overlay.addon64')});
   return result;
 }
-module.exports={DEFINITIONS,PROVIDERS,builtins};
+module.exports={DEFINITIONS,PROVIDERS,RANKFTW_NR_SFV2,RANKFTW_NR_310916,builtins};

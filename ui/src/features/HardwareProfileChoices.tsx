@@ -45,9 +45,10 @@ const sourceLabels: Record<HardwareProfileSource, string> = {
   fallback: "当前显卡暂无匹配档位，显示省显存参考参数。",
 };
 
-export function HardwareProfileChoices({ catalog, profileId, source, disabled = false, game = false, onSelect }: {
+export function HardwareProfileChoices({ catalog, profileId, source, disabled = false, game = false, standalone = false, onSelect }: {
   catalog?: Record<string, HardwareProfile>; profileId: string; source?: HardwareProfileSource; disabled?: boolean; game?: boolean;
   onSelect: (id: string) => void;
+  standalone?: boolean;
 }) {
   const profile = catalog?.[profileId];
   const profileNotes = hardwareProfileNotes(profile);
@@ -59,14 +60,14 @@ export function HardwareProfileChoices({ catalog, profileId, source, disabled = 
       {game && <p>{t("代表型号：{0}", [profileGuide[profileId].gpus])}</p>}
       <p>
         <b>{t("DLSS 5 神经渲染策略")}</b>{" · "}
-        {profileNotes.neural}
+        {standalone ? t("超分后以 {0}% 工作分辨率推理 {1} 次，使用边缘感知上采样，关闭自动遮罩与 UI 校正。", [Math.round(profile.nrResolutionScale * 100), profile.nrPasses]) : profileNotes.neural}
       </p>
-      <p><b>{t("MFG 多帧生成策略")}</b>{" · "}{profileNotes.mfg}</p>
+      <p><b>{t("MFG 多帧生成策略")}</b>{" · "}{standalone ? t("推荐动态补帧，是否支持由实际加载的运行库确认；也可手动选择固定倍率。使用游戏原生输入。") : profileNotes.mfg}</p>
       <p>
         <b>{t("档位参考")}</b> · sm_{profile.sm} · {profile.targetResolution.replace("x", "×")}
         {profile.vramBudgetMB != null && <> · {t("档位参考显存 {0} MiB", [profile.vramBudgetMB])}</>}
         {" · "}{t("默认运行库")} ·{" "}
-        {defaultStack(profile.id) === "oct2026-310.9.16"
+        {standalone ? t("保留游戏原版文件，运行中可能使用 NVIDIA OTA 版本") : defaultStack(profile.id) === "oct2026-310.9.16"
           ? "DLSS 310.9.16 / Streamline 2.14.16 / Feeder 1.19"
           : "DLSS 310.9.1 / Streamline 2.13 / Feeder 1.17"}
       </p>
@@ -93,10 +94,10 @@ export function HardwareProfileChoices({ catalog, profileId, source, disabled = 
           >
             <span className="profile-choice-heading">
               <strong><span aria-hidden="true">{card.icon} </span>{t(id === "rtx50_desktop" ? "RTX 50 桌面显卡" : label)}</strong>
-              <small className="profile-tag">{t(card.tag)}</small>
+              <small className="profile-tag">{t(standalone && id === "rtx40_desktop" ? "桌面 Ada · 全分辨率" : card.tag)}</small>
             </span>
             {!game && <small>{t("代表型号：{0}", [card.gpus])}</small>}
-            {info && <small>{t("工作分辨率 {0}% · 最多 {1} 个工作集", [Math.round(info.nrResolutionScale * 100), info.nrMaxWorksets])}</small>}
+            {info && <small>{standalone ? t("工作分辨率 {0}% · 独立加载", [Math.round(info.nrResolutionScale * 100)]) : t("工作分辨率 {0}% · 最多 {1} 个工作集", [Math.round(info.nrResolutionScale * 100), info.nrMaxWorksets])}</small>}
           </button>
         );
       })}

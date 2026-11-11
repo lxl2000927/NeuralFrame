@@ -41,7 +41,7 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
           game: { dir: game, exe: path.basename(config.exePath), api: config.api }, replaced: [], added: [] };
       } }
     };
-    const context = vm.createContext({ require: name => stubs[name] || realRequire(name), __dirname: path.dirname(main), process, Buffer, console });
+    const context = vm.createContext({ require: name => stubs[name] || realRequire(name), __dirname: path.dirname(main), process: require('./fixtures/offline-process')(), Buffer, console });
     vm.runInContext(fs.readFileSync(main, 'utf8'), context, { filename: main });
     vm.runInContext('payload = () => ({ source: { feeder: { ok32: true, ok64: true } } }); companionAddons = () => [];', context);
     return handlers;

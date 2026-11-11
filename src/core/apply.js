@@ -1146,6 +1146,7 @@ async function applySwap(config, onLog) {
 async function restoreFiles(gameDir, manifest, onLog, { archived = false } = {}) {
   const log = (code, params) => onLog && onLog({ code, params: params || {} });
   if (manifest.version !== 1 || !Array.isArray(manifest.replaced) || !Array.isArray(manifest.added)) throw fail('errBackupInvalid');
+  manifest = require('./wuthering-waves').restoreManifest(gameDir, manifest, archived, true, onLog);
   // Validate every path and backup before restoring the first file.
   for (const item of manifest.replaced) {
     journal.safePath(gameDir, item.rel);
@@ -1256,6 +1257,7 @@ function recoverableManifest(gameDir) {
     try { manifest = JSON.parse(fs.readFileSync(entry.path, 'utf8')); } catch { continue; }
     if (!manifest || manifest.version !== 1 || !Array.isArray(manifest.added) || !Array.isArray(manifest.replaced)) continue;
     try { journal.safePath(gameDir, manifest.game?.exe); } catch { continue; }
+    manifest = require('./wuthering-waves').restoreManifest(gameDir, manifest, true);
     if (stillInstalled(gameDir, manifest)) return { ...entry, manifest };
   }
   return null;

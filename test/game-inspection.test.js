@@ -37,10 +37,28 @@ test('background inspection shares pending reads but refresh sees changed files'
   service.setHardware(hardware('RTX 5090', 32768));
   const payloadDir = path.join(dir, 'payload');
   writePe(path.join(payloadDir, 'streamline', 'NVNGX_DLSS.dll'), {version:[310, 9, 1, 0]});
-  const {status: afterRefresh, newDlss} = await service.run('inspect', dir, {payloadDir});
+  const order = [];
+  const details = service.run('inspect', dir, {payloadDir}, 'selection', 'details')
+    .then(result => { order.push('details'); return result; });
+  const full = service.run('inspect', dir, {payloadDir}, 'selection')
+    .then(result => { order.push('status'); return result; });
+  const [early, {status: afterRefresh, newDlss, scan}] = await Promise.all([details, full]);
+  assert.deepEqual(order, ['details', 'status']);
+  assert.equal(early.scan, scan, 'the early details and final status share one scan');
+  assert.equal(early.newDlss, newDlss);
+  assert.equal(early.status, undefined);
   assert.equal(newDlss, '310.9.1.0');
   assert.equal(afterRefresh.hardwareProfile, 'rtx50_desktop');
   assert.equal(afterRefresh.diagnostics.coExecution.vramBudget.vramTotalMB, 32768);
+
+  // A broken hardware reading fails in inspectCombinedStatus *after* scanGame.
+  service.setHardware({});
+  const fileRead = service.run('inspect', dir, {payloadDir}, 'selection', 'details');
+  const failedStatus = service.run('inspect', dir, {payloadDir}, 'selection');
+  assert.equal((await fileRead).scan.chosen.path, path.join(dir, 'game.exe'));
+  assert.equal((await failedStatus).status.ok, false);
+  service.setHardware(hardware('RTX 5090', 32768));
+  assert.equal((await service.run('inspect', dir, {payloadDir})).status.ok, true);
 });
 
 test('stopping inspection settles pending work and rejects further requests', async () => {
@@ -74,9 +92,11 @@ test('the latest visible game precedes older explicit reads and supersedes only 
   assert.deepEqual(order, ['A', 'C', 'B', 'inventory']);
 
   const running = select('A');
+  const staleDetails = assert.rejects(service.run('inspect', dir('B'), options, 'selection', 'details'),
+    {code:'SELECTION_SUPERSEDED'});
   const stale = assert.rejects(select('B'), {code:'SELECTION_SUPERSEDED'});
   const current = select('C');
-  await stale;
+  await Promise.all([stale, staleDetails]);
   await Promise.all([running, current]);
   assert.equal((await service.run('inspect', dir('B'), options)).status.gameName, 'B', 'a later explicit read remains valid');
 });

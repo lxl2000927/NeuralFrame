@@ -73,7 +73,7 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
       }
     }
   };
-  const context = vm.createContext({ require: name => stubs[name] || realRequire(name), __dirname: path.dirname(main), process, Buffer, console });
+  const context = vm.createContext({ require: name => stubs[name] || realRequire(name), __dirname: path.dirname(main), process: require('./fixtures/offline-process')(), Buffer, console });
   vm.runInContext(fs.readFileSync(main, 'utf8'), context, { filename: main });
   vm.runInContext(`payload = () => ({ source: { feeder: { ok32: true, ok64: true } } }); companionAddons = () => [];`, context);
   const event = { sender: { send() {} } };

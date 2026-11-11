@@ -42,6 +42,9 @@ function configPaths(gameDir, exePath, route) {
   return files.filter(file => CONFIG_FILE.test(file));
 }
 async function saveProfile(gameDir, old) {
+  // The standalone loader keeps its control JSON beside the client. It has
+  // no ReShade/OptiScaler profile to save when restoring or switching routes.
+  if (old.route === 'wuwa-proxy') return;
   const exe = journal.safePath(gameDir, old.game.exe);
   const route = old.route || (old.game.bitness === 32 ? 'feeder' : 'native');
   const files = {};

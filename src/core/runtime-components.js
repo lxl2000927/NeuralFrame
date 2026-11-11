@@ -48,7 +48,7 @@ function findBundledComponent(fileName, expectedSha256) {
   return null;
 }
 
-async function ensureDgVoodoo(cacheRoot) {
+async function ensureDgVoodoo(cacheRoot, signal) {
   const base = path.join(path.resolve(cacheRoot), 'components', `dgVoodoo2-${DGVOODOO.version}`);
   const archive = base + '.zip';
   if (require('./preview-fs').active()) {
@@ -61,10 +61,11 @@ async function ensureDgVoodoo(cacheRoot) {
       await fs.promises.mkdir(path.dirname(archive), { recursive: true });
       await fs.promises.copyFile(bundled, archive);
     } else {
-      await fetchVerified(DGVOODOO.url, DGVOODOO.sha256, archive);
+      await fetchVerified(DGVOODOO.url, DGVOODOO.sha256, archive, {signal});
     }
   }
   // Re-extract the verified archive, never trust previously cached loose DLLs.
+  signal?.throwIfAborted();
   await extractZip(archive, { dir: base });
   require('./cache-proof').save(base, DGVOODOO.sha256);
   return base;
@@ -97,13 +98,14 @@ function cached(file, expected) {
   try { return digest(file) === expected; } catch { return false; }
 }
 
-async function fetchBytes(url) {
+async function fetchBytes(url, signal) {
+  const timeout = AbortSignal.timeout(600000);
   const response = await fetch(url, {
     headers: { 'User-Agent': 'DLSS5-Swapper/2.1' },
     // A component is tens of megabytes. Two minutes was a timeout for the
     // connection, not for the transfer, and slow or filtered links lost
     // OptiScaler every time (#370, #373).
-    signal: AbortSignal.timeout(600000)
+    signal: signal ? AbortSignal.any([timeout, signal]) : timeout
   });
   if (!response.ok) throw new Error(`Download failed (${response.status})`);
   return Buffer.from(await response.arrayBuffer());
@@ -134,27 +136,33 @@ async function fetchVerified(url, expected, file, deps = {}) {
   // transfer is retried; a checksum that does not match is still final.
   const attempts = deps.attempts || 3;
   for (let attempt = 1; ; attempt++) {
-    try { data = await fetcher(url); break; }
+    deps.signal?.throwIfAborted();
+    try { data = await fetcher(url, deps.signal); break; }
     catch (cause) {
+      deps.signal?.throwIfAborted();
       if (attempt >= attempts) throw componentError('componentNetwork', cause.message);
       await new Promise((resolve) => setTimeout(resolve, attempt * 400));
     }
   }
+  deps.signal?.throwIfAborted();
   const received = crypto.createHash('sha256').update(data).digest('hex');
   if (received !== expected) {
     throw componentError('componentChecksum', `expected ${expected}, received ${received}`);
   }
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
-  const temp = file + '.part';
-  await fs.promises.writeFile(temp, data);
-  await fs.promises.rename(temp, file);
+  const temp = file + '.' + crypto.randomUUID() + '.part';
+  try {
+    await fs.promises.writeFile(temp, data);
+    deps.signal?.throwIfAborted();
+    await fs.promises.rename(temp, file);
+  } finally { await fs.promises.rm(temp, {force:true}).catch(() => {}); }
   let stored = null;
   try { stored = read(file); } catch { stored = null; }
   if (stored !== expected) throw componentError('componentRemoved', path.dirname(file));
 }
 
 
-async function ensureLumenite(cacheRoot) {
+async function ensureLumenite(cacheRoot, signal) {
   const base = path.join(cacheRoot, 'components', `LumeniteFX-${LUMENITE.commit.slice(0, 8)}`);
   const archive = base + '.zip';
   const marker = path.join(base, '.verified');
@@ -172,10 +180,11 @@ async function ensureLumenite(cacheRoot) {
       await fs.promises.mkdir(path.dirname(archive), { recursive: true });
       await fs.promises.copyFile(bundled, archive);
     } else {
-      await fetchVerified(LUMENITE.url, LUMENITE.sha256, archive);
+      await fetchVerified(LUMENITE.url, LUMENITE.sha256, archive, {signal});
     }
   }
 
+  signal?.throwIfAborted();
   await fs.promises.rm(base, { recursive: true, force: true });
   await extractZip(archive, { dir: base });
   const folders = fs.readdirSync(base);

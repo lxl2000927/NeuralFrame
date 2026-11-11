@@ -1,37 +1,29 @@
-import { ChevronRight, Copy, FileUp } from "lucide-react";
+import { ChevronRight, Copy, Download, FileUp } from "lucide-react";
 import { useState } from "react";
 import { t } from "../i18n";
 import { Empty } from "../components";
+import { DownloadAction } from "./DownloadAction";
 import { getBridge } from "../bridge";
 import { diagnosticChecks, vramEstimateLevel } from "../diagnostics";
-import { errorText } from "../domain";
+import { errorText, modelArchitectureLimit } from "../domain";
 import type { Model, StatusDiagnostics } from "../types";
 
 type Message = (text: string) => void;
 
-// Display metadata from the 2.3.0 portable catalog. File identity stays with the inspected model.
-const catalogTitles: Record<string, { name: string; version?: string; date?: string }> = {
-  "310.8.SF-v2": { name: "DLSS 5 NR 310.8.SF-v2 (全架构满血画质模型 · Ada/Blackwell/Ampere/Turing)" },
-  "310.9.16-oct2026": {
-    name: "DLSS 5 NR 310.9.16 (2026-10 极速模型管线 · 118M 2× 提速架构)",
-    version: "310.9.16.0",
-    date: "2026-10-16",
-  },
-};
+type ModelActions = {onImport: (expectedModelId: string) => void; onChoose?: (id: string) => void; onBrowseModels: () => void; onDownload: (id: string) => void; busy: boolean};
 
-function ModelRow({ model, catalogId, profileSm, message, profileView }: {
-  model: Model; catalogId: string; profileSm?: string; message: Message; profileView: boolean;
+function ModelRow({ model, profileSm, gpuSm, message, profileView, onChoose, onImport, onBrowseModels, onDownload, busy }: ModelActions & {
+  model: Model; profileSm?: string; gpuSm?: string | null; message: Message; profileView: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const local = model.availableOnDisk;
-  const entry = catalogTitles[catalogId];
-  const name = entry ? t(entry.name) : model.name || catalogId;
-  const alias = catalogId !== model.id;
-  const version = entry?.version || model.version || "—";
-  const date = entry?.date || model.catalogDate;
-  const state = local ? "本地可用" : model.downloadable ? "可按需下载" : model.sha256 ? "需手动导入" : "仅目录记录";
+  const downloadId = model.downloadId;
+  const name = model.name || model.id;
+  const version = model.version || "—";
+  const date = model.catalogDate;
+  const limit = modelArchitectureLimit(model, gpuSm, profileSm);
   const arch = model.architectures || [];
-  const smMatch = profileSm && arch.length ? arch.includes(profileSm) : null;
+  const smMatch = profileSm && arch.length ? arch.includes(String(profileSm)) : null;
   const matchLabel = smMatch == null ? "待确认架构" : !smMatch ? "架构不匹配" : local ? "架构匹配" : "目录架构匹配";
   const copyHash = async () => {
     if (!model.sha256) return;
@@ -48,15 +40,13 @@ function ModelRow({ model, catalogId, profileSm, message, profileView }: {
         <button type="button" className="model-row-toggle" aria-expanded={expanded} onClick={() => setExpanded(open => !open)}>
           <span>
             <strong>{name}</strong>
-            <small>{catalogId}{!profileView && !expanded && <span className="model-summary-state"> · {t(state)}</span>}</small>
+            <small>{model.id}</small>
           </span>
           <ChevronRight size={14} aria-hidden="true" />
         </button>
         {expanded && <>
-          {alias
-            ? <small>{t("{0} 是 {1} 的目录别名，模型文件版本为 {2}。", [catalogId, model.id, model.version || "—"])}</small>
-            : model.catalogAliases?.map(id => <small key={id}>{t("原版目录别名：{0}", [id])}</small>)}
-          <small>{t("文件来源")} · {t(!local && model.downloadable ? "在线配套组件" : model.sourceType || "未记录")}</small>
+          {model.upstreamRepo && <small>{t("上游仓库")} · {model.upstreamRepo}</small>}
+          {(local || !model.upstreamRepo) && <small>{t("文件来源")} · {t(!local && model.downloadable && !model.downloadId ? "在线配套组件" : model.sourceType || "未记录")}</small>}
           {model.description && <small>{t(model.description)}</small>}
         </>}
       </th>
@@ -75,18 +65,29 @@ function ModelRow({ model, catalogId, profileSm, message, profileView }: {
           {arch.length === 1 && arch[0] === "120" && <small>{t("仅 Blackwell 架构")}</small>}
         </> : arch.join(", ") || "—"}
       </td>
-      <td data-label={t("文件状态与兼容性")}>
+      <td data-label={t("当前档位兼容性")}>
         {profileView && <span className="model-chip" data-tone={smMatch === false ? "mismatch" : smMatch && local ? "match" : undefined}>{t(matchLabel)}</span>}
-        {(!profileView || expanded) && <strong className={`model-file-state${local ? " available" : ""}`}>{t(state)}</strong>}
+        {!profileView && <strong>{t(matchLabel)}</strong>}
         {expanded && <>
           {smMatch != null && <small>{t(smMatch ? "含档位架构 sm_{0}" : "不含档位架构 sm_{0}", [profileSm])}</small>}
           {local && model.compatBadge && <small>{t(model.compatBadge)}</small>}
           {model.compatReason && <small>{t(model.compatReason)}</small>}
         </>}
       </td>
-      <td data-label={t("SHA-256 指纹")}>
-        {!expanded ? <code>{model.sha256 ? model.sha256.slice(0, 12) + "…" : "—"}</code> : model.sha256 ? <>
-          <button className="model-hash-copy" aria-label={t("复制 {0} 的完整 SHA-256", [catalogId])} onClick={() => void copyHash()}>
+      <td className="model-acquisition" data-label={t("模型文件")}>
+        {local || !model.sha256 ? <strong className={`model-file-state${local && !limit ? " available" : ""}`}>{t(local ? (limit ? "已入库" : "本地可用") : "仅目录记录")}</strong>
+          : downloadId ? <DownloadAction className="model-file-action" id={downloadId} bytes={model.downloadSize}
+            disabled={busy} onStart={() => onDownload(downloadId)} />
+          : <button className="model-file-action" disabled={busy} onClick={() => model.downloadable ? onBrowseModels() : onImport(model.id)}>
+            {model.downloadable ? <Download size={14} /> : <FileUp size={14} />}
+            {t(model.downloadable ? "获取在线模型" : "在组件库导入")}
+          </button>}
+        {local && !limit && smMatch !== false && onChoose && <button className="model-file-action" disabled={busy}
+          onClick={() => onChoose(model.id)}>{t("使用此模型")}</button>}
+        {limit && <small>{t(limit)}</small>}
+        {(!limit || expanded) && !local && !model.downloadable && <small>{t(model.sha256 ? "暂无已核实的下载源" : "目录未提供文件指纹")}</small>}
+        {!expanded ? model.sha256 && <code>{model.sha256.slice(0, 12)}…</code> : model.sha256 ? <>
+          <button className="model-hash-copy" aria-label={t("复制 {0} 的完整 SHA-256", [model.id])} onClick={() => void copyHash()}>
             <Copy size={14} aria-hidden="true" />{t(local ? "本地文件 SHA-256" : "目录 SHA-256")}
           </button>
           <code className="model-hash">{model.sha256}</code>
@@ -96,42 +97,38 @@ function ModelRow({ model, catalogId, profileSm, message, profileView }: {
   );
 }
 
-export function ModelTable({ models, profileSm, profileName, message, onImport, busy, profileView = false }: {
-  models: Model[]; profileSm?: string; profileName?: string; message: Message; onImport: () => void; busy: boolean; profileView?: boolean;
+export function ModelTable({ models, profileSm, gpuSm, profileName, message, onChoose, onImport, onBrowseModels, onDownload, busy, profileView = false }: ModelActions & {
+  models: Model[]; profileSm?: string; gpuSm?: string | null; profileName?: string; message: Message; profileView?: boolean;
 }) {
   const localCount = models.filter(model => model.availableOnDisk).length;
-  const modelIds = new Set(models.map(model => model.id));
-  const rows = models.flatMap(model => [model.id, ...(model.catalogAliases || []).filter(id => catalogTitles[id] && !modelIds.has(id))]
-    .map(id => ({ id, model })));
-  const count = models.length > 0 && <p className="model-count">{rows.length === models.length
-    ? t("本地可用 {0} / {1}", [localCount, models.length])
-    : t("{0} 个目录条目 · 本地可用文件 {1} / {2}", [rows.length, localCount, models.length])}</p>;
-  const importButton = <button disabled={busy} onClick={onImport}><FileUp size={16} />{t("导入模型文件…")}</button>;
-  const importNote = models.some(model => !model.availableOnDisk && !model.downloadable) &&
-    <p className="model-availability-note">{t("缺少文件的历史版本可手动导入对应的 nvngx_dlssnr.dll。")}</p>;
+  const count = models.length > 0 && <p className="model-count">{t("模型目录 {0} 项 · 本地已有 {1} 项", [models.length, localCount])}</p>;
   return (
     <section className="model-block">
       <div className="section-toolbar">
         <div>
           <h2>{t(profileView ? "DLSS 5 神经渲染模型版本数据库 (Model & CUDA Fatbin Database)" : "DLSS 5 神经渲染模型版本数据库")}</h2>
-          {profileView ? <p className="model-intro">{t("按当前档位的 CUDA SM 架构比对模型。导入 DLL 后可核验文件指纹与所含内核。")}</p> : count}
+          {count}
         </div>
-        {profileView ? <span className="model-chip" data-tone="match">{t("全档位哈希与 SM 校验已启用")}</span> : importButton}
+        {profileView && <span className="model-chip" data-tone="match">{t("全档位哈希与 SM 校验已启用")}</span>}
       </div>
-      {!profileView && importNote}
+      <div className="model-acquisition-bar">
+        <div className="inline-actions">
+          <button disabled={busy} onClick={onBrowseModels}><Download size={16} />{t("获取在线模型")}</button>
+        </div>
+        <p>{t("已有模型文件可在组件库中导入。")}</p>
+      </div>
       {models.length ? <div className="model-table-wrap">
         <table className="model-table">
           <thead><tr>
             <th scope="col">{t("模型名称 / ID")}</th>
             <th scope="col">{t("版本与收录日期")}</th>
             <th scope="col">{t(profileView ? "包含 CUDA SM 架构" : "CUDA 架构")}</th>
-            <th scope="col">{profileView ? t("当前档位兼容性") : t("文件状态与兼容性")}{profileView && profileName && <small>{profileName}</small>}</th>
-            <th scope="col">{t("SHA-256 指纹")}</th>
+            <th scope="col">{t("当前档位兼容性")}{profileView && profileName && <small>{profileName}</small>}</th>
+            <th scope="col">{t("模型文件 / SHA-256")}</th>
           </tr></thead>
-          <tbody>{rows.map(({ id, model }) => <ModelRow key={id} catalogId={id} model={model} profileSm={profileSm} message={message} profileView={profileView} />)}</tbody>
+          <tbody>{models.map(model => <ModelRow key={model.id} model={model} profileSm={profileSm} gpuSm={gpuSm} message={message} profileView={profileView} onChoose={onChoose} onImport={onImport} onBrowseModels={onBrowseModels} onDownload={onDownload} busy={busy} />)}</tbody>
         </table>
       </div> : <Empty>{t("没有可用的神经渲染模型。")}</Empty>}
-      {profileView && <div className="model-import-bar">{count}{importNote}{importButton}</div>}
     </section>
   );
 }
@@ -200,7 +197,7 @@ export function DiagnosticsPanel({ diagnostics }: { diagnostics: StatusDiagnosti
                 ? ` · ${t("附加开销 +{0} MiB", [budget.totalAddedOverheadMB])}`
                 : ""}
             </span>
-            <DiagnosticValue text={budget.usagePercent == null || !budget.vramTotalMB
+            <DiagnosticValue text={budget.estimatedTotalMB == null ? t(budget.summary || "暂无显存估算") : budget.usagePercent == null || !budget.vramTotalMB
                 ? t("参考占用 {0} MiB，未检测到显存容量", [budget.estimatedTotalMB ?? "—"])
                 : t("参考占用 {0} / {1} MiB（{2}% · 预计余量 {3} MiB）", [
                 budget.estimatedTotalMB ?? "—", budget.vramTotalMB,

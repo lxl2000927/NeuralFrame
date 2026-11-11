@@ -1,4 +1,4 @@
-# NeuralFrame 0.1.0 开发与构建
+# NeuralFrame 0.1.1 开发与构建
 
 验证平台为 Windows x64，Node.js 26.13.0、Electron 33.4.11、electron-builder 26.15.3。依赖以 package-lock.json 为准。
 
@@ -16,7 +16,7 @@ npm start
 
 ## 原生小组件与按需组件
 
-发布页的 `NeuralFrame-0.1.0-Source.zip` 另带 `dist/runtime-bootstrap/` 和 `dist/overlay/`，用于中文适配、预加载器、F8 桥接及许可证。GitHub 自动生成的 Source code 归档只含仓库文件。使用 Git 克隆时，也可以从本版已安装程序的 `resources/payload/` 和 `resources/overlay/` 复制到上述两个目录。
+发布页的 `NeuralFrame-0.1.1-Source.zip` 另带 `dist/runtime-bootstrap/` 和 `dist/overlay/`，用于中文适配、预加载器、F8 桥接及许可证。GitHub 自动生成的 Source code 归档只含仓库文件。使用 Git 克隆时，也可以从本版已安装程序的 `resources/payload/` 和 `resources/overlay/` 复制到上述两个目录。
 
 打包前运行 node scripts/verify-runtime-bootstrap.js 校验文件。不要把完整开发用 payload/ 放进发行程序。大型运行库和插件按 src/core/runtime-catalog.json 在使用时下载，并校验 SHA-256。
 

@@ -74,7 +74,7 @@ test('confirmed enhanced IPC rolls back NR and MFG if a selected component fails
   };
   const context = vm.createContext({
     require: name => name === 'electron' ? electron : realRequire(name),
-    __dirname: path.dirname(main), process, Buffer, console, library
+    __dirname: path.dirname(main), process: require('./fixtures/offline-process')(), Buffer, console, library
   });
   vm.runInContext(fs.readFileSync(main, 'utf8'), context, { filename: main });
   vm.runInContext('unifiedComponents = library', context);

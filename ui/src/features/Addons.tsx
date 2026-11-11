@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, Trash2, RefreshCw } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { getBridge } from "../bridge";
 import { Empty, Loading, Modal } from "../components";
 import { errorText, size } from "../domain";
@@ -9,9 +9,11 @@ import type { AddonPick, AddonRow } from "../types";
 export function Addons({
   message,
   active = true,
+  refreshToken = 0,
 }: {
   message: (s: string) => void;
   active?: boolean;
+  refreshToken?: number;
 }) {
   const [rows, setRows] = useState<AddonRow[] | null>(null),
     [error, setError] = useState("");
@@ -40,7 +42,7 @@ export function Addons({
     return () => {
       ++generation.current;
     };
-  }, [active, load]);
+  }, [active, load, refreshToken]);
   const run = async (fn: () => Promise<void>) => {
     if (locked.current) return;
     locked.current = true;
@@ -77,14 +79,7 @@ export function Addons({
             <Plus size={16} />
             {t("添加组件文件…")}
           </button>
-          <button
-            className="icon-button"
-            aria-label={t("刷新组件列表")}
-            disabled={busy}
-            onClick={() => void load()}
-          >
-            <RefreshCw size={17} />
-          </button>
+
         </div>
       </div>
       <p className="muted">

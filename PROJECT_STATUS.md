@@ -1,6 +1,13 @@
 # NeuralFrame 项目进度
 
-更新于 2026-11-08，对应 Windows x64 版本 0.1.0。[版本说明](RELEASE-NOTES.md) · [构建说明](docs/BUILDING.md)
+更新于 2026-11-11，对应 Windows x64 版本 0.1.1。[版本说明](RELEASE-NOTES.md) · [构建说明](docs/BUILDING.md)
+
+## 0.1.1 更新
+
+- 鸣潮独立加载保护启动器原始资源，并映射可支持的硬件档位参数；未提供接口的 RenoDX 工作集、曝光治理和 QualityGuardMode 不伪装成已适配。
+- 新增独立路线的配置与进程回读对照、实时工作参数及 OTA 运行库版本；状态按进程身份、记录时效和执行计数增长判断。
+- SmarterGamers 与 RankFTW 模型独立管理，修正版本指纹与可用数量混淆；下载、缓存及界面操作流程同步优化。
+- 安装区域整合到画质页，保留独立应用按钮；组件与版本标签暂不合并。
 
 ## 已完成
 
@@ -9,13 +16,15 @@
 | 桌面界面 | 游戏库与详情、硬件档位、组件库、附加组件、叠加层、历史、设置与关于。简中和英文切换，窗口位置与大小可记忆。 | `npm run test:ui` |
 | 硬件与模型 | 读取物理显卡、显存、窗口所在显示器和刷新率。RTX 40 低显存桌面卡可借用省显存参数。区分模型目录记录、本地文件与 CUDA 架构匹配。 | `test/panel-settings.test.js`、`test/neural-model-identity.test.js` |
 | 安装与恢复 | 每游戏预览、版本锁定、组件回滚、整套恢复。普通和增强安装共用文件事务，末步失败可恢复原 DLL 与 F8 登记。 | `test/ordinary-install-transaction.test.js`、`test/combined-transaction.test.js` |
-| 组件更新 | 14 个运行包按需下载；9 个上游来源共用 5 个仓库。支持重复检查合并、5 分钟缓存、ETag、限流等待和旧结果标记。 | `test/component-library.test.js`、`test/runtime-payload-ipc.test.js` |
+| 组件更新 | 14 个运行包按需下载；10 个上游来源共用 6 个仓库。支持重复检查合并、5 分钟缓存、ETag、限流等待和旧结果标记。 | `test/component-library.test.js`、`test/runtime-payload-ipc.test.js` |
 | 运行诊断与性能 | 区分安装、加载、实际倍率与会话证据。较重的文件检查交给后台工作线程，快速切换游戏时跳过过期请求。 | `test/game-inspection.test.js`、`test/runtime-status.test.js` |
-| 发布 | Windows x64 便携单文件、NSIS 安装程序、带原生启动资源的源码包及 SHA-256 清单。 | [0.1.0 发布页](https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.0) |
+| 发布 | Windows x64 便携单文件、NSIS 安装程序、带原生启动资源的源码包及 SHA-256 清单。 | [0.1.1 发布页](https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.1) |
 
 ## 当前验证边界
 
-发布前回归基线为 435 项自动化测试、TypeScript 检查与 Electron 界面回归。显示器接口在 RTX 4070 Laptop 机器上读到 2560 × 1600、165 Hz。测试中的临时游戏目录用于复现安装、失败与恢复；模拟遥测用于验证状态判读。游戏内真实画质、延迟与输出倍率需要单独采样。
+2026-11-11 发布前完整回归通过 468 项自动化测试、TypeScript 检查与 Electron 界面流程测试。测试中的临时游戏目录用于复现安装、失败与恢复；模拟遥测用于验证状态判读。此前显示器接口在 RTX 4070 Laptop 机器上读到 2560 × 1600、165 Hz。游戏内真实画质、延迟与输出倍率需要单独采样。
+
+发行程序已在隔离配置目录中验证 0.1.1 启动、鸣潮配置卡片及独立应用按钮、模型库、组件标签和主要页面导航；便携单文件启动与正常退出通过。未执行真实游戏写入。包内关键源码、73 项启动资源与 F8 桥接已和构建输入核对。
 
 ## 待完成
 

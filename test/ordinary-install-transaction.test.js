@@ -57,7 +57,7 @@ test('confirmed native install rolls back F8 upgrade, DLLs and history if final 
     './src/overlay-preferences': { read: () => ({ enabled: true }) },
     './src/core/install-guards': { assertGameClosed: async () => {}, gpuInfo: async () => [], driverNeuralFault: () => false }
   };
-  const host = Object.create(process);
+  const host = require('./fixtures/offline-process')();
   host.on = () => host;
   Object.defineProperty(host, 'platform', { value: 'win32' });
   const context = vm.createContext({ require: name => stubs[name] || realRequire(name), __dirname: path.dirname(main),

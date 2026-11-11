@@ -1,5 +1,5 @@
 import { t, useLanguage, setLanguage } from "./i18n";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 import {
   Home,
   Gamepad2,
@@ -18,6 +18,8 @@ import {
   Zap,
   Info,
   FolderPlus,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import { getBridge } from "./bridge";
 import { Loading } from "./components";
@@ -25,21 +27,32 @@ import { GameCard, showGameMenu, type CardAction, type GameMenuHandler } from ".
 import { HomeIntake, HomeActivity, HomeShelf } from "./features/Home";
 import { errorText, groupByLauncher } from "./domain";
 import { useOperation } from "./useOperation";
+import { DownloadContext } from "./features/DownloadAction";
 import type { Draft, Game, UpdateInfo } from "./types";
 import type { Run } from "./features/Games";
 import mark from "../../assets/neuralframe/mark-ui.png";
-const Games = lazy(() =>
-  import("./features/Games").then((m) => ({ default: m.Games })),
-);
-const Library = lazy(() =>
-  import("./features/Library").then((m) => ({ default: m.Library })),
-);
+function preloadablePage<P extends object>(load: () => Promise<{ default: ComponentType<P> }>) {
+  let ready: ComponentType<P> | undefined;
+  let pending: ReturnType<typeof load> | undefined;
+  const preload = () => pending ||= load().then(module => {
+    ready = module.default;
+    return module;
+  }, error => { pending = undefined; throw error; });
+  const LazyPage = lazy(preload);
+  function Page(props: P) {
+    // A preloaded screen can render on the first click without a Suspense fallback.
+    // Keep the chosen component stable after mount so navigation preserves edits.
+    const [Screen] = useState<ComponentType<P>>(() => ready || LazyPage);
+    return <Screen {...props} />;
+  }
+  return Object.assign(Page, { preload });
+}
+const Games = preloadablePage(async () => ({ default: (await import("./features/Games")).Games }));
+const Library = preloadablePage(async () => ({ default: (await import("./features/Library")).Library }));
 const Addons = lazy(() =>
   import("./features/Addons").then((m) => ({ default: m.Addons })),
 );
-const Profile = lazy(() =>
-  import("./features/Profile").then((m) => ({ default: m.Profile })),
-);
+const Profile = preloadablePage(async () => ({ default: (await import("./features/Profile")).Profile }));
 const Settings = lazy(() =>
   import("./features/Utilities").then((m) => ({ default: m.Settings })),
 );
@@ -47,9 +60,7 @@ const About = lazy(() => import("./features/About"));
 const History = lazy(() =>
   import("./features/History").then((m) => ({ default: m.History })),
 );
-const Overlay = lazy(() =>
-  import("./features/Overlay").then((m) => ({ default: m.Overlay })),
-);
+const Overlay = preloadablePage(async () => ({ default: (await import("./features/Overlay")).Overlay }));
 const nav = [
   { id: "home", label: "首页", icon: Home },
   { id: "games", label: "游戏", icon: Gamepad2 },
@@ -60,6 +71,17 @@ const nav = [
   { id: "history", label: "历史", title: "操作历史", icon: HistoryIcon },
 ];
 const settingsPage = { id: "settings", label: "设置", icon: SettingsIcon };
+type NoticeTone = "ok" | "error" | "info";
+type Notice = { id: number; text: string; tone: NoticeTone };
+// Feature pages still report a bare string; only an explicit tone overrides
+// this, so a failure never reads like a success.
+const noticeTone = (text: string): NoticeTone =>
+  /失败|无法|不能|不支持|冲突|错误|异常|取消|未完成|缺少|无效|拒绝|超时|不匹配|未找到|中断/.test(text)
+    ? "error"
+    : /完成|成功|已应用|已还原|已保存|已就绪|已恢复|已复制|已隐藏/.test(text)
+      ? "ok"
+      : "info";
+const noticeDuration = (tone: NoticeTone) => (tone === "error" ? 9000 : tone === "ok" ? 4000 : 5200);
 const pages: { id: string; label: string; title?: string; icon: typeof Home }[] = [
   ...nav,
   settingsPage,
@@ -67,13 +89,31 @@ const pages: { id: string; label: string; title?: string; icon: typeof Home }[] 
 ];
 export default function App() {
   useLanguage();
+  useEffect(() => {
+    const commonPages = [Games, Profile, Library, Overlay];
+    let cancelled = false;
+    let idle: number;
+    const next = () => {
+      const page = commonPages.shift();
+      if (!cancelled && page) idle = window.requestIdleCallback(() => {
+        void page.preload().catch(() => {}).finally(next);
+      }, { timeout: 2000 });
+    };
+    next();
+    return () => { cancelled = true; window.cancelIdleCallback(idle); };
+  }, []);
   const [page, setPage] = useState("home"),
+    [modelLibraryOrigin, setModelLibraryOrigin] = useState(""),
+    [importTarget, setImportTarget] = useState<string>(),
+    [pageRevision, setPageRevision] = useState<Record<string, number>>({}),
+    [forcing, setForcing] = useState(false),
     [visited, setVisited] = useState(() => new Set(["home"])),
     [refreshToken, setRefreshToken] = useState(0),
     [games, setGames] = useState<Game[]>([]),
     [selected, setSelected] = useState(""),
     [loading, setLoading] = useState(true),
-    [notice, setNotice] = useState(""),
+    [notice, setNoticeState] = useState<Notice | null>(null),
+    [noticeHeld, setNoticeHeld] = useState(false),
     [launchRelease, setLaunchRelease] = useState<UpdateInfo>(),
     [cardBusy, setCardBusy] = useState(""),
     [libraryRevision, setLibraryRevision] = useState(0),
@@ -82,10 +122,34 @@ export default function App() {
       localStorage.getItem("neuralframe.theme") === "light" ? "light" : "dark",
     ),
     [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const noticeId = useRef(0);
+  const revisionClock = useRef(0);
+  const activeGameTab = useRef("graphics");
+  const setNotice = useCallback((text: string, tone?: NoticeTone) => {
+    if (!text) {
+      setNoticeState(null);
+      setNoticeHeld(false);
+      return;
+    }
+    setNoticeState({ id: ++noticeId.current, text, tone: tone || noticeTone(text) });
+  }, []);
+  // Auto-dismiss is held while the pointer or focus stays on the message, so a
+  // long error can be read without racing the timer.
+  useEffect(() => {
+    if (!notice || noticeHeld) return;
+    const timer = setTimeout(
+      () => setNoticeState((current) => (current?.id === notice.id ? null : current)),
+      noticeDuration(notice.tone),
+    );
+    return () => clearTimeout(timer);
+  }, [notice, noticeHeld]);
   const operation = useOperation(setNotice, () =>
-    setRefreshToken((v) => v + 1),
+    setRefreshToken(++revisionClock.current),
   );
-  const navigate = (id: string) => {
+
+  const navigate = (id: string, modelOrigin = "", modelToImport?: string) => {
+    setImportTarget(modelToImport);
+    setModelLibraryOrigin(modelOrigin);
     setVisited((previous) =>
       previous.has(id) ? previous : new Set([...previous, id]),
     );
@@ -107,7 +171,7 @@ export default function App() {
       const g = await getBridge().library();
       if (request !== libraryRequest.current) return;
       setGames(g);
-      setRefreshToken((v) => v + 1);
+      setRefreshToken(++revisionClock.current);
       // Covers are independent of the library. Limit background fetches and keep
       // the game controls usable while artwork arrives.
       const needsPortrait = ({ poster }: Game) => !poster ||
@@ -322,8 +386,40 @@ export default function App() {
       </button>
     );
   };
+  const refreshPage = async (force: boolean) => {
+    if (operation.busy || forcing) return;
+    if (page === "home" || (page === "games" && !selected)) {
+      await load(undefined, force);
+      return;
+    }
+    if (force && (page === "games" || page === "profile")) {
+      setForcing(true);
+      try {
+        const result = await getBridge().enhancedHardware(true);
+        if (!result.ok) throw Error(result.message || t("硬件检测失败"));
+      } catch (e) {
+        setNotice(errorText(e), "error");
+        return;
+      } finally {
+        setForcing(false);
+      }
+    }
+    const version = ++revisionClock.current;
+    if (!force && page === "games" && ["runtime", "components"].includes(activeGameTab.current)) {
+      const tab = activeGameTab.current;
+      setPageRevision(previous => ({ ...previous, [tab]: version }));
+    } else if (page === "games" || page === "profile") {
+      setPageRevision(previous => ({ ...previous, games: version, profile: version }));
+    } else {
+      setPageRevision(previous => ({ ...previous, [page]: version }));
+    }
+  };
+  const revisionFor = (id: string) => Math.max(refreshToken, pageRevision[id] || 0);
+  const refreshHint = page === "home" || (page === "games" && !selected)
+    ? "刷新 · Shift + 点击重新扫描游戏库" : page === "games" || page === "profile"
+      ? "刷新 · Shift + 点击重新检测硬件" : "刷新";
   return (
-    <div className="app-shell">
+    <DownloadContext.Provider value={operation.downloads}><div className="app-shell">
       <header
         className="titlebar"
         onDoubleClick={() => windowAction("maximize")}
@@ -370,7 +466,7 @@ export default function App() {
               {page === "about" ? t("返回设置") : t("关于 NeuralFrame")}
             </button>
           )}
-          {(page === "games" || page === "home") && (
+          {nav.some(item => item.id === page) && (
             <div className="inline-actions">
               {page === "games" && (
                 <>
@@ -384,12 +480,10 @@ export default function App() {
               )}
               <button
                 className="icon-button"
-                aria-label={t("刷新游戏列表")}
-                title={t(scanning ? "正在扫描游戏目录…" : "重新扫描游戏")}
-                disabled={loading || scanning || operation.busy}
-                onClick={() => {
-                  void load(undefined, true);
-                }}
+                aria-label={t("刷新")}
+                title={t(scanning ? "正在扫描游戏目录…" : refreshHint)}
+                disabled={forcing || operation.busy || ((page === "home" || page === "games") && (loading || scanning))}
+                onClick={event => void refreshPage(event.shiftKey)}
               >
                 <RefreshCw size={19} />
               </button>
@@ -412,7 +506,12 @@ export default function App() {
                       <Loading text={t("读取游戏库…")} skeleton="rows" />
                     ) : (
                       <Games
+                        onBrowseModels={() => navigate("library", "games")}
+                      onImportModel={id => navigate("library", "games", id)}
+                        onDownloadModel={operation.downloadVersion}
                         games={games}
+                        componentRevision={revisionFor("components")} runtimeRevision={revisionFor("runtime")}
+                        onTabChange={tab => { activeGameTab.current = tab; }}
                         grouped={groupGames}
                         openMenu={openMenu}
                         selected={selected}
@@ -424,12 +523,12 @@ export default function App() {
                         message={setNotice}
                         ask={operation.ask}
                         active={page === "games"}
-                        refreshToken={refreshToken}
+                        refreshToken={revisionFor(id)}
                       />
                     ))}
                   {id === "home" && (
                     <div className="page-scroll home-page">
-                      <HomeIntake games={games} active={page === "home"} refreshToken={refreshToken} disabled={loading || operation.busy}
+                      <HomeIntake games={games} active={page === "home"} refreshToken={revisionFor(id)} disabled={loading || operation.busy}
                         browse={() => void add(true)} drop={dropGame} select={select} message={setNotice}/>
                       <div className="section-toolbar">
                         <h2 className="library-heading">{t("游戏库")} <small>{games.length}</small></h2>
@@ -477,16 +576,23 @@ export default function App() {
                   )}
                   {id === "library" && (
                     <Library
+                      downloadVersion={operation.downloadVersion}
+                      modelsOnly={!!modelLibraryOrigin}
+                      onBack={() => navigate(modelLibraryOrigin)}
+                      importTarget={importTarget} onImportClosed={() => setImportTarget(undefined)}
                       active={page === "library"}
                       run={operation.run}
                       busy={operation.busy}
                       message={setNotice}
-                      refreshToken={refreshToken}
+                      refreshToken={revisionFor(id)}
                     />
                   )}{" "}
-                  {id === "addons" && <Addons message={setNotice} active={page === "addons"} />}{" "}
+                  {id === "addons" && <Addons message={setNotice} active={page === "addons"} refreshToken={revisionFor(id)} />}{" "}
                   {id === "profile" && (
                     <Profile
+                      onBrowseModels={() => navigate("library", "profile")}
+                      onImportModel={id => navigate("library", "profile", id)}
+                      onDownloadModel={operation.downloadVersion}
                       message={setNotice}
                       games={games}
                       dir={selected}
@@ -497,17 +603,17 @@ export default function App() {
                       run={runForGame}
                       ask={operation.ask}
                       operationBusy={operation.busy}
-                      refreshToken={refreshToken}
+                      refreshToken={revisionFor(id)}
                       active={page === "profile"}
-                      onChanged={() => setRefreshToken(v => v + 1)}
+                      onChanged={() => setRefreshToken(++revisionClock.current)}
                     />
                   )}{" "}
-                  {id === "overlay" && <Overlay message={setNotice} active={page === "overlay"} />}{" "}
+                  {id === "overlay" && <Overlay message={setNotice} active={page === "overlay"} refreshToken={revisionFor(id)} />}{" "}
                   {id === "history" && (
                     <History
                       message={setNotice}
                       ask={operation.ask}
-                      active={page === "history"}
+                      active={page === "history"} refreshToken={revisionFor(id)}
                     />
                   )}{" "}
                   {id === "settings" && (
@@ -537,18 +643,32 @@ export default function App() {
         </div>
       </main>
       {notice && (
-        <div className="toast" role="status">
-          <span>{t(notice)}</span>
+        <div
+          className={`toast toast-${notice.tone}`}
+          role={notice.tone === "error" ? "alert" : "status"}
+          aria-live={notice.tone === "error" ? "assertive" : "polite"}
+          onMouseEnter={() => setNoticeHeld(true)}
+          onMouseLeave={e => setNoticeHeld(e.currentTarget.matches(":focus-within"))}
+          onFocus={() => setNoticeHeld(true)}
+          onBlur={e => setNoticeHeld(e.currentTarget.matches(":hover"))}
+        >
+          <span className="toast-icon" aria-hidden="true">
+            {notice.tone === "error" ? <AlertCircle size={16} />
+              : notice.tone === "ok" ? <CheckCircle2 size={16} />
+                : <Info size={16} />}
+          </span>
+          <span className="toast-text">{t(notice.text)}</span>
           <button
-            className="icon-button"
+            className="toast-close"
+            type="button"
             aria-label={t("关闭提示")}
             onClick={() => setNotice("")}
           >
-            <X size={17} />
+            <X size={16} aria-hidden="true" />
           </button>
         </div>
       )}
       {operation.dialog}
-    </div>
+    </div></DownloadContext.Provider>
   );
 }

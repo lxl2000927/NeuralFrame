@@ -81,50 +81,113 @@
 }
 .overlay-themes {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
-  margin: 18px 0 28px;
-  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 212px), 1fr));
+  gap: 12px;
+  max-width: 840px;
+  margin: 12px 0 20px;
+}
+.overlay-themes:has([data-overlay-theme="custom"]) {
+  max-width: 1124px;
 }
 .overlay-theme-card {
   display: flex;
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--ol-accent, var(--border));
+  border: 1px solid var(--panel-edge);
   border-radius: var(--radius-lg);
-  background: var(--ol-back, var(--surface));
+  background: var(--surface);
   box-shadow: var(--panel-shadow);
 }
 .overlay-theme-card.selected {
-  border-color: var(--ol-accent, var(--theme-accent));
-  box-shadow: 0 0 0 1px var(--ol-accent, var(--theme-accent)), var(--floating-shade);
+  border-color: var(--ol-accent);
+  box-shadow: 0 0 0 1px var(--ol-accent), var(--panel-shadow);
+}
+.overlay-thumbnail {
+  container-type: inline-size;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  color: #dce3e9;
+  background: linear-gradient(135deg, var(--ol-soft), transparent 75%), var(--ol-back);
+  user-select: none;
+}
+.overlay-thumbnail-panel {
+  width: 82%;
+  padding: 3.5cqw;
+  border: 1px solid color-mix(in srgb, var(--ol-accent) 36%, #263139);
+  border-radius: 5px;
+  background: #161c22;
+  font-size: clamp(8px, 3.5cqw, 12px);
+  line-height: 1.2;
+}
+.overlay-thumbnail-panel strong {
+  color: #f0f4f7;
+  font-size: 1.12em;
+}
+.overlay-thumbnail-tabs {
+  display: flex;
+  gap: 1em;
+  margin: .65em 0 .8em;
+  padding-bottom: .45em;
+  border-bottom: 1px solid #ffffff25;
+  color: #adb9c2;
+}
+.overlay-thumbnail-tabs b {
+  color: var(--ol-bright);
+}
+.overlay-thumbnail-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32%;
+  align-items: center;
+  gap: 4%;
+  margin-top: .6em;
+}
+.overlay-thumbnail-setting span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.overlay-thumbnail-setting i {
+  height: 3px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--ol-accent) 52%, #414950 52%);
+}
+.overlay-thumbnail-setting:last-child i {
+  background: linear-gradient(to right, var(--ol-accent) 38%, #414950 38%);
 }
 .overlay-theme-bottom {
   margin-top: auto;
-  padding: 14px 18px 18px;
-  border-top: 1px solid #ffffff18;
-  color: #dce3e9;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--panel-edge);
 }
-.overlay-theme-bottom h2 {
-  font-size: 15px;
-  margin: 0 0 12px;
-  color: var(--ol-bright, #dce3e9);
+.overlay-theme-bottom h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  margin: 0 0 8px;
 }
 .overlay-theme-bottom .inline-actions {
-  flex-wrap: wrap;
+  gap: 6px;
 }
 .overlay-theme-bottom button {
   flex: 1;
-  padding: 12px 5px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 3px 6px;
+  font-size: 12.5px;
 }
 .overlay-theme-bottom .icon-button {
-  flex: 0 0 34px;
+  flex: 0 0 28px;
 }
 .overlay-theme-bottom button[aria-pressed="true"] {
-  color: var(--ol-bright, var(--theme-accent));
-  border-color: var(--ol-accent, var(--theme-accent));
-  background: color-mix(in srgb, var(--ol-accent) 14%, var(--ol-back));
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--ol-accent) 65%, var(--border));
+  background: color-mix(in srgb, var(--ol-accent) 15%, var(--surface));
+  opacity: 1;
 }
 .overlay-preview-stage {
   position: relative;
@@ -143,11 +206,6 @@
   border: 0;
   transform-origin: top left;
   color-scheme: dark;
-}
-.overlay-preview-stage.is-thumbnail {
-  max-width: none;
-  pointer-events: none;
-  user-select: none;
 }
 .overlay-builtin,
 .overlay-entry {
@@ -208,15 +266,11 @@
   border-radius: 4px;
 }
 @media (max-width: 1150px) {
-  .overlay-themes {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .overlay-entry {
     flex-wrap: wrap;
   }
 }
 @media (max-width: 760px) {
-  .overlay-themes { grid-template-columns:minmax(0,1fr); }
   .overlay-toolbar > button { flex:1 1 auto; }
   .overlay-toolbar > .overlay-switch { flex-basis:100%; }
 }

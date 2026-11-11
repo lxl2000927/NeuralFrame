@@ -18,8 +18,7 @@ export const profileCardCopy: Record<string, { label: string; neural: string; mf
 };
 
 export const modelOptions: string[][] = [
-  ["310.8.SF-v2", "310.8.SF-v2 全架构满血画质模型 (sm_75/86/89/120 · 柔光抗闪烁 · 推荐)"],
-  ["310.9.16-oct2026", "310.9.16-oct2026 极速模型管线 (2026-10 118M Faster AI + SL 2.14.16 · 全兼容)"],
+  ["310.8.SF-v2", "310.8.SF-v2 · SmarterGamers"],
   ["310.8.0-RTX40", "310.8.0-RTX40 官方首发原版基线模型 (sm_75/86/89/120 · 全兼容)"],
 ];
 

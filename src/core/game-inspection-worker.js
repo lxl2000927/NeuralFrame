@@ -48,10 +48,13 @@ parentPort.on('message', async ({ id, task, dir, options }) => {
       parentPort.postMessage({ id, result: scan });
       return;
     }
+    // The header and install routes only need the file scan. Send it before
+    // hardware detection and model verification, without walking the game twice.
+    parentPort.postMessage({ id, phase: 'details', result: { scan, newDlss: bundledDlssVersion(options.payloadDir) } });
     let status;
     try { status = await inspectCombinedStatus(dir, { ...options, scanResult: scan }); }
     catch (error) { status = { ok: false, message: error.message }; }
-    parentPort.postMessage({ id, result: { scan, status, newDlss: bundledDlssVersion(options.payloadDir) } });
+    parentPort.postMessage({ id, result: { status } });
   } catch (error) {
     parentPort.postMessage({ id, error: error.message, code: error.code });
   }
