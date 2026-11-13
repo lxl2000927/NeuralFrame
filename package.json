@@ -1,36 +1,36 @@
 {
   "name": "neuralframe",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "distribution": {
     "userDataDirectory": "dlss5-swapper-enhanced",
     "channel": "independent",
     "releaseRepository": "lxl2000927/NeuralFrame",
-    "upstreamVersion": "2.3.0",
+    "upstreamVersion": "2.3.1",
     "upstreamRepository": "skyi7943-cmd/DLSS5-Swapper-Enhanced"
   },
-  "description": "Neural rendering and frame generation manager",
+  "description": "Community graphics component manager for RTX neural rendering and multi-frame generation",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test --test-concurrency=1 test/*.test.js test/*.test.mjs",
     "test:ui": "electron scripts/test-game-filters-ui.js && npm run test:workflow",
     "pretest:workflow": "npm run build:ui",
-    "test:workflow": "node scripts/qa-workflow.cjs",
+    "test:workflow": "node scripts/qa-workflow.cjs && node scripts/qa-overlay-drafts.cjs && node scripts/qa-graphics-evidence.cjs && node scripts/qa-setup-guards.cjs && node scripts/qa-engine-versions.cjs && node scripts/qa-component-status.cjs && node scripts/qa-component-sources.cjs && node scripts/qa-component-updates.cjs && node scripts/qa-component-panel.cjs",
     "test:payload": "node scripts/test-feeder-payload.js",
     "test:optiscaler": "node scripts/test-optiscaler-payload.js",
     "payload": "node scripts/collect-payload.js",
-    "prebuild": "npm run build:ui && node scripts/verify-runtime-bootstrap.js",
+    "prebuild": "node scripts/prepare-engine-licenses.js && npm run build:ui && node scripts/verify-runtime-bootstrap.js",
     "build": "electron-builder --win",
     "build:linux": "electron-builder --linux AppImage deb",
     "icon": "electron scripts/make-icon.js",
     "build:portable": "electron-builder --win portable",
     "overlay:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-overlay.ps1",
     "overlay:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-overlay.ps1",
-    "prebuild:portable": "npm run build:ui && node scripts/verify-runtime-bootstrap.js",
+    "prebuild:portable": "node scripts/prepare-engine-licenses.js && npm run build:ui && node scripts/verify-runtime-bootstrap.js",
     "dev:ui": "vite",
     "check:ui": "tsc --noEmit",
     "build:ui": "tsc --noEmit && vite build",
-    "prestart": "npm run build:ui"
+    "prestart": "node scripts/prepare-engine-licenses.js && npm run build:ui"
   },
   "author": {
     "name": "lxl2000927",
@@ -46,7 +46,8 @@
   },
   "license": "MIT",
   "dependencies": {
-    "extract-zip": "^2.0.1"
+    "extract-zip": "^2.0.1",
+    "jsonc-parser": "3.3.1"
   },
   "overrides": {
     "extract-zip": {

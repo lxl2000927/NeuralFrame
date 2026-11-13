@@ -4,6 +4,14 @@ NeuralFrame 0.1.0 derives from the MIT-licensed DLSS 5 Swapper code by Rakan Alk
 
 The desktop release includes the bootstrap and F8 bridge. References below to bundled rendering components describe the separately distributed runtime packs and the development payload. The exact file digests and pack versions used by this build are in src/core/runtime-catalog.json. Optional optical flow shaders come from [LumeniteFX](https://github.com/umar-afzaal/LumeniteFX).
 
+## Optional RTX Encore and JSONC adapter (updated 2026-11-14)
+
+The optional Encore backend recommends the original [RTX Encore v2.4.1 release](https://github.com/SilyNoMeta/rtx-encore/releases/tag/v2.4.1) by SilyNoMeta and retains support for the verified original v2.3.0. The component updater reads the author's release repository directly. NeuralFrame does not rebuild or modify its DLL and does not bundle RTX Encore Hub or RTXManager. Recommended archive and extracted-file SHA-256 values are recorded in `src/core/runtime-catalog.json`; supported engine identities are in `src/core/engine-packages.js`. The upstream public repository provides documentation; it is not the rendering engine's source code.
+
+The archive's `THIRD-PARTY-NOTICES.md` is retained in the cache and installed as `RTX-Encore-NOTICES.md` beside the loader. Paired NVIDIA / Streamline notices and licenses are retained separately. The first adapter exposes NVIDIA added frame generation, DLSS SR/DLAA and NR; Intel XeSS/XeFG engines are not provisioned by this adapter.
+
+The JSONC settings adapter uses Microsoft [jsonc-parser](https://github.com/microsoft/node-jsonc-parser), version 3.3.1, under the MIT license. The dependency retains its upstream LICENSE.md in its package.
+
 ## Chinese localization supplement 1 (2026-11-04)
 
 `overlay/zh-cn-extra.json` incorporates Simplified Chinese translations from
@@ -154,11 +162,11 @@ text is included in `payload/enhanced/mfg/licenses/MFGAdaUnlock-RenoDx-LICENSE.t
 
 ## MFG-Unlocker (RTXMFG Universal Unlocker)
 
-The managed Universal component pack contains `MFGUnlocker.dll` (1.7.0).
+The independent-loader component recommends the original `MFGUnlocker.dll` 1.7.1 and permits the verified original 1.7.0. The OptiScaler ASI route retains its separate 1.7.0 companion pack. Existing installations are not upgraded by configuration reads or ordinary settings edits.
 Upstream releases: https://github.com/dashdogy/MFG-Unlocker/releases
 
 Licensed under the MIT License (Copyright (c) 2026 dashdogy). The full license
-text is included in `payload/enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt`.
+text is tracked at `assets/licenses/MFG-Unlocker-LICENSE.txt` and prepared as the bundled `mfg-license` component at `enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt`. This is separate from the original 1.7.1 archive, which contains only the DLL.
 
 ## NVIDIA Streamline SDK v2.14.16 & DLSS / DLSS-G 310.9.16.0
 
@@ -180,8 +188,13 @@ Licensed under the MIT License.
 
 ## Enhanced upstream 32-bit WinMM preloader (local build)
 
-`payload/enhanced/zh-cn/winmm.dll` is compiled from the MIT-licensed Enhanced
-repository at commit `bb72b7c6f7bcc9f2935898df12e151f59a3ddd90`:
-https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/commit/bb72b7c6f7bcc9f2935898df12e151f59a3ddd90
+`dist/runtime-bootstrap/enhanced/zh-cn/winmm.dll` is compiled from the
+MIT-licensed Enhanced 2.3.1 source at commit
+`f615e5719da887709e17d86564a4f0edd42a7bdc`:
+https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/commit/f615e5719da887709e17d86564a4f0edd42a7bdc
+NeuralFrame adapts the bridge with per-game compatibility switches, isolated
+registry fallback namespaces, and preservation of the Feeder host CPU affinity.
+The Steam install-script parser, legacy API compatibility, dgVoodoo defaults
+and discovery fixes are also adapted from this MIT-licensed revision.
 The corresponding C source, export definition and build script are included in
 the source package. The project MIT license is included at the package root.

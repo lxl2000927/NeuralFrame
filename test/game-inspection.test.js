@@ -7,6 +7,27 @@ const path = require('node:path');
 const { GameInspection } = require('../src/core/game-inspection');
 const { writePe } = require('./fixtures/pe');
 
+test('background-only scans persist symbol results and invalidate changed executables after restart', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-background-symbols-'));
+  let service = new GameInspection();
+  t.after(async () => { await service.close(); fs.rmSync(root, {recursive:true, force:true}); });
+  const game = path.join(root, 'Game'), exe = path.join(game, 'Game.exe');
+  const userDataDir = path.join(root, 'user'), cacheFile = path.join(userDataDir, 'inspection-symbols-v1.json');
+  writePe(exe, {text:'D3D12CreateDevice'});
+  assert.equal((await service.run('scan', game, {userDataDir})).chosen.apiLabel, 'DirectX 12');
+  // The worker sends the scan result before its asynchronous cache flush.
+  const deadline = Date.now() + 2000;
+  while (!fs.existsSync(cacheFile) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+  const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+  assert.equal(cached.schema, 1);
+  assert.ok(cached.entries.some(([key, value]) => JSON.parse(key)[0] === path.resolve(exe) && value.found.includes('D3D12CreateDevice')));
+  await service.close();
+  service = new GameInspection();
+  assert.equal((await service.run('scan', game, {userDataDir})).chosen.apiLabel, 'DirectX 12');
+  writePe(exe, {text:'D3D11CreateDevice'});
+  assert.equal((await service.run('scan', game, {userDataDir})).chosen.apiLabel, 'DirectX 11', 'persisted results must not hide a changed executable');
+});
+
 test('background inspection shares pending reads but refresh sees changed files', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-inspection-'));
   const service = new GameInspection();
@@ -118,4 +139,31 @@ test('a 2.3.0 Off record restores the game profile even when its older top-level
   assert.equal(await inspect({defaultHardwareProfile:'rtx40_desktop'}), 'rtx50_desktop');
   assert.equal(await inspect({hardwareProfile:'rtx40_desktop'}), 'rtx40_desktop');
   assert.equal(fs.readFileSync(manifestFile, 'utf8'), JSON.stringify(legacy));
+});
+
+test('changing defaults affects only unconfigured games and never changes persisted presets or runtime stacks', async t => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'nf-default-preservation-'));
+  const service=new GameInspection();
+  t.after(async()=>{await service.close();fs.rmSync(root,{recursive:true,force:true});});
+  service.setHardware({gpu:{name:'RTX 4070 Laptop GPU',vramTotalMB:8192,driver:'test'}});
+  const saved=path.join(root,'Saved'),fresh=path.join(root,'New');
+  for(const dir of [saved,fresh])writePe(path.join(dir,'Game.exe'),{text:'D3D12CreateDevice'});
+  const backup=path.join(saved,'_DLSS5_Backup');fs.mkdirSync(backup);
+  const manifestFile=path.join(backup,'manifest.json');
+  const manifest={version:1,game:{exe:'Game.exe'},hardwareProfile:'rtx40_laptop',added:[],replaced:[],
+    neuralRendering:{mode:'off',hardwareProfile:'rtx40_laptop',runtimeStack:'baseline-310.9.1',updatedAt:'2026-10-01T00:00:00Z'}};
+  fs.writeFileSync(manifestFile,JSON.stringify(manifest));
+  for(const defaultHardwareProfile of ['rtx40_desktop','rtx50_desktop']){
+    const existing=(await service.run('inspect',saved,{defaultHardwareProfile})).status;
+    assert.equal(existing.hardwareProfile,'rtx40_laptop');assert.equal(existing.hardwareProfileSource,'manifest');
+    assert.equal(existing.configuredRuntimeStack,'baseline-310.9.1');
+    const newGame=(await service.run('inspect',fresh,{defaultHardwareProfile})).status;
+    assert.equal(newGame.hardwareProfile,defaultHardwareProfile);assert.equal(newGame.hardwareProfileSource,'default');
+  }
+  const automatic=(await service.run('inspect',fresh,{})).status;
+  assert.equal(automatic.hardwareProfile,'rtx40_laptop');assert.equal(automatic.hardwareProfileSource,'detected');
+  const explicit=(await service.run('inspect',saved,{hardwareProfile:'rtx40_desktop',defaultHardwareProfile:'rtx50_desktop'})).status;
+  assert.equal(explicit.hardwareProfile,'rtx40_desktop');assert.equal(explicit.hardwareProfileSource,'selected');
+  assert.equal(fs.readFileSync(manifestFile,'utf8'),JSON.stringify(manifest));
+  assert.equal(fs.existsSync(path.join(fresh,'_DLSS5_Backup')),false);
 });

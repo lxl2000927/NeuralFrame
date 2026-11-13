@@ -746,13 +746,13 @@ small {
   background: var(--surface);
   margin-top: 10px;
 }
-.profile-page, .model-block {
+.model-block {
   --text: #f6f8fb;
   --muted: #c9d2d9;
   --accent-text: #c5ef97;
   color: var(--text);
 }
-:root[data-theme="light"] :is(.profile-page, .model-block) {
+:root[data-theme="light"] .model-block {
   --text: #151c22;
   --muted: #35434e;
   --accent-text: #28550b;
@@ -1596,6 +1596,8 @@ pre {
 .loading svg {
   animation: spin 1s linear infinite;
 }
+.refresh-spinning { animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .refresh-spinning { animation: none; } }
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -2856,4 +2858,3 @@ input[type="radio"]:disabled {
   box-shadow: none;
   text-align: start;
 }
-.profile-page :is(fieldset, div:has(> .model-block)) { scroll-margin-block-start: calc(var(--appbar-height) + 12px); }

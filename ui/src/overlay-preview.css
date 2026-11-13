@@ -1,4 +1,9 @@
 /* Only the isolated desktop preview expands the showcase, never the game HUD. */
+/* Keep one scrolling pane inside the preview; the surrounding page is not a second HUD viewport. */
+#panel, #panel .ol-panel.ol-compact { height:100vh; box-sizing:border-box; }
+#panel .ol-panel.ol-compact { display:flex; flex-direction:column; }
+#panel .ol-compact > :not(.ol-panes) { flex-shrink:0; }
+#panel .ol-compact .ol-panes { height:auto; min-height:0; flex:1; }
 .ol-preview-views { display:flex; gap:10px; margin:14px 0 8px; }
 .ol-preview-views button { flex:1; min-width:0; padding:10px; border:1px solid #475367; border-radius:4px; background:#18212d; color:#b8c6d7; font:13px 'Segoe UI','Microsoft YaHei',sans-serif; cursor:pointer; }
 .ol-preview-views button[aria-pressed=true] { border-color:var(--ol-accent); color:var(--ol-bright); background:color-mix(in srgb,var(--ol-accent) 12%,#18212d); }

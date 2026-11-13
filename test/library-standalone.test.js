@@ -23,6 +23,18 @@ test('a selected Star Rail game root is one game, not its data subdirectories',t
  const root=fixture(t);rail(root);touch(path.join(root,'StarRail_Data','Plugins','helper.exe'));
  assert.deepEqual(library.folder(root,'My folders',true).map(g=>g.dir),[root]);
 });
+
+test('a renamed Wuthering Waves client root is discovered as one game with the same evidence as the protected installer',t=>{
+ const root=fixture(t),games=path.join(root,'Games'),game=path.join(games,'Renamed channel install');
+ const client=path.join(game,'Client','Binaries','Win64','Client-Win64-Shipping.exe');
+ touch(client);touch(path.join(game,'Wuthering Waves.exe'));
+ assert.equal(require('../src/core/wuthering-waves').gameRoot(game,client),game,'the installation route already recognises this layout');
+ const found=standalone.fromRoots([games,game]);
+ assert.equal(found.length,1);assert.equal(found[0].dir,game);assert.equal(found[0].name,'鸣潮');
+ assert.deepEqual(library.folder(game,'My folders',true).map(g=>g.dir),[game]);
+ const unrelated=path.join(games,'Unrelated client');touch(path.join(unrelated,'Client','Binaries','Win64','Client-Win64-Shipping.exe'));
+ assert.equal(standalone.recognize(unrelated),null,'a generic Unreal Client binary alone is not sufficient for a renamed root');
+});
 test('launcher-only and stale folders are not games and arbitrary apps are not traversed',t=>{
  const root=fixture(t);touch(path.join(root,'Wuthering Waves','launcher.exe'));
  touch(path.join(root,'Starward','Starward.exe'));

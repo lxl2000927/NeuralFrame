@@ -71,6 +71,26 @@ function setEarlyAddon(text, addon, enabled) {
   return setIni(text, 'ADDON', 'LoadFromDllMain', next.join(','));
 }
 
+function enableAddons(text, addonNames) {
+  const normalize = value => path.win32.basename(String(value).trim()).toLowerCase();
+  const enabled = new Set(addonNames.flatMap(name => {
+    const file = normalize(name);
+    return [file, file.replace(/\.addon(?:32|64)?$/i, '')];
+  }));
+  const parts = String(text || '').split(/(\r\n|\n)/);
+  let section = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const header = /^\s*\[([^\]]+)\]\s*$/.exec(parts[index]);
+    if (header) section = header[1].trim().toLowerCase();
+    if (section && section !== 'addon') continue;
+    const line = /^(\uFEFF?[ \t]*DisabledAddons[ \t]*=[ \t]*)(.*)$/i.exec(parts[index]);
+    if (!line) continue;
+    const entries = line[2].split(','), kept = entries.filter(name => !enabled.has(normalize(name)));
+    if (kept.length !== entries.length) parts[index] = line[1] + kept.join(',');
+  }
+  return parts.join('');
+}
+
 // ReShade Setup 6.8 may seed recursive paths as `Shaders\**\**`. Windows
 // rejects the unresolved wildcard directory with ERROR_INVALID_NAME (123), so
 // the runtime sees no effects even though every .fx file is present. Always
@@ -202,19 +222,31 @@ function configureFeed(text) {
   return out.join('\r\n') + '\r\n';
 }
 
-function configureDgVoodoo(text) {
+function configureDgVoodoo(text, options = {}) {
   let out = String(text || '');
   out = setIni(out, 'General', 'OutputAPI', 'd3d11_fl11_0');
   out = setIni(out, 'General', 'CaptureMouse', 'false');
   out = setIni(out, 'DirectX', 'DisableAndPassThru', 'false');
   out = setIni(out, 'DirectX', 'VideoCard', 'internal3D');
-  // dgVoodoo ships 256 MB of emulated video memory and enforces it: a DirectX 9
-  // game at a modern resolution exhausts that in seconds, CreateTexture then
-  // fails in a loop and the game dies. Measured in SWTOR at 2560x1440 on #37,
-  // where 1024 still was not enough. The number is an emulated ceiling, not an
-  // allocation, so a generous one only stops false out-of-memory failures.
-  out = setIni(out, 'DirectX', 'VRAM', '4096');
+  // 32位老游戏 (DDraw/DX8/DX9) 调用 GetAvailableVidMem / GetAvailableTextureMem 时返回字节级 32 位整数；
+  // 若设为 4096 MB (4,294,967,296 字节 = 0x100000000) 会发生 32 位有符号/无符号整数溢出（在部分老引擎中算作负数或 0 MB 显存），
+  // 因此 32 位游戏统一设为安全的 1024 MB (1,073,741,824 < 2^31)，64 位游戏保持 4096 MB。
+  const is32Bit = Boolean(options && options.bitness === 32);
+  const currentVram = Number(getIni(out, 'DirectX', 'VRAM'));
+  const keepVram = options.preserveExisting && currentVram > 0 && currentVram < (is32Bit ? 2048 : 65536);
+  const vram = keepVram ? String(currentVram) : is32Bit ? '1024' : '4096';
+  out = setIni(out, 'DirectX', 'VRAM', vram);
   out = setIni(out, 'DirectX', 'dgVoodooWatermark', 'false');
+  if (is32Bit) {
+    // 启用无边框伪全屏 (FullscreenAttributes=fake)，避免独占全屏模式切换导致 DirectShow/VMR9 开场视频闪退
+    // （如《侠盗猎车手：罪恶都市》）并保证 Windows 11 DWM 下 host64 神经渲染叠加层稳定贴合窗口。
+    if (!options.preserveExisting || !getIni(out, 'GeneralExt', 'FullscreenAttributes')) {
+      out = setIni(out, 'GeneralExt', 'FullscreenAttributes', 'fake');
+    }
+    // 补充经典低分辨率列表，防止现代笔记本 eDP 面板缺失 640x480 / 800x600 / 1024x768 模式导致老游戏首次启动直接退出。
+    const resolutions = (getIni(out, 'DirectXExt', 'ExtraEnumeratedResolutions') || '').split(',').map(s => s.trim()).filter(Boolean);
+    out = setIni(out, 'DirectXExt', 'ExtraEnumeratedResolutions', [...new Set([...resolutions, '640x480', '800x600', '1024x768', '1280x720', '1280x960', '1600x900'])].join(', '));
+  }
   return out;
 }
 
@@ -231,7 +263,7 @@ function readText(file) {
 }
 
 module.exports = {
-  getIni, setIni, setEarlyAddon, configureGameReShade, configureHostReShade,
+  getIni, setIni, setEarlyAddon, enableAddons, configureGameReShade, configureHostReShade,
   configurePreset, configureFeed, configureDgVoodoo, presetPath, readText,
   configureSearchPath, configureConsumer
 };

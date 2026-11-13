@@ -281,7 +281,7 @@ export function useOperation(
   const downloadVersion = (id: string, cached = false) => runTransfer("library", id, cached);
   const downloadRuntime = (id: string, cached: boolean) => runTransfer("runtime", id, cached);
   const cancelProgress = () => {
-    if (!progress || cancelling || progress.stage === "queued") return;
+    if (!progress || cancelling || (progress.stage === "queued" && progress.kind !== "library")) return;
     setCancelling(true);
     void (progress.kind === "library" ? getBridge().libraryCancel() : getBridge().componentCancelPrepare())
       .catch(error => { setCancelling(false); onMessage(errorText(error), "error"); });

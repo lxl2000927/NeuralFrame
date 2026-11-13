@@ -175,30 +175,34 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     runtimeSelectionMode: runtimeSelectionMode || '0',
     message: bothActive && hasReshadeAddonNr && hasReshadeAddonMfg
       ? (runtimeSelectionMode === '1'
-        ? 'ReShade 双插件协同正常：RuntimeSelectionMode=1 (LoadFromDllMain) 已开启，确保 MFG 绑定至游戏主 Streamline 上下文，不与 RenoDX DLSS 5 内部 NGX 实例冲突。'
+        ? '已配置 RuntimeSelectionMode=1 (LoadFromDllMain)；实际 Streamline / NGX 绑定是否成功需查看本次游戏运行诊断。'
         : '注意：RenoDX DLSS 5 与 MFGUnlock 同时存在时建议将 RuntimeSelectionMode 设为 1，以防止 NGX 上下文绑定错位。')
-      : '注入链独立或单模块运行，无 NGX 上下文争用。'
+      : '未检测到需要检查的 ReShade 双插件组合；此处不判断运行时 NGX 上下文是否冲突。'
   };
 
   // 3. 神经渲染是否影响运动矢量与补帧质量
   const bamMode = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'BoundaryArtifactMitigationMode');
   const motionVectorCheck = {
     ok: true,
-    mitigationActive: bamMode === '1' || bamMode === '2' || mfgStatus.currentConfig.backend === 'mfg-unlocker-asi',
-    message: mfgStatus.currentConfig.backend === 'wuwa-proxy' ? '由独立加载器使用游戏提供的 DLSS 资源。' : bothActive
-      ? 'DLSS 5 神经渲染与 MFG 同时开启：已启用 Boundary Artifact Mitigation (边界伪影缓解) 与 Validated Warp Blend，保护运动矢量与遮挡边缘插值质量。'
-      : '未同时激活双模块，无跨阶段运动矢量耦合影响。'
+    configurationSupported: hasReshadeAddonMfg && !launcherProtected,
+    mitigationActive: hasReshadeAddonMfg && !launcherProtected && (bamMode === '1' || bamMode === '2'),
+    message: launcherProtected || !hasReshadeAddonMfg
+      ? '当前加载路线不提供 RenoDX 边界伪影缓解配置；运动矢量和插帧质量需在游戏中确认。'
+      : bamMode === '1' || bamMode === '2'
+        ? `已配置边界伪影缓解模式 ${bamMode}；实际插帧质量需在游戏中确认。`
+        : '未检测到边界伪影缓解配置。'
   };
 
   // 4. 多帧生成是否引发闪烁、HUD 异常或拖影
   const qualityGuardMode = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'QualityGuardMode') || '0';
   const hudFlickerCheck = {
     ok: true,
+    configurationSupported: hasReshadeAddonMfg && !launcherProtected,
     qualityGuardMode,
     hdrGameNeedsGuard: Boolean(mfgStatus.knownGame && mfgStatus.knownGame.hdrFix && qualityGuardMode !== '2'),
     message: mfgStatus.knownGame && mfgStatus.knownGame.hdrFix
-      ? `该游戏在 HDR 下已知存在 UI 分离闪烁风险，当前 QualityGuardMode=${qualityGuardMode} (${qualityGuardMode === '2' ? '已启用 Automatic Guard + UI Composition 修复' : '建议开启 HDR UI 保护模式'})。`
-      : '默认采用 Native HUD/UI 标记直通，兼顾 HUD 清晰度与补帧稳定性。'
+      ? `该游戏在 HDR 下有 UI 保护建议；当前 QualityGuardMode=${qualityGuardMode}，实际效果需在游戏中确认。`
+      : '按现有配置检查 HUD 输入策略，无法从磁盘文件确认画面稳定性。'
   };
 
   // 5. 是否超过目标显卡档位的显存预算限制
@@ -213,19 +217,14 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
   // 6. Reflex、帧同步和延迟控制是否仍有效
   const hasReflexDll = Boolean(mfgStatus.streamline.reflexPluginVersion) ||
     fs.existsSync(path.join(exeDir, 'sl.reflex.dll'));
-  const archCode = hardware?.gpu?.architecture?.code;
   const reflexCheck = {
-    ok: mfgStatus.currentConfig.mode === 'off' || hasReflexDll || Boolean(archCode === 'ada' || archCode === 'blackwell' || hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx50_desktop'),
+    ok: mfgStatus.currentConfig.mode === 'off' || hasReflexDll,
     hasReflexDll,
     reflexVersion: mfgStatus.streamline.reflexPluginVersion,
     hardwareFlipMetering: Boolean(mfgStatus.gpuSupport.hardwareFlipMetering),
-    message: hardwareProfile === 'rtx50_desktop'
-      ? `RTX 50 系列桌面卡 (Blackwell sm_120)：已启用第 5 代 Tensor Core 原生硬件 Flip Metering 与 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '内置'}) 帧率同步。`
-      : hardwareProfile === 'rtx40_desktop'
-        ? `RTX 40 系桌面卡：已启用 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '内置'}) + Reflex 强制低延迟护栏 (LatencyGuardMode=1) 与 Ada 硬件 Flip Metering。`
-        : hasReflexDll
-          ? `已检测到 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '内置'}) 与 Ada 硬件 Flip Metering，帧同步与 Reflex 低延迟控制有效。`
-          : '未在游戏目录发现独立 sl.reflex.dll，可随 Streamline 运行时组件一并部署以确保 Reflex 延迟控制生效。'
+    message: hasReflexDll
+      ? '已检测到 Reflex DLL，是否执行需在游戏中验证。'
+      : '未检测到独立 Reflex DLL，无法据此判断延迟控制是否生效。'
   };
   if (launcherProtected) {
     slChainCheck.message = '保留游戏原生 Streamline；独立加载器在运行时接入，是否成功请看本次进程的遥测。';
@@ -259,8 +258,8 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     addedCount: backupRecord?.added?.length || 0,
     pendingJournal,
     backupFilesIntact,
-    badge: '原版纯净状态 (无需还原)',
-    message: '当前游戏目录未注入修改，处于原始状态。'
+    badge: '无 NeuralFrame 部署记录',
+    message: '未找到 NeuralFrame 部署记录；这不代表游戏目录没有其他工具或用户的修改。'
   };
   if (pendingJournal) {
     backupCheck.badge = '有中断的操作待恢复';
@@ -293,30 +292,32 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     : { hook: 'dxgi.dll', avoidedConflict: null };
 
   let dlssCompatMode = 'native_ready';
-  let dlssCompatSummary = '已识别原生 DLSS 运行时，支持直接热替换升级至 DLSS 5 (310.9.1 / 310.9.16)。';
+  let dlssCompatSummary = '已检测到游戏原有 DLSS 文件，可预览兼容的组件更新；文件存在不代表神经渲染已经生效。';
   if (replacedDlssItems.length > 0) {
     const sample = replacedDlssItems[0];
     dlssCompatMode = 'upgraded_from_low';
-    dlssCompatSummary = `已将游戏原厂低版本 DLSS (${sample.oldVersion || '2.x/3.x'} → ${sample.newVersion || '310.9.1.0'}，共 ${replacedDlssItems.length} 处含深层插件目录) 原位备份并升级至 DLSS 5。`;
+    dlssCompatSummary = `部署记录包含 ${replacedDlssItems.length} 处 DLSS 文件替换（${sample.oldVersion || '未知版本'} → ${sample.newVersion || '未知版本'}）；实际加载版本请查看运行诊断。`;
   } else if (hasDlss1x) {
     dlssCompatMode = 'dlss1x_feeder';
-    dlssCompatSummary = `检测到远古 DLSS 1.x (${nativeDlssItems[0].version})，因 NGX v1 ABI 不兼容已自动绕过原文件并启用 Feeder 1.19.0 + 光流神经渲染管线。`;
+    dlssCompatSummary = `检测到 DLSS 1.x (${nativeDlssItems[0].version})，需要通过 Feeder 路线提供神经渲染输入；请先预览安装。`;
   } else if (nativeDlssItems.length === 0) {
     const upscalerCount = (scan.upscalerFiles || []).length;
     dlssCompatMode = 'no_dlss_feeder';
     dlssCompatSummary = upscalerCount > 0
-      ? `游戏无内置 DLSS（检测到 ${upscalerCount} 个 FSR/XeSS 组件），已支持 Feeder 1.19.0 + 光流无损注入或 OptiScaler 桥接。`
-      : '游戏无内置 DLSS，已自动匹配离线 Feeder 1.19.0 + LumeniteFX 2.0 光流 + DLSS 5 神经渲染管线。';
+      ? `未检测到游戏原有 DLSS 文件（检测到 ${upscalerCount} 个 FSR/XeSS 组件），可评估 Feeder 或 OptiScaler 路线；神经渲染与帧生成的支持条件分别检查。`
+      : '未检测到游戏原有 DLSS 文件，可评估 Feeder 神经渲染路线；这不代表游戏支持帧生成解锁。';
   } else if (nativeDlssItems.some((f) => f.version && /^[23]\./.test(String(f.version).trim()))) {
     const lowVer = nativeDlssItems.find((f) => f.version && /^[23]\./.test(String(f.version).trim()));
     dlssCompatMode = 'low_dlss_ready';
-    dlssCompatSummary = `检测到游戏内置低版本 DLSS (${lowVer.version}，位于 ${lowVer.rel})，点击应用即可自动原位升级至 DLSS 5 并保留原文件备份。`;
+    dlssCompatSummary = `检测到游戏原有 DLSS ${lowVer.version}（${lowVer.rel}），可预览组件更新并保留原文件备份；运行库更新不等于启用神经渲染。`;
   }
+  if (manifest?.route === 'feeder' && ['dlss1x_feeder', 'no_dlss_feeder'].includes(dlssCompatMode))
+    dlssCompatSummary = '已记录 Feeder 安装路线；实际模型、工作分辨率和加载情况请查看游戏配置与运行诊断。';
   if (launcherProtected) {
     dlssCompatMode = 'wuwa-proxy';
     dlssCompatSummary = '鸣潮保留启动器校验的 DLSS 文件。神经渲染与补帧使用主程序旁的 version.dll。';
   } else if (safeHookInfo.avoidedConflict) {
-    dlssCompatSummary += ` 检测到 ${safeHookInfo.avoidedConflict} 被学习补丁/Mod 占用，已自动改用 ${safeHookInfo.hook} 注入以保护补丁。`;
+    dlssCompatSummary += ` 检测到 ${safeHookInfo.avoidedConflict} 被其他组件占用，安装预览将评估 ${safeHookInfo.hook} 备用入口。`;
   }
 
   return {
@@ -338,10 +339,10 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
 }
 
 // 获取游戏的三大核心模块完整状态与诊断报告（供 UI 面板一次性渲染）
-async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwareProfile, defaultHardwareProfile, detectedHardware, apiOverrides, apiOverride, scanResult } = {}) {
+async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwareProfile, defaultHardwareProfile, detectedHardware, apiOverrides, apiOverride, scanResult, exePath } = {}) {
   const [hardware, detected] = await Promise.all([
     detectedHardware || detectHardwareEnvironment(),
-    scanResult || scanGame(gameDir)
+    scanResult || scanGame(gameDir, exePath)
   ]);
   const savedApi = detected.chosen && apiOverrides?.[apiPreferenceKey(gameDir, detected.chosen.path)];
   const scan = withGameApi(detected, apiOverride || (require('../shared/rendering-api').valid(savedApi) ? savedApi : 'auto'));
@@ -362,8 +363,46 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion, hardwareProfile: effectiveProfile, scanResult: scan }),
     protectedRoot ? wuwa.inspectNativeStack(protectedRoot) : null
   ]);
+  const encore = require('./encore').inspect(gameDir, scan, manifest);
+  if (encore.installed) {
+    const neuralEnabled = encore.settings.neuralMode !== 'off';
+    neuralStatus.mode = encore.settings.neuralMode;
+    neuralStatus.installed = Boolean(encore.filesPresent && neuralEnabled && neuralStatus.dependencies.hasNeuralDll);
+    neuralStatus.dependencies.hasConsumer = encore.filesPresent;
+    neuralStatus.dependencies.consumerAddons = encore.filesPresent ? [encore.proxy] : [];
+    // Encore NR can run on the presented image without SR or RenoDX. Keep
+    // observed file facts, but do not inherit the other route's requirements.
+    neuralStatus.dependencies.missing = [
+      ...(!encore.filesPresent ? ['Encore 配套组件'] : []),
+      ...(neuralEnabled && !neuralStatus.dependencies.hasNeuralDll ? ['nvngx_dlssnr.dll'] : [])
+    ];
+    const modelIncompatible = neuralEnabled && neuralStatus.dependencies.hasNeuralDll && neuralStatus.gpuCompatibility?.status === 'incompatible';
+    neuralStatus.overallStatus = modelIncompatible ? 'incompatible' : 'experimental';
+    neuralStatus.overallBadge = encore.error ? '配置读取失败' : modelIncompatible ? '不兼容' : 'Encore 配置已读取，运行效果待验证';
+    mfgStatus.currentConfig = {installed:encore.filesPresent,backend:'encore',mode:encore.settings.mfgMode,
+      multiplier:/^x[2-6]$/.test(encore.settings.mfgMode)?Number(encore.settings.mfgMode.slice(1)):null};
+    // Native DLSS-G cannot present through DX11; Encore's added-FG adapter
+    // handles it. Other injector/architecture conflicts remain actionable.
+    if (scan.chosen?.bitness === 64 && scan.chosen?.apiLabel === 'DirectX 11')
+      mfgStatus.conflicts = mfgStatus.conflicts.filter(c => c.code !== 'UNSUPPORTED_API_FOR_MFG');
+    mfgStatus.effectiveMultiplier = encore.settings.mfgMode === 'off' ? '未启用 (1x)' : `${encore.settings.mfgMode} (待进入游戏验证)`;
+    mfgStatus.status = 'experimental';
+    mfgStatus.statusBadge = encore.error ? '配置读取失败' : 'Encore 新增帧生成 · 待运行验证';
+  }
 
   const coExecution = evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, effectiveProfile, Boolean(protectedRoot));
+  if (protectedRoot && nativeRuntimeStack?.indexMissing)
+    coExecution.dlssCompat.summary = '当前渠道未提供官服资源清单，使用独立加载保护：仅管理主程序旁的补丁文件，不替换游戏原有 DLSS / Streamline。';
+  if (encore.installed) {
+    coExecution.dlssCompat.summary = 'Encore 使用独立加载器与配套运行库新增帧生成；配置读取不代表已在游戏中生效。';
+    coExecution.slChainCheck = {ok:!!encore.filesPresent,message:'Encore 配套运行库已登记；请在运行诊断与游戏内面板核对执行状态。'};
+    coExecution.motionVectorCheck.configurationSupported = false;
+    coExecution.motionVectorCheck.message = 'Encore 使用自身的运动估计设置，不读取 RenoDX 的边界保护参数。';
+    coExecution.hudFlickerCheck.configurationSupported = false;
+    coExecution.hudFlickerCheck.message = 'Encore 使用自身的 HUD 处理设置，不读取 RenoDX QualityGuard。';
+    coExecution.vramBudget = {hardwareProfile:effectiveProfile,level:'unknown',vramTotalMB:hardware.gpu.vramTotalMB || null,
+      summary:'Encore 尚无显存预算模型，请以游戏中的实际占用为准。'};
+  }
 
   // 汇总错误日志
   const errorLogs = [
@@ -400,6 +439,7 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     configuredRuntimeStack: configuredStack?.runtimeStack || null,
     launcherProtected: Boolean(protectedRoot),
     nativeRuntimeStack,
+    encore,
     standaloneProfile: protectedRoot ? {
       target: require('./wuwa-profile').neuralSettings(effectiveProfile),
       saved: mfgStatus.currentConfig?.backend === 'wuwa-proxy' ? mfgStatus.currentConfig.settings : null,
@@ -462,48 +502,64 @@ async function applyCombinedStages(gameDir, config, onLog) {
     ? 'oct2026-310.9.16'
     : runtimeStack;
 
-  const scan = withGameApi(await scanGame(gameDir), config.apiOverride);
+  const scan = withGameApi(await scanGame(gameDir, config.exePath), config.apiOverride);
   if (!scan.chosen) throw Object.assign(new Error('未在游戏目录中找到可执行文件'), { code: 'errNoExe' });
+  if (config.exePath && path.resolve(config.exePath).toLowerCase() !== path.resolve(scan.chosen.path).toLowerCase())
+    throw Object.assign(new Error('所选游戏程序已不在扫描列表中，请重新选择。'),{code:'errSelectedExeMissing'});
   const exePath = scan.chosen.path;
   const exeDir = path.dirname(exePath);
 
   await require('./install-guards').assertGameClosed(gameDir, exePath);
   const protectedRoot = wuwa.gameRoot(gameDir, exePath);
+  if (protectedRoot && config.route === 'encore') throw Object.assign(new Error('鸣潮继续使用独立加载路线，不切换 Encore。'), {code:'errEncore'});
   if (protectedRoot) {
     const result = await wuwa.configure(gameDir, protectedRoot, scan, {
       ...config, payloadDir:effectivePayloadDir, gpuName, hardwareProfile:effectiveProfile,
     }, onLog);
-    result.status = await inspectCombinedStatus(gameDir, {apiOverride:config.apiOverride, payloadDir:effectivePayloadDir,
+    result.status = await inspectCombinedStatus(gameDir, {exePath, apiOverride:config.apiOverride, payloadDir:effectivePayloadDir,
       userDataDir, hardwareProfile:effectiveProfile});
     return result;
   }
 
-  // 判断游戏是否自带原生 DLSS 或 Streamline（排除由本软件在过往会话中新增的 DLL）
+  if (config.route === 'encore' || (!config.route && existingManifest?.route === 'encore')) {
+    const encore = require('./encore');
+    encore.assertTarget(gameDir,scan,scan.chosen,gpuName);
+    const current = encore.inspect(gameDir,scan,existingManifest);
+    if (current.error) throw Object.assign(new Error(current.error),{code:'errEncoreConfig'});
+    // Validate against the selected engine's fingerprint-backed capabilities in
+    // install(), not the default adapter version before the engine is resolved.
+    const settings = {...current.settings,...config.encore,
+      ...(neuralMode !== undefined ? {neuralMode} : {}), ...(mfgMode !== undefined ? {mfgMode} : {}),
+      ...(config.neuralModelId ? {neuralModelId} : {})};
+    let model;
+    if (settings.neuralMode !== 'off') {
+      const available = neuralModels.listNeuralModels({payloadDir:effectivePayloadDir,userDataDir,gpuName,hardwareProfile:effectiveProfile});
+      model = neuralModels.findLocalModel(available,settings.neuralModelId,config.neuralModelSha256);
+      if (!model && settings.neuralModelId !== '310.8.SF-v2') throw Object.assign(new Error('请先在模型库下载或导入所选神经渲染模型。'),{code:'errModelNotOnDisk'});
+      if (model) {
+        const inspected = neuralModels.inspectNeuralModelBinary(model.filePath,{fresh:true});
+        const compatible = neuralModels.evaluateModelGpuCompatibility(inspected,gpuName);
+        if (!inspected.valid || inspected.sha256 !== model.sha256 || !compatible.compatible)
+          throw Object.assign(new Error(compatible.reason || '神经模型校验失败，请重新预览。'),{code:'errModelNotOnDisk'});
+      }
+    }
+    if (config.requirePayload) await config.requirePayload({kind:'enhanced',route:'encore',
+      reuseProxy:current.installed && config.encorePackageId === undefined,
+      config:{...config,neuralMode:settings.neuralMode,encore:settings},customModel:!!model,target:scan.chosen,scan});
+    if (settings.neuralMode !== 'off' && !model) throw Object.assign(new Error('请先准备所选神经渲染模型。'),{code:'errModelNotOnDisk'});
+    await backends.install({gameDir,exePath,api:scan.chosen.api,apiLabel:scan.chosen.apiLabel,bitness:scan.chosen.bitness,
+      route:'encore',payloadDir:effectivePayloadDir,encoreSettings:settings,model,gpuName,userDataDir,
+      encorePackageId:config.encorePackageId,
+      antiCheatAcknowledged:config.antiCheatAcknowledged},onLog);
+    return {ok:true,restartRequired:true,status:await inspectCombinedStatus(gameDir,{exePath,payloadDir:effectivePayloadDir,userDataDir,apiOverride:config.apiOverride})};
+  }
+
+  // Match the setup page: FG/NR or Reflex/Streamline DLLs alone do not prove
+  // native DLSS SR input. Exclude runtimes added by a previous deployment.
   const prevManifest = backends.readManifest(gameDir);
-  const addedByUsSet = new Set(
-    (prevManifest && Array.isArray(prevManifest.added) ? prevManifest.added : [])
-      .map((r) => path.normalize(String(r)).toLowerCase())
-  );
-  const nativeDlssFiles = (scan.dlssFiles || []).filter((f) => {
-    const rel = path.normalize(path.relative(gameDir, f.path)).toLowerCase();
-    return !addedByUsSet.has(rel);
+  const hasNativeDlss = require('../shared/install-routes').nativeDlssPresent({
+    ...scan, install: prevManifest || scan.install
   });
-  const nativeSlFiles = (scan.streamlineFiles || []).filter((f) => {
-    const rel = path.normalize(path.relative(gameDir, f.path)).toLowerCase();
-    return !addedByUsSet.has(rel);
-  });
-  const hasReplacedDlss = Boolean(
-    prevManifest &&
-    Array.isArray(prevManifest.replaced) &&
-    prevManifest.replaced.some((r) => /nvngx_dlss|_nvngx|sl\.dlss/i.test(String(r.rel || '')))
-  );
-  // 排除远古 DLSS 1.x (v1.x.x.x)：早期破解版游戏 (如 Control / 地铁离去 v1.0) 自带的 1.x NGX ABI 与 DLSS 2/3/5 不兼容，
-  // 必须将其视为无原生 2.x+ DLSS，自动走 Feeder + 光流 + DLSS 5 管线。
-  const baseNativeDlssFiles = nativeDlssFiles.filter((f) => /^(nvngx_dlss|_?nvngx)\.dll$/i.test(f.name));
-  const isLegacyDlss1x = baseNativeDlssFiles.length > 0 &&
-    baseNativeDlssFiles.every((f) => f.version && /^1\./.test(String(f.version).trim()));
-  const usableNativeDlssFiles = nativeDlssFiles.filter((f) => !(f.version && /^1\./.test(String(f.version).trim())));
-  const hasNativeDlss = usableNativeDlssFiles.length > 0 || nativeSlFiles.length > 0 || (hasReplacedDlss && !isLegacyDlss1x);
 
   const { scanSource } = require('./scan');
   const { ensureDgVoodoo, ensureLumenite } = require('./runtime-components');
@@ -632,10 +688,12 @@ async function applyCombinedStages(gameDir, config, onLog) {
     }
 
     neuralResult = await neuralModels.applyNeuralModelSelection(gameDir, {
+      exePath,
       apiOverride: config.apiOverride,
       mode: neuralMode,
       modelId: neuralModelId,
       expectedSha256: config.neuralModelSha256,
+      resetNeuralTuning: config.resetNeuralTuning === true,
       runtimeStack: effectiveRuntimeStack,
       hardwareProfile: effectiveProfile,
       payloadDir: effectivePayloadDir,
@@ -645,10 +703,12 @@ async function applyCombinedStages(gameDir, config, onLog) {
   } else if (neuralMode !== undefined) {
     // 1. 应用神经渲染设置（现代原生 DLSS 游戏与关闭模式保持原有逻辑 100% 不变）
     neuralResult = await neuralModels.applyNeuralModelSelection(gameDir, {
+      exePath,
       apiOverride: config.apiOverride,
       mode: neuralMode,
       modelId: neuralModelId,
       expectedSha256: config.neuralModelSha256,
+      resetNeuralTuning: config.resetNeuralTuning === true,
       runtimeStack: effectiveRuntimeStack,
       hardwareProfile: effectiveProfile,
       payloadDir: effectivePayloadDir,
@@ -845,6 +905,7 @@ async function applyCombinedStages(gameDir, config, onLog) {
     if (!canRunMfg) {
       if (mfgMode === 'off' && targetBitness === 64) {
         mfgResult = await mfgManager.applyMfgConfiguration(gameDir, {
+          exePath,
           apiOverride: config.apiOverride,
           mode: 'off',
           runtimeStack: effectiveRuntimeStack,
@@ -868,6 +929,7 @@ async function applyCombinedStages(gameDir, config, onLog) {
       }
     } else {
       mfgResult = await mfgManager.applyMfgConfiguration(gameDir, {
+        exePath,
         apiOverride: config.apiOverride,
         reshadeProxy: config.reshadeProxy,
         gpuName,
@@ -922,6 +984,7 @@ async function applyCombinedStages(gameDir, config, onLog) {
   }
 
   const updatedStatus = await inspectCombinedStatus(gameDir, {
+    exePath,
     apiOverride: config.apiOverride,
     payloadDir: effectivePayloadDir,
     userDataDir,

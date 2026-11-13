@@ -19,12 +19,30 @@ const asset = (id, file) =>
   `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${id}/${file}`;
 
 let lastCall = 0;
+let storeQueue = Promise.resolve();
+const detailRequests = new Map();
+const searchRequests = new Map();
 
 // Steam's store API is rate limited; this keeps a comfortable distance.
-async function throttle() {
-  const wait = 320 - (Date.now() - lastCall);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastCall = Date.now();
+// Serialize start slots, not the whole network request. Concurrent callers
+// cannot all sleep against the same lastCall and then launch together.
+function throttle() {
+  const slot = storeQueue.then(async () => {
+    const wait = 320 - (Date.now() - lastCall);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastCall = Date.now();
+  });
+  storeQueue = slot.catch(() => {});
+  return slot;
+}
+
+function inFlight(requests, key, work) {
+  if (requests.has(key)) return requests.get(key);
+  // Remove successes and failures alike. This only shares a running lookup;
+  // cache lifetime and negative retries belong to the caller's artwork cache.
+  const pending = Promise.resolve().then(work).finally(() => requests.delete(key));
+  requests.set(key, pending);
+  return pending;
 }
 
 // Folder names carry edition suffixes and scene tags that no store matches.
@@ -111,40 +129,47 @@ async function getJson(url) {
 async function findAppId(name) {
   const query = cleanName(name);
   if (!query) return null;
-  const j = await getJson(
-    `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(query)}&cc=us&l=en`
-  );
-  const hit = pick(j.items || [], query);
-  return hit ? { id: hit.id, name: hit.name } : null;
+  return inFlight(searchRequests, norm(query), async () => {
+    const j = await getJson(
+      `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(query)}&cc=us&l=en`
+    );
+    const hit = pick(j.items || [], query);
+    return hit ? { id: hit.id, name: hit.name } : null;
+  });
 }
 
 // Details are a bonus: the art is what matters, so a failure here is not one.
 async function detailsFor(appid) {
-  try {
-    const j = await getJson(
-      `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=us&l=english`
-    );
-    const row = j && j[String(appid)];
-    if (!row || !row.success || !row.data) return null;
-    const d = row.data;
-    return {
-      name: d.name || null,
-      headerUrl: d.header_image || null,
-      summary: d.short_description || null,
-      released: (d.release_date && /\d{4}/.test(d.release_date.date || ''))
-        ? Number((d.release_date.date.match(/\d{4}/) || [])[0])
-        : null,
-      rating: (d.metacritic && d.metacritic.score) || null,
-      genres: (d.genres || []).map((g) => g.description).slice(0, 3)
-    };
-  } catch {
-    return null;
-  }
+  return inFlight(detailRequests, String(appid), async () => {
+    try {
+      const j = await getJson(
+        `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=us&l=english`
+      );
+      const row = j && j[String(appid)];
+      if (!row || !row.success || !row.data) return null;
+      const d = row.data;
+      return {
+        name: d.name || null,
+        headerUrl: d.header_image || null,
+        summary: d.short_description || null,
+        released: (d.release_date && /\d{4}/.test(d.release_date.date || ''))
+          ? Number((d.release_date.date.match(/\d{4}/) || [])[0])
+          : null,
+        rating: (d.metacritic && d.metacritic.score) || null,
+        genres: (d.genres || []).map((g) => g.description).slice(0, 3)
+      };
+    } catch {
+      return null;
+    }
+  });
 }
 
 // `appid` is passed straight through for Steam games, where the launcher
 // already knows it - no search, so no chance of matching the wrong game.
-async function look(name, appid) {
+// Artwork-only callers can skip optional store metadata entirely. In a large
+// library known Steam IDs then start CDN downloads without waiting in the API
+// queue, and unknown names need just their identifying search.
+async function look(name, appid, { details = true } = {}) {
   const known = !appid && knownGame(String(name || ''));
   if (known?.heroUrl) return { name: known.name, source: known.source, appid: null,
     coverUrl: null, heroUrl: known.heroUrl, heroFallbackUrl: null, genres: [] };
@@ -157,7 +182,7 @@ async function look(name, appid) {
     searchName = found.name;
   }
 
-  const info = await detailsFor(id);
+  const info = details ? await detailsFor(id) : null;
   return {
     appid: id,
     name: (info && info.name) || searchName || name,
@@ -169,6 +194,13 @@ async function look(name, appid) {
     heroUrl: asset(id, 'library_hero.jpg'),
     heroFallbackUrl: info?.headerUrl || asset(id, 'header.jpg')
   };
+}
+
+// Ask for a hashed store header only after the fixed CDN assets failed. Kept
+// separate from fast look so an unavailable optional API cannot hold up art.
+async function heroFallbackUrl(appid) {
+  if (!/^\d+$/.test(String(appid || ''))) return null;
+  return (await detailsFor(appid))?.headerUrl || asset(appid, 'header.jpg');
 }
 
 async function download(url, dest) {
@@ -198,4 +230,4 @@ async function download(url, dest) {
 // Nothing to configure, so it is always on.
 const available = () => true;
 
-module.exports = { available, look, download, cleanName, pick, tileUrls };
+module.exports = { available, look, heroFallbackUrl, download, cleanName, pick, tileUrls };

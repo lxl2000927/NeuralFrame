@@ -1,0 +1,4 @@
+.hardware-settings { margin-bottom: 26px; min-width: 0; }
+.hardware-settings h2 { margin: 0 0 12px; font-size: 17px; }
+.hardware-settings .setting-row > .setting-control { min-width: 0; }
+.hardware-information .setting-control > span { overflow-wrap: anywhere; white-space: normal; text-align: right; }

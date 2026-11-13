@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const core = require('../src/core/apply.js');
+const journal = require('../src/core/file-journal');
 
 // Windows carries the read-only attribute across a file copy, and everything
 // this app installs comes from a payload that sits inside the installed
@@ -55,4 +56,42 @@ test('a configuration file left read-only by an earlier install is still rewritt
   await core.writeTracked(manifest, game, ini, '[GENERAL]\r\nNew=1\r\n', { kind: 'config' });
   assert.match(fs.readFileSync(ini, 'utf8'), /New=1/);
   assert.equal(writable(ini), true, 'and it stays writable for ReShade itself');
+});
+
+test('an existing read-only DLL can be replaced and restored without leaving recovery pending', async t => {
+  const { root, game, manifest } = fixture(t);
+  const source = path.join(root, 'runtime.dll'), target = path.join(game, 'nvngx_dlss.dll');
+  fs.writeFileSync(source, 'new runtime');
+  fs.writeFileSync(target, 'game original');
+  fs.chmodSync(target, 0o444);
+  assert.equal(writable(target), false);
+
+  await journal.transaction(game, () => core.copyTracked(manifest, game, source, target, { kind: 'runtime' }));
+  assert.equal(fs.readFileSync(target, 'utf8'), 'new runtime');
+  assert.equal(writable(target), true);
+  assert.equal(fs.existsSync(journal.pendingPath(game)), false);
+
+  // A user or an older installer may mark an already-installed DLL read-only.
+  fs.chmodSync(target, 0o444);
+  await core.restore(game);
+  assert.equal(fs.readFileSync(target, 'utf8'), 'game original');
+  assert.equal(fs.existsSync(journal.pendingPath(game)), false);
+});
+
+test('rollback restores the original bytes and read-only attribute after a failed write', async t => {
+  const { game, manifest } = fixture(t);
+  const target = path.join(game, 'ReShade.ini');
+  fs.writeFileSync(target, 'original settings');
+  fs.chmodSync(target, 0o444);
+  const failure = new Error('later stage failed');
+
+  await assert.rejects(journal.transaction(game, async () => {
+    await core.writeTracked(manifest, game, target, 'temporary settings');
+    fs.chmodSync(target, 0o444);
+    throw failure;
+  }), error => error === failure);
+  assert.equal(fs.readFileSync(target, 'utf8'), 'original settings');
+  assert.equal(writable(target), false, 'the journal keeps the pre-operation file attribute');
+  assert.equal(fs.existsSync(journal.pendingPath(game)), false);
+  assert.equal(fs.existsSync(path.join(core.backupRoot(game), 'manifest.json')), false);
 });

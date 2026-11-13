@@ -30,6 +30,8 @@ function updates() { return componentUpdates ||= new (require('./src/core/compon
 async function managedReview(event, dir, request, work, token) {
   const library = components();
   const componentDeploy = require('./src/core/component-deploy');
+  if (request.kind === 'enhanced' && !request.config?.route && backends.readManifest(dir)?.route === 'encore')
+    request = {...request,config:{...request.config,route:'encore'}};
   const resolved = componentDeploy.resolveManagedSelection(library, library.profile(dir).selected, request);
   const selected = resolved.selection;
   const hasSelection = Object.keys(selected).length > 0;
@@ -76,7 +78,6 @@ function inspectForUi(dir, profileOverride, priority, phase) {
     payloadDir: resolvePayloadRoot(),
     userDataDir: app.getPath('userData'),
     hardwareProfile: profileOverride,
-    defaultHardwareProfile: state.hardwareProfile,
     apiOverrides: state.apiOverrides || {}
   }, priority, phase);
 }
@@ -155,8 +156,8 @@ const KNOWN = {
 
 // An add-on's identity is the hash of its contents, and the add-ons page asks
 // for it every time it is opened - which meant reading and hashing several
-// megabytes per file on each visit. A file is the same file while its path,
-// size and modification time are unchanged, so the answer is kept.
+// megabytes per file on each visit. Keep the answer while its filesystem
+// identity, size and modification/change times are unchanged.
 const describedFiles = new Map();
 
 function describe(file, label) {
@@ -164,7 +165,9 @@ function describe(file, label) {
   let stat;
   try { stat = fs.statSync(file); } catch { return null; }
   const key = path.resolve(file).toLowerCase();
-  const stamp = `${stat.size}:${stat.mtimeMs}`;
+  // Archive extraction can preserve both size and modification time while
+  // replacing a build. File identity/change time must invalidate its metadata.
+  const stamp = [stat.dev,stat.ino,stat.size,stat.mtimeMs,stat.ctimeMs].join(':');
   const remembered = describedFiles.get(key);
   let id, version, size;
   if (remembered && remembered.stamp === stamp) {
@@ -298,13 +301,11 @@ const stateFile = () => path.join(app.getPath('userData'), 'library.json');
 const posterDir = () => path.join(app.getPath('userData'), 'posters');
 const keyFor = (dir) => crypto.createHash('sha1').update(path.resolve(dir).toLowerCase()).digest('hex').slice(0, 16);
 const tileFile = dir => path.join(app.getPath('userData'), 'art', keyFor(dir) + '-tile.jpg');
-function cachedTile(dir) {
-  const file = tileFile(dir);
-  return fs.existsSync(file) ? pathToFileURL(file).href : null;
-}
+function cachedTile(record) { return onDisk(record?.tile) ? record.tile : null; }
+const localArtworkUrl = file => typeof file === 'string' && fs.existsSync(file) ? pathToFileURL(file).href : null;
 // Bump when scan metadata or detection changes so an old wrong result is not
 // kept forever merely because the folder was scanned by an earlier release.
-const SCAN_RULES = 9;
+const SCAN_RULES = 10;
 
 // One live object, not a fresh snapshot per call. Every handler used to parse
 // the file, hold that copy across an await, and write the whole thing back:
@@ -313,9 +314,12 @@ const SCAN_RULES = 9;
 // every write carries everything already known.
 let liveState = null;
 let libraryGeneration = 0;
+const artworkOwners = new Map();
+let artworkOwnerSequence = 0;
 
 function invalidateLibraryView() {
   libraryGeneration++;
+  artworkOwners.clear();
   gameInspection?.invalidate?.();
   lastRoots = [];
   lastGames = [];
@@ -332,8 +336,10 @@ function readState() {
         if (!(key in value) && (key === 'posters' || key === 'excludedRoots')) continue;
         const field = value[key];
         if (!field || typeof field !== 'object' || Array.isArray(field) !== Array.isArray(fallback)) value[key] = fallback;
+        else if (Array.isArray(fallback)) value[key] = field.filter(dir => typeof dir === 'string' && dir.trim());
       }
       if (!Array.isArray(value.excludedFolders)) delete value.excludedFolders;
+      else value.excludedFolders = value.excludedFolders.filter(dir => typeof dir === 'string' && dir.trim());
       return value;
     }
   } catch { /* absent or unreadable: start from the defaults below */ }
@@ -379,13 +385,19 @@ function posterUrl(game, state) {
   if (custom && fs.existsSync(custom)) return { url: `${pathToFileURL(custom).href}?v=${fs.statSync(custom).mtimeMs}`, tall: true, custom: true };
   // Art fetched earlier is already on disk; use it before the
   // launcher's own cache, which is often only a wide header.
-  const record = state.art && state.art[key];
+  const candidate = state.art?.[key];
+  const identity = artCache.sourceIdentity(game.name, game.launcher === 'Steam' ? game.id : null);
+  const record = artCache.matchesIdentity(candidate, identity) ? candidate : null;
   const saved = artCache.usable(record, onDisk);
   if (saved.cover) return { url: saved.cover, tall: true, custom: false };
+  // Prefer a Steam portrait already on disk over an older cached wide fallback;
+  // otherwise a perfectly usable local cover would trigger a new CDN request.
+  const local = game.poster && fs.existsSync(game.poster.file) ? game.poster : null;
+  if (local?.tall) return {url:pathToFileURL(local.file).href,tall:true,custom:false};
   // A game too new for a portrait capsule still has a banner. The grid knows
   // how to show a wide image, which beats falling back to two initials.
   if (saved.hero) return { url: saved.hero, tall: false, custom: false };
-  if (game.poster && fs.existsSync(game.poster.file)) return { url: pathToFileURL(game.poster.file).href, tall: game.poster.tall, custom: false };
+  if (local) return { url: pathToFileURL(local.file).href, tall: local.tall, custom: false };
   return null;
 }
 function desktopLanguage() { return /^en(?:[-_]|$)/i.test(loadState().lang || '') ? 'en' : 'zh'; }
@@ -476,6 +488,11 @@ function createWindow() {
     }
   });
   win.loadFile(path.join(__dirname, 'src', 'ui-dist', 'index.html'));
+  // Native activation is authoritative in Electron; renderer focus events can
+  // be absent when another native window/dialog takes focus.
+  for (const [event, focused] of [['focus', true], ['blur', false]]) {
+    win.on(event, () => { if (win && !win.isDestroyed()) win.webContents.send('window-focus', focused); });
+  }
   win.once('ready-to-show', () => {
     // Windows can add a non-client inset while creating a frameless window.
     // Apply the requested outer bounds once the native window exists to avoid
@@ -580,7 +597,7 @@ app.whenReady().then(async () => {
   if (!singleInstance) return;
   // Registered here rather than at load: main.js is exercised in a plain vm
   // context by the tests, where src modules are stubbed and cannot be called.
-  require('./src/overlay-ipc')({ app, ipcMain, dialog, shell, window: () => win, bridge: () => overlayBridge, language: desktopLanguage });
+  require('./src/overlay-ipc')({ app, ipcMain, dialog, shell, window: () => win, bridge: () => overlayBridge, language: desktopLanguage, exclusiveMutation });
   createWindow();
   // The icon is there from launch, not only after the first close - somebody
   // who wants the app parked in the tray wants to see that it is.
@@ -720,8 +737,8 @@ ipcMain.handle('save-diagnostics', async (event, dir, activity) => {
 
   let gpu = null;
   try { gpu = guards.driverNames(await guards.gpuInfo()); } catch { /* advice only */ }
-  const { text } = diagnostics.report({
-    gameDir: dir, exeDir, userData,
+  const { text, sources } = diagnostics.report({
+    gameDir: dir, exeDir, userData, approvedSources: found,
     facts: {
       app: app.getVersion(), electron: process.versions.electron, platform: `${process.platform} ${os.release()}`,
       gpu, game: path.basename(dir), 'game folder': dir, 'executable folder': exeDir,
@@ -738,7 +755,7 @@ ipcMain.handle('save-diagnostics', async (event, dir, activity) => {
   if (picked.canceled || !picked.filePath) return { ok: false, cancelled: true };
   try {
     await fs.promises.writeFile(picked.filePath, text, 'utf8');
-    return { ok: true, file: picked.filePath, count: found.length };
+    return { ok: true, file: picked.filePath, count: sources.length };
   } catch (error) {
     return { ok: false, message: error.message };
   }
@@ -892,7 +909,10 @@ ipcMain.handle('library', async () => {
   const hidden = new Set(state.hidden.map((d) => d.toLowerCase()));
   lastGames = dedupe(games)
     .filter((g) => !hidden.has(path.resolve(g.dir).toLowerCase()))
-    .map((g) => ({
+    .map((g) => {
+      const owner = claimArtwork(g.dir,g.name,g.launcher === 'Steam' ? g.id : null,true);
+      const record = artworkRecord(owner);
+      return {
       key: keyFor(g.dir),
       launcher: g.launcher,
       // Steam records the app id, so its games never need a name search.
@@ -900,13 +920,13 @@ ipcMain.handle('library', async () => {
       name: g.name,
       dir: g.dir,
       poster: posterUrl(g, state),
-      tile: cachedTile(g.dir),
-      hero: artCache.usable(state.art?.[keyFor(g.dir)], onDisk).hero || null,
+      tile: cachedTile(record) || localArtworkUrl(g.artwork?.tile),
+      hero: artCache.usable(record, onDisk).hero || localArtworkUrl(g.artwork?.hero),
       // Whatever the last scan found, so cards can render before rescanning.
       cached: state.scans[keyFor(g.dir)] && state.scans[keyFor(g.dir)].rules === SCAN_RULES
         ? state.scans[keyFor(g.dir)]
         : null
-    }));
+    }; });
   // Browsing the library is read-only; repairs belong to explicit apply operations.
   return lastGames;
 });
@@ -917,7 +937,7 @@ ipcMain.handle('scan', async (_event, dir) => {
   const generation = libraryGeneration;
   const key = keyFor(dir);
   try {
-    const scan = await inspections().run('scan', dir);
+    const scan = await inspections().run('scan', dir, { userDataDir: app.getPath('userData') });
     let dlss = scan.primaryDlss;
     if (!dlss && scan.chosen && scan.chosen.bitness === 32) {
       const hostDlss = path.join(path.dirname(scan.chosen.path), 'host64', 'nvngx_dlss.dll');
@@ -1144,11 +1164,8 @@ function enableAddon(exeDir, addonName) {
   const ini = path.join(exeDir, 'ReShade.ini');
   if (!fs.existsSync(ini)) return;
   const text = fs.readFileSync(ini, 'utf8');
-  const stem = addonName.replace(/\.addon(64)?$/i, '');
-  const match = text.match(/^DisabledAddons=(.*)$/m);
-  if (match && match[1].toLowerCase().includes(stem.toLowerCase())) {
-    fs.writeFileSync(ini, text.replace(/^DisabledAddons=.*$/m, 'DisabledAddons='), 'utf8');
-  }
+  const updated = require('./src/core/feeder-config').enableAddons(text, [addonName]);
+  if (updated !== text) fs.writeFileSync(ini, updated, 'utf8');
 }
 
 ipcMain.handle('window', (_event, action) => {
@@ -1289,78 +1306,184 @@ const onDisk = url => {
   if (typeof url !== 'string' || !url.startsWith('file:')) return false;
   try { return fs.existsSync(fileURLToPath(url)); } catch { return false; }
 };
-const tileRequests = new Map();
-const tileRetryAfter = new Map();
-async function fetchHomeTile(dir, name, appid) {
-  const existing = cachedTile(dir);
-  if (existing) return { tile: existing };
-  const file = tileFile(dir);
-  if (tileRequests.has(file)) return tileRequests.get(file);
-  if (Date.now() < (tileRetryAfter.get(file) || 0)) return {};
-  const urls = art.tileUrls(name, appid || loadState().art?.[keyFor(dir)]?.appid);
-  if (!urls.length) return {};
-  const generation = libraryGeneration;
+const artworkRequests = new Map();
+const artworkLookups = new Map();
+function claimArtwork(dir, name, appid, discovered = false) {
+  const key = keyFor(dir), identity = artCache.sourceIdentity(name,appid);
+  if (!discovered) {
+    const known = lastGames.find(game => game.key === key);
+    // A delayed renderer request cannot undo a newer library discovery.
+    if (known && artCache.sourceIdentity(known.name,known.appid) !== identity) return null;
+  }
+  let owner = artworkOwners.get(key);
+  if (!owner || owner.identity !== identity || owner.generation !== libraryGeneration) {
+    owner = {key,identity,generation:libraryGeneration,sequence:++artworkOwnerSequence};
+    artworkOwners.set(key,owner);
+  }
+  return owner;
+}
+function currentArtwork(owner) {
+  return owner && owner.generation === libraryGeneration && artworkOwners.get(owner.key) === owner;
+}
+function artworkRecord(owner) {
+  if (!currentArtwork(owner)) return null;
+  const record = loadState().art?.[owner.key];
+  return artCache.matchesIdentity(record,owner.identity) ? record : null;
+}
+function artworkRequestKey(owner, kind) { return `${owner.generation}:${owner.key}:${owner.sequence}:${kind}`; }
+function rememberArtwork(owner, patch, attempted = {}) {
+  if (!currentArtwork(owner)) return {};
+  const latest = loadState();
+  latest.art ||= {};
+  // Cover and banner may finish in either order. Merge against the live index,
+  // never the snapshot taken before a network request.
+  const previous = artworkRecord(owner) || {};
+  const record = {...previous, ...patch, rules:ART_RULES, fetchedAt:Date.now(),
+    sourceIdentity:owner.identity,
+    attempted:{...previous.attempted, ...attempted}};
+  latest.art[owner.key] = record;
+  // saveState reloads the last published index on failure. Only expose an
+  // image once its index entry is committed; the old entry remains usable.
+  return saveState(latest) ? record : artworkRecord(owner) || {};
+}
+function artworkLookup(name, appid, owner, details = false) {
+  const requestKey = artworkRequestKey(owner,details ? 'details' : 'images');
+  if (artworkLookups.has(requestKey)) return artworkLookups.get(requestKey);
+  const pending = Promise.resolve().then(() => currentArtwork(owner)
+    ? art.look(name, appid || artworkRecord(owner)?.appid, {details}) : null);
+  artworkLookups.set(requestKey, pending);
+  pending.finally(() => artworkLookups.delete(requestKey)).catch(() => {});
+  return pending;
+}
+async function downloadArtwork(url, file, owner) {
+  if (!url) return null;
+  const tmp = file + '.' + crypto.randomUUID() + '.tmp';
+  try {
+    await art.download(url, tmp);
+    if (!currentArtwork(owner)) return null;
+    // Distinct bytes get distinct cache paths. Replacing a fixed filename
+    // before saving library.json could make an old identity point at a new
+    // game's image if the index cannot be saved (for example, a full disk).
+    const fingerprint = crypto.createHash('sha256').update(fs.readFileSync(tmp)).digest('hex');
+    const published = file.replace(/\.jpg$/, `-${fingerprint}.jpg`);
+    fs.renameSync(tmp, published);
+    return `${pathToFileURL(published).href}?v=${fs.statSync(published).mtimeMs}`;
+  } finally { fs.rmSync(tmp, {force:true}); }
+}
+function artworkMetadata(hit, full = false) {
+  if (!hit) return {};
+  // A fast image request has no optional store metadata. Do not erase details
+  // collected by an older client or a simultaneous full lookup.
+  return Object.fromEntries(Object.entries(hit).filter(([key,value]) =>
+    !['cover','hero','tile','attempted','sourceIdentity'].includes(key) &&
+    (full || (value != null && (!Array.isArray(value) || value.length)))));
+}
+function reusableArtwork(record, kind, options = {}) {
+  // Only an exact URL owned by this identity can invalidate a positive cache.
+  // Explicit retry bypasses a negative result, never a usable image.
+  if (typeof options?.invalidUrl === 'string' && record?.[kind] === options.invalidUrl) return false;
+  if (options?.retry === true && !onDisk(record?.[kind])) return false;
+  return artCache.reusableImage(record,kind,onDisk);
+}
+async function fetchArtworkPart(dir, name, appid, kind, owner, knownHit, options = {}) {
+  if (!currentArtwork(owner)) return {};
+  const key = owner.key, requestKey = artworkRequestKey(owner,kind);
+  const cached = artworkRecord(owner);
+  if (reusableArtwork(cached,kind,options)) return {...cached,...artCache.usable(cached,onDisk)};
+  if (artworkRequests.has(requestKey)) return artworkRequests.get(requestKey);
   const pending = (async () => {
-    const tmp = file + '.' + crypto.randomUUID() + '.tmp';
+    let hit, image = null, error;
     try {
-      for (const url of urls) {
-        try { await art.download(url, tmp); }
-        catch { continue; }
-        if (libraryGeneration !== generation) return {};
-        fs.renameSync(tmp, file);
-        tileRetryAfter.delete(file);
-        return { tile: pathToFileURL(file).href };
+      hit = knownHit === undefined ? await artworkLookup(name,appid,owner) : knownHit;
+      if (!currentArtwork(owner)) return {};
+      const file = path.join(app.getPath('userData'),'art',key+`-${kind}.jpg`);
+      const tried = new Set();
+      const grab = async url => {
+        if (!url || tried.has(url) || !currentArtwork(owner)) return null;
+        tried.add(url);
+        try { return await downloadArtwork(url,file,owner); }
+        catch (e) { error = e.message; return null; }
+      };
+      image = await grab(hit?.[kind+'Url']);
+      if (!image && kind === 'hero') {
+        image = await grab(hit?.heroFallbackUrl);
+        if (!image && hit?.appid && art.heroFallbackUrl && currentArtwork(owner))
+          image = await grab(await art.heroFallbackUrl(hit.appid));
       }
-      tileRetryAfter.set(file, Date.now() + 10 * 60 * 1000);
-      return {};
-    } finally {
-      fs.rmSync(tmp, { force: true });
-    }
+    } catch (e) { error = e.message; }
+    if (!currentArtwork(owner)) return {};
+    const previous = artCache.usable(artworkRecord(owner),onDisk);
+    const record = rememberArtwork(owner,{...artworkMetadata(hit),[kind]:image || previous[kind] || null},{[kind]:Date.now()});
+    return {...record,...artCache.usable(record,onDisk),...(error && !image ? {error} : {})};
   })();
-  tileRequests.set(file, pending);
+  artworkRequests.set(requestKey,pending);
   try { return await pending; }
-  finally { tileRequests.delete(file); }
+  finally { artworkRequests.delete(requestKey); }
+}
+async function fetchHomeTile(dir, name, appid, owner, options = {}) {
+  if (!currentArtwork(owner)) return {};
+  const cached = artworkRecord(owner), existing = cachedTile(cached);
+  if (existing && reusableArtwork(cached,'tile',options)) return { tile: existing };
+  const file = tileFile(dir), requestKey = artworkRequestKey(owner,'tile');
+  if (artworkRequests.has(requestKey)) return artworkRequests.get(requestKey);
+  if (reusableArtwork(cached,'tile',options)) return {};
+  const pending = (async () => {
+    let hit;
+    try {
+      let urls = art.tileUrls(name, appid || cached?.appid);
+      if (!urls.length) {
+        hit = await artworkLookup(name,appid,owner);
+        urls = art.tileUrls(name,hit?.appid);
+      }
+      for (const url of urls) {
+        if (!currentArtwork(owner)) return {};
+        try {
+          const tile = await downloadArtwork(url,file,owner);
+          if (tile) {
+            const record = rememberArtwork(owner,{...artworkMetadata(hit),tile},{tile:Date.now()});
+            const published = cachedTile(record);
+            return published ? {tile:published} : {};
+          }
+        } catch { /* Try the next official artwork source. */ }
+      }
+    } catch { /* A missing lookup should be cached just like a missing image. */ }
+    const previous = cachedTile(artworkRecord(owner));
+    rememberArtwork(owner,{...artworkMetadata(hit),tile:previous},{tile:Date.now()});
+    return previous ? {tile:previous} : {};
+  })();
+  artworkRequests.set(requestKey, pending);
+  try { return await pending; }
+  finally { artworkRequests.delete(requestKey); }
 }
 
-ipcMain.handle('art-fetch', async (_event, dir, name, appid, kind) => {
-  if (kind === 'tile') return fetchHomeTile(dir, name, appid);
-  const generation = libraryGeneration;
-  const state = loadState();
-  const key = keyFor(dir);
-  const cached = state.art && state.art[key];
-  if (artCache.reusable(cached, onDisk)) return { ...cached, ...artCache.usable(cached, onDisk) };
-
-  const remember = record => {
-    if (generation !== libraryGeneration) return record;
-    const latest = loadState();
-    latest.art = latest.art || {};
-    latest.art[key] = record;
-    saveState(latest);
-    return record;
-  };
-  const previous = artCache.usable(cached, onDisk);
-  const miss = () => remember({ ...cached, ...previous, rules: ART_RULES, fetchedAt: Date.now() });
-
-  try {
-    const hit = await art.look(name, appid);
-    if (!hit) return miss();
-
-    const dest = path.join(app.getPath('userData'), 'art');
-    const record = { ...hit, cover: null, hero: null, rules: ART_RULES, fetchedAt: Date.now() };
-    const grab = async (url, suffix) => {
-      if (!url) return null;
-      try { return pathToFileURL(await art.download(url, path.join(dest, key + suffix))).href; }
-      catch { return null; }
-    };
-    record.cover = previous.cover || await grab(hit.coverUrl, '-cover.jpg');
-    // A few older apps have no hero image; the store header is the same shape.
-    record.hero = previous.hero || await grab(hit.heroUrl, '-hero.jpg');
-    if (!record.hero && hit.heroFallbackUrl) record.hero = await grab(hit.heroFallbackUrl, '-hero.jpg');
-
-    return remember(record);
-  } catch (err) {
-    return { ...miss(), error: err.message };
+ipcMain.handle('art-fetch', async (_event, dir, name, appid, kind, options = {}) => {
+  options = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  const owner = claimArtwork(dir,name,appid);
+  if (!owner) return {};
+  const cached = artworkRecord(owner);
+  if (cached && !cached.sourceIdentity) {
+    cached.sourceIdentity = owner.identity;
+    saveState(loadState());
   }
+  if (kind === 'tile') return fetchHomeTile(dir,name,appid,owner,options);
+  if (kind === 'cover' || kind === 'hero') return fetchArtworkPart(dir,name,appid,kind,owner,undefined,options);
+  const complete = !cached?.attempted || (cached.attempted.cover != null && cached.attempted.hero != null && cached.detailsFetchedAt != null);
+  if (complete && artCache.reusable(cached, onDisk)) return { ...cached, ...artCache.usable(cached, onDisk) };
+  const requestKey = artworkRequestKey(owner,'all');
+  if (artworkRequests.has(requestKey)) return artworkRequests.get(requestKey);
+  const pending = (async () => {
+    let hit;
+    try { hit = await artworkLookup(name,appid,owner,true); }
+    catch { hit = null; }
+    if (!currentArtwork(owner)) return {};
+    await Promise.all(['cover','hero'].map(part => fetchArtworkPart(dir,name,appid,part,owner,hit)));
+    if (!currentArtwork(owner)) return {};
+    const record = rememberArtwork(owner,{...artworkMetadata(hit,true),detailsFetchedAt:Date.now()});
+    return {...record,...artCache.usable(record,onDisk)};
+  })();
+  artworkRequests.set(requestKey,pending);
+  try { return await pending; }
+  finally { artworkRequests.delete(requestKey); }
 });
 
 // ---------- installing ----------
@@ -1489,7 +1612,8 @@ ipcMain.handle('details', async (_event, dir, priority) => {
     optiscaler: scan.install && scan.install.optiscaler,
     recommendedRoute: installRoutes.recommendedRoute(scan),
     exes: scan.exeCandidates.map(e => {
-      const capabilities = { hasNativeDlss: e.hasNativeDlss ?? hasNativeDlss, hasNativeUpscaler: e.hasNativeUpscaler ?? hasNativeUpscaler };
+      const capabilities = { hasNativeDlss: e.hasNativeDlss ?? hasNativeDlss, hasNativeUpscaler: e.hasNativeUpscaler ?? hasNativeUpscaler,
+        hasNativeFg:e.hasNativeFg ?? installRoutes.nativeFgPresent(scan) };
       return {
         rel: e.rel, path: e.path, apiLabel: e.apiLabel, api: e.api,
         bitness: e.bitness, size: e.size, via: e.via, emulator: e.emulator,
@@ -1609,6 +1733,12 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
 
   const send = (e) => { if (!previewFs.active()) event.sender.send('job', { ...e, dir }); };
   await guards.assertGameClosed(dir, target.path);
+  if (route === 'encore') {
+    const accepted = await encoreConsent(dir,target.path);
+    if (!accepted) return {ok:false,cancelled:true};
+    return combinedManager.applyCombinedConfiguration(dir, {route,exePath:target.path,apiOverride:selection,
+      antiCheatAcknowledged:true,payloadDir:resolvePayloadRoot(),userDataDir:app.getPath('userData'),requirePayload:requireRuntime},send);
+  }
   await requireRuntime({kind:'install',route,target,scan});
   const p = payload();
   if (!p) return {ok:false,...payloadMissing()};
@@ -1856,7 +1986,7 @@ function resolvePayloadRoot() {
 }
 
 require('./src/hardware-ipc')({
-  ipcMain, screen, window: () => win, loadState, saveState, inspections,
+  ipcMain, screen, window: () => win, inspections,
   payloadRoot: resolvePayloadRoot, userData: () => app.getPath('userData')
 });
 
@@ -1877,8 +2007,7 @@ ipcMain.handle('enhanced-import-model', (_event, filePath, meta) => exclusiveMut
     const record = neuralModels.importNeuralModel(targetPath, app.getPath('userData'), meta || {});
     await components().importPackage({component:'dlss-nr',version:record.version,files:{'nvngx_dlssnr.dll':record.filePath},source:'手动导入'});
     const hw = await combinedManager.detectHardwareEnvironment();
-    const state = loadState();
-    const activeProfile = combinedManager.resolveHardwareProfile(state.hardwareProfile, hw.gpu.name, null, null, hw.gpu.vramTotalMB);
+    const activeProfile = combinedManager.resolveHardwareProfile(null, hw.gpu.name, null, null, hw.gpu.vramTotalMB);
     const compat = neuralModels.evaluateModelGpuCompatibility(record, hw.gpu.name, activeProfile);
     return { ok: true, model: { ...record, compatibility: compat } };
   } catch (err) {
@@ -1898,17 +2027,21 @@ ipcMain.handle('enhanced-status', async (_event, dir, profileOverride, priority)
   }
 });
 
+async function encoreConsent(dir, exePath) {
+  if (!compatibility.hasAntiCheat(dir,exePath) || previewFs.active()) return true;
+  return (await dialog.showMessageBox(win,antiCheatWarning.dialogOptions(desktopLanguage(),dir,exePath))).response === 1;
+}
 ipcMain.handle('enhanced-apply', (event, dir, config, reviewToken) => exclusiveMutation(() => managedReview(event, dir, { kind: 'enhanced', config }, async (resolvedConfig) => {
   if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, message: '无效的游戏目录' };
   const state = loadState();
   const send = (e) => { if (!previewFs.active()) event.sender.send('job', { ...e, dir }); };
-  const scanForOverride = await scanGame(dir).catch(() => null);
+  const scanForOverride = await scanGame(dir,resolvedConfig?.exePath).catch(() => null);
   const chosenExe = scanForOverride?.chosen?.path;
   return combinedManager.applyCombinedConfiguration(dir, {
-    defaultHardwareProfile: state.hardwareProfile,
     apiOverride: chosenExe ? apiPreference(state, dir, chosenExe) : 'auto',
     reshadeProxy: chosenExe ? reshadeProxyPreference(state, dir, chosenExe) : 'dxgi',
     ...resolvedConfig,
+    antiCheatAcknowledged:resolvedConfig?.route === 'encore',
     payloadDir: resolvePayloadRoot(),
     userDataDir: app.getPath('userData'),
     requirePayload: requireRuntime
@@ -1924,7 +2057,7 @@ async function readLibraryComponents(dir) {
   try {
     const result = await components().list(dir);
     result.updates = updates().status();
-    result.runtimePacks = runtimes().list();
+    result.runtimePacks = runtimes().list(result.packages);
     if (dir) {
       result.inventory = await inspectInventory(dir);
       result.rollback = backends.readManifest(dir)?.componentHistory?.at(-1) || null;
@@ -1956,16 +2089,30 @@ ipcMain.handle('library-check', async () => {
   try { return await updates().check(); }
   catch (error) { return { ok: false, code: error.code, message: error.message }; }
 });
-let libraryTransferSender;
-ipcMain.handle('library-download', (event, id) => exclusiveMutation(async () => {
-  await components().init();
-  libraryTransferSender = event.sender;
-  const updater = updates();
-  updater.onProgress = p => { if (!event.sender.isDestroyed()) event.sender.send('library-progress', p); };
-  try { return await updater.download(id); }
-  finally { updater.onProgress = () => {}; libraryTransferSender = null; }
-}));
-ipcMain.handle('library-cancel', event => { if (libraryTransferSender === event.sender) return updates().cancel(); });
+let libraryTransfer;
+ipcMain.handle('library-download', (event, id) => {
+  const transfer = {sender:event.sender, cancelled:false};
+  // Reserve cancellation before the mutation waits for pending catalog reads.
+  // A rejected competing request must neither replace nor clear this owner.
+  if (!mutationBusy) libraryTransfer = transfer;
+  return exclusiveMutation(async () => {
+    if (transfer.cancelled) return {ok:false, cancelled:true};
+    const updater = updates();
+    try {
+      await components().init();
+      // First-use seeding can also outlive a cancellation from the row button.
+      if (transfer.cancelled) return {ok:false, cancelled:true};
+      updater.onProgress = p => { if (!event.sender.isDestroyed()) event.sender.send('library-progress', p); };
+      return await updater.download(id);
+    }
+    finally { updater.onProgress = () => {}; }
+  }).finally(() => { if (libraryTransfer === transfer) libraryTransfer = null; });
+});
+ipcMain.handle('library-cancel', event => {
+  if (libraryTransfer?.sender !== event.sender) return;
+  libraryTransfer.cancelled = true;
+  return updates().cancel();
+});
 function recordComponentChange(dir, result, action) {
   if (!result.ok || !result.historyManifest) return;
   saveOperation(dir, result.historyManifest, action, ({ params }) => {

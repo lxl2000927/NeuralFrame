@@ -41,7 +41,9 @@ const MFG_UNLOCKERS = Object.freeze({
     version: '1.7.0.1145',
     releaseDate: '2026-10-25',
     fileName: 'MFGUnlocker.dll',
-    relPath: 'enhanced/mfg/MFGUnlocker.dll',
+    // OptiScaler's ASI contract remains on its paired 1.7.0 build. Wuthering
+    // Waves selects the independent universal loader through engine-packages.
+    relPath: 'enhanced/mfg-optiscaler-170/MFGUnlocker.dll',
     size: 14445568,
     sha256: 'e6b6e6b70a6ed3af839c9647a32fc22660ae6b2d655062c5c072246c91fc10c7',
     supportedDlssg: ['310.9.0.0', '310.9.1.0', '310.9.16.0']
@@ -73,7 +75,7 @@ const TESTED_MFG_GAMES = Object.freeze([
 
 // 检测 GPU 对 NVIDIA DLSS-G 与 x3/x4 MFG 的底层硬件支持能力（支持笔记本 40 系、40 系桌面卡、50 系桌面卡三档）
 // 注意：遵循严格要求，x3/x4 在未经当前游戏运行时实测验证生效前，绝不提前标记为“已验证可用”！
-function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile = null) {
+function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile = null, standaloneEngine = null) {
   const arch = detectGpuArchitecture(gpuName);
   if (arch.code === 'blackwell') {
     return {
@@ -89,11 +91,31 @@ function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile
       supportedModes: ['off', 'x2', 'x3', 'x4'],
       modeBadges: {
         off: { status: 'verified', badge: '已验证可用' },
-        x2: { status: 'verified', badge: '已验证可用 (Blackwell 原生)' },
-        x3: { status: 'verified', badge: '已验证可用 (Blackwell 原生)' },
-        x4: { status: 'verified', badge: '已验证可用 (Blackwell 原生)' }
+        x2: { status: 'untested', badge: '原生支持（需游戏验证）' },
+        x3: { status: 'untested', badge: '原生支持（需游戏验证）' },
+        x4: { status: 'untested', badge: '原生支持（需游戏验证）' }
       },
-      summary: `${gpuName} (Blackwell 0x1B0 / sm_120) 原生支持第 5 代 Tensor Core 硬件 Flip Metering 与 NVIDIA DLSS-G x2/x3/x4 多帧生成，已启用零劫持原生直通模式。`
+      summary: `${gpuName} (Blackwell / sm_120) 原生支持多帧生成，无需解锁。插件用于倍率与动态模式控制；实际可用倍率仍取决于游戏、驱动和运行库，需进入游戏验证。`
+    };
+  }
+
+  // The standalone loader has a different hardware contract from the paired
+  // RenoDX Ada addon. Only a fingerprint-identified, integrated engine may use
+  // this experimental support assessment; a filename/version label is not enough.
+  if (['turing', 'ampere'].includes(arch.code) && standaloneEngine?.component === 'mfg-universal' &&
+      standaloneEngine.verified && standaloneEngine.compatible && /^1\.7\.[01](?:\.\d+)?$/.test(standaloneEngine.version)) {
+    return {
+      gpuName, driverVersion, hardwareProfile, architecture: arch,
+      hardwareOpticalFlow: false, hardwareFlipMetering: false,
+      nativeX2: false, nativeX3X4: false, unlockRequiredForX3X4: true,
+      supportedModes: ['off', 'x2', 'x3', 'x4'],
+      modeBadges: {
+        off: { status: 'verified', badge: '已验证可用' },
+        x2: { status: 'experimental', badge: '社区支持（需游戏验证）' },
+        x3: { status: 'experimental', badge: '社区支持（需游戏验证）' },
+        x4: { status: 'experimental', badge: '社区支持（需游戏验证）' }
+      },
+      summary: `${gpuName} (${arch.family}) 使用已识别的 MFG-Unlocker ${standaloneEngine.version} 独立路线。RTX 20 / 30 的 DLSS 多帧生成属于社区扩展，需兼容的 Streamline 接入、DLSS-G 运行库和驱动；实际倍率需进入游戏验证。`
     };
   }
 
@@ -113,13 +135,11 @@ function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile
       // 在未经当前游戏运行时实测确认前，x3/x4 标记为“实验性支持”，绝不提前虚标为“已验证可用”
       modeBadges: {
         off: { status: 'verified', badge: '已验证可用' },
-        x2: { status: 'verified', badge: '已验证可用 (原生 FG)' },
+        x2: { status: 'untested', badge: '原生支持（需游戏验证）' },
         x3: { status: 'experimental', badge: '实验性支持 (需运行时验证)' },
         x4: { status: 'experimental', badge: '实验性支持 (需运行时验证)' }
       },
-      summary: isDesktop40 && hardwareProfile === 'rtx40_desktop'
-        ? `${gpuName} (Ada Lovelace 0x190 / sm_89 桌面满血档) 具备桌面高带宽第 4 代光流加速器与硬件 Flip Metering：已启用 40 系桌面卡专属 V3 高锐度光流、Early DllMain 抢先注入与 Reflex 低延迟 x2/x3/x4 多倍补帧通道。`
-        : `${gpuName} (Ada Lovelace 0x190 / sm_89) 具备第 4 代光流加速器与硬件 Flip Metering：原生支持 x2 帧生成；x3/x4 需通过进程内 NGX 0x1B0 门控解锁与时序插值核函数修正实现，仅在运行时遥测确认生效后才标记为已验证可用。`
+      summary: `${gpuName} (Ada Lovelace / sm_89) 原生支持 x2 帧生成；x3/x4 使用社区组件的实验性支持，需兼容游戏和运行库。显卡能力不代表当前游戏已加载或生效。`
     };
   }
 
@@ -142,8 +162,8 @@ function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile
       x3: unavailable,
       x4: unavailable
     },
-    summary: unknown ? '显卡架构未识别，无法判断多帧生成支持情况。'
-      : `${gpuName} (${arch.family}) 不具备 Ada/Blackwell 原生 DLSS-G 硬件管线，不支持原生 NVIDIA 多帧生成（本程序严禁使用 FSR FG 冒充 NVIDIA MFG）。`
+    summary: unknown ? '显卡架构未识别，无法确认多帧生成能力；应用时不启用 Ada 专用修补。请先在设置中确认显卡检测结果。'
+      : `${gpuName} (${arch.family}) 不具备 Ada/Blackwell 原生 DLSS-G 硬件能力。社区方案须按具体组件、游戏输入与安装路线另行判断，不能仅凭档位确认支持。`
   };
 }
 
@@ -386,7 +406,8 @@ function readCurrentMfgConfiguration(exeDir) {
     const adaptiveProfile = Number(feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'AdaptiveQualityProfile') || 0);
     const isOff = enabled === '0' || enabled === 'false';
     const mult = isOff ? 1 : ([2, 3, 4].includes(forceMult) ? forceMult : 3);
-    const mfgStrategy = !temporalFix ? 'blackwell_native' : (adaptiveProfile === 2 ? 'ada_desktop_ultra' : 'ada_laptop_safe');
+    // Disabled Ada fixes do not establish the physical GPU architecture.
+    const mfgStrategy = !temporalFix ? 'native_controls' : (adaptiveProfile === 2 ? 'ada_desktop_ultra' : 'ada_laptop_safe');
     return {
       installed: !isOff,
       backend: 'renodx-mfgunlock',
@@ -450,8 +471,6 @@ async function inspectGameMfgStatus(gameDir, {
   const exePath = scan.chosen ? scan.chosen.path : null;
   const exeDir = exePath ? path.dirname(exePath) : gameDir;
 
-  const gpuSupport = evaluateMfgGpuSupport(gpuName, driverVersion, hardwareProfile);
-
   // 查找游戏中的 nvngx_dlssg.dll
   const dlssgFiles = scan.dlssFiles.filter((f) => /^nvngx_dlssg\.dll$/i.test(f.name));
   const exeDlssg = path.join(exeDir, 'nvngx_dlssg.dll');
@@ -489,7 +508,21 @@ async function inspectGameMfgStatus(gameDir, {
   };
 
   const wuwa = require('./wuthering-waves');
-  const proxy = exePath && wuwa.gameRoot(gameDir, exePath) && wuwa.inspectProxy(exeDir);
+  const protectedRoot = exePath && wuwa.gameRoot(gameDir, exePath);
+  const proxy = protectedRoot &&
+    wuwa.inspectProxy(exeDir, require('./backend-manager').readManifest(gameDir));
+  let gpuSupport = evaluateMfgGpuSupport(gpuName, driverVersion, hardwareProfile,
+    proxy?.mfg?.engine && { ...proxy.mfg.engine, component: 'mfg-universal' });
+  // Absence of an identified standalone engine is missing route evidence,
+  // not proof that every community solution is incompatible. Do not add
+  // supported modes or native capability before the bytes are recognized.
+  const pendingStandalone = Boolean(protectedRoot && ['turing', 'ampere'].includes(gpuSupport.architecture.code) &&
+    gpuSupport.modeBadges.x2.status === 'incompatible');
+  if (pendingStandalone) {
+    const pending = { status: 'untested', badge: '需校验独立组件' };
+    gpuSupport = { ...gpuSupport,
+      modeBadges: { ...gpuSupport.modeBadges, x2: pending, x3: pending, x4: pending } };
+  }
   const currentConfig = proxy?.mfg || readCurrentMfgConfiguration(exeDir);
   const conflicts = detectMfgInjectorConflicts(gameDir, exeDir, scan);
   const runtimeVerification = verifyMfgRuntimeStatus(gameDir, exeDir);
@@ -502,7 +535,12 @@ async function inspectGameMfgStatus(gameDir, {
   // 计算当前游戏的兼容性状态徽章（严守原则：未经测试实际生效绝不标为“已验证可用”）
   let status = 'untested';
   let statusBadge = '尚未测试';
-  if ((!gpuSupport.hardwareOpticalFlow && gpuSupport.architecture.code !== 'unknown') || conflicts.some((c) => c.severity === 'error')) {
+  if (conflicts.some((c) => c.severity === 'error')) {
+    status = 'incompatible';
+    statusBadge = '不兼容';
+  } else if (pendingStandalone) {
+    statusBadge = '独立方案待校验';
+  } else if (!gpuSupport.supportedModes.includes('x2') && gpuSupport.architecture.code !== 'unknown') {
     status = 'incompatible';
     statusBadge = '不兼容';
   } else if (currentConfig.mode === 'x2' && dlssgCheck.valid && gpuSupport.nativeX2) {
@@ -529,6 +567,8 @@ async function inspectGameMfgStatus(gameDir, {
     dlssg: dlssgCheck,
     streamline: streamlineStatus,
     currentConfig,
+    ...(proxy ? { engine: currentConfig.engine, advanced: currentConfig.advanced,
+      version: currentConfig.version, packageId: currentConfig.packageId } : {}),
     effectiveMultiplier: currentConfig.installed ? `${currentConfig.mode} (待进入游戏验证)` : '未启用 (1x)',
     runtimeVerification,
     conflicts,
@@ -552,12 +592,21 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
     payloadDir
   } = options;
 
+  // A preset controls tuning, not the GPU architecture. RTX 50 must never
+  // receive Ada patches merely because the user borrows a lower-memory preset.
+  // Without hardware evidence, leave architecture-specific patches disabled.
+  const gpuArchitecture = detectGpuArchitecture(options.gpuName || '');
+  const adaPatches = gpuArchitecture.code === 'ada';
+  const isBlackwellNative = gpuArchitecture.code === 'blackwell';
+
   if (!['off', 'x2', 'x3', 'x4'].includes(mode)) {
     throw Object.assign(new Error(`无效的 MFG 模式: ${mode}`), { code: 'errInvalidMfgMode' });
   }
 
-  const scan = require('./game-api').withGameApi(await scanGame(gameDir), options.apiOverride);
+  const scan = require('./game-api').withGameApi(await scanGame(gameDir, options.exePath), options.apiOverride);
   if (!scan.chosen) throw Object.assign(new Error('未在游戏目录中找到可执行文件'), { code: 'errNoExe' });
+  if (options.exePath && path.resolve(options.exePath).toLowerCase() !== path.resolve(scan.chosen.path).toLowerCase())
+    throw Object.assign(new Error('所选游戏程序已不在扫描列表中，请重新选择。'), { code: 'errSelectedExeMissing' });
   const exePath = scan.chosen.path;
   const exeDir = path.dirname(exePath);
   const bitness = scan.chosen.bitness || 64;
@@ -764,8 +813,9 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       iniText = feederConfig.setEarlyAddon(iniText, 'renodx-mfgunlock.addon64', true);
       let settingsPairs;
 
-      if (hardwareProfile === 'rtx50_desktop') {
-        // 档位 ③：RTX 50 系桌面卡 (Blackwell 0x1B0) 原生硬件补帧直通模式
+      if (!adaPatches) {
+        // Physical RTX 50 keeps native MFG; an unrecognized GPU uses the same
+        // conservative no-Ada-patch settings without claiming native support.
         // 严禁启用 Ada 40 系的 TemporalFix 和 BlackwellFrameworkKernels 补丁，保留 100% 原生第 5 代硬件 Flip Metering，仅注入倍率控制以兼容仅含 2x 菜单的老游戏
         settingsPairs = [
           ['OVERLAY', 'UiLanguage', 'zh-Hans'],
@@ -779,6 +829,8 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
           ['RenoDX.MFGUnlock', 'ForceFlipMeteringOff', '0'],
           ['RenoDX.MFGUnlock', 'ExperimentalAdaptiveQuality', '0'],
           ['RenoDX.MFGUnlock', 'AdaptiveQualityProfile', '0'],
+          ['RenoDX.MFGUnlock', 'AdaptiveQualityV3StabilityMode', '0'],
+          ['RenoDX.MFGUnlock', 'AdaptiveQualityV3InpaintMode', '0'],
           ['RenoDX.MFGUnlock', 'IntermediateScatterRetention', '0'],
           ['RenoDX.MFGUnlock', 'ValidatedWarpBlend', '0'],
           ['RenoDX.MFGUnlock', 'BoundaryArtifactMitigationMode', '0'],
@@ -872,13 +924,12 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         await apply.copyTracked(manifest, gameDir, licenseSrc, path.join(exeDir, 'OptiScaler', 'licenses', 'MFG-Unlocker-LICENSE.txt'), { kind: 'license' });
       }
 
-      const isBlackwellNative = hardwareProfile === 'rtx50_desktop';
       const universalConfig = JSON.stringify({
         enabled: true,
         multiplier,
         forceMultiplier: multiplier,
         maxCount: 4,
-        temporalFix: !isBlackwellNative,
+        temporalFix: adaPatches,
         blackwellNative: isBlackwellNative,
         hardwareProfile,
         logTelemetry: true
@@ -890,7 +941,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         optiText = feederConfig.setIni(optiText, 'Plugins', 'LoadAsiPlugins', 'true');
         optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'Enabled', 'true');
         optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'ForceMultiplier', String(multiplier));
-        optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'TemporalFix', isBlackwellNative ? 'false' : 'true');
+        optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'TemporalFix', adaPatches ? 'true' : 'false');
         await apply.writeTracked(manifest, gameDir, optiIniPath, optiText, { kind: 'config' });
       }
       onLog({ code: 'mfgConfigured', params: { backend: 'mfg-unlocker-asi', mode, multiplier, hardwareProfile } });
@@ -917,7 +968,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       backend: selectedBackend,
       runtimeStack: effectiveStack,
       hardwareProfile,
-      // 安装完成时尚未进入游戏运行，40系 x3/x4 标记为 experimental，50系原生与 x2 标记为 verified
+      // Installation and hardware capability are not runtime verification.
       status: capability.status,
       statusBadge: capability.badge
     };

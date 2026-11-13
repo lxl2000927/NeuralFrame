@@ -1,7 +1,8 @@
 'use strict';
 const fs=require('fs'),path=require('path'),crypto=require('crypto');
 const {DEFINITIONS,PROVIDERS,RANKFTW_NR_SFV2,RANKFTW_NR_310916}=require('./component-definitions');
-const {read,safe,hash,digest,fail}=require('./component-library');
+const {safe,hash,digest,fail}=require('./component-library');
+const {componentCompatibility,modelRequirements}=require('./component-compatibility');
 const {downloadAsset,sweepPartials}=require('./asset-download');
 const journal=require('./file-journal');
 const MB=1024*1024;
@@ -14,6 +15,20 @@ const providersByRepo = new Map();
 for (const [provider, {repo}] of Object.entries(PROVIDERS)) {
   if (!providersByRepo.has(repo)) providersByRepo.set(repo, []);
   providersByRepo.get(repo).push(provider);
+}
+
+const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+function validIndex(index) {
+  return record(index) && Array.isArray(index.candidates) && index.candidates.every(candidate =>
+    record(candidate) && typeof candidate.id === 'string' && typeof candidate.provider === 'string' &&
+    ['component', 'name', 'tag', 'url', 'sha256'].every(key => candidate[key] == null || typeof candidate[key] === 'string')) &&
+    Array.isArray(index.errors) && index.errors.every(error =>
+      record(error) && typeof error.provider === 'string' && typeof error.message === 'string') &&
+    (index.etags === undefined || record(index.etags) && Object.values(index.etags).every(value => typeof value === 'string'));
+}
+function emptyIndex(damaged = false) {
+  return {sourcesVersion:3, checkedAt:null, nextCheckAt:0, candidates:[], etags:{},
+    errors:damaged ? [{provider:'cache', message:'组件更新缓存损坏，请检查更新重建版本列表。'}] : []};
 }
 
 function rateLimitDeadline(response, now) {
@@ -100,10 +115,10 @@ function findCachedPackage(packages, candidate, pinned) {
   if (!candidate.sha256) return null;
   if (pinned) return packages.find(p => p.component === 'dlss-nr' &&
     p.files.some(f => f.rel === MODEL_NAME && f.sha256 === pinned.modelSha256));
-  const modelDigest = candidate.provider === MODEL_PROVIDER && candidate.name.toLowerCase() === MODEL_NAME ? candidate.sha256 : null;
+  const directFile = /\.(dll|addon64|addon32)$/i.test(candidate.name);
   return packages.find(p => p.component === candidate.component && (p.archiveSha256 === candidate.sha256 ||
     p.releaseArchives?.some(a => a.sha256 === candidate.sha256) ||
-    (modelDigest && p.files.some(f => f.rel === 'nvngx_dlssnr.dll' && f.sha256 === modelDigest))));
+    (directFile && p.files.length === 1 && p.files.some(f => f.rel.toLowerCase() === candidate.name.toLowerCase() && f.sha256 === candidate.sha256))));
 }
 async function unpack(file,dest,signal){let count=0,total=0;const names=new Set();await require('extract-zip')(file,{dir:dest,onEntry:entry=>{
   signal?.throwIfAborted();
@@ -117,14 +132,30 @@ async function mapFiles(root,component){const def=DEFINITIONS[component],all=fil
   if(!def.files.length){for(const f of all){if(/\.(dll|ini|txt|md)$/i.test(f))files[path.relative(root,f)]=f;}if(!all.some(f=>/^OptiScaler\.dll$/i.test(path.basename(f))))throw fail('未找到 OptiScaler.dll');return files;}
   for(const name of def.files){const matches=all.filter(f=>path.basename(f).toLowerCase()===name.toLowerCase());if(!matches.length)throw fail('组件包缺少：'+name);
     const hashes=await Promise.all(matches.map(digest));if(new Set(hashes).size!==1)throw fail('组件包内存在多个不同版本：'+name);files[name]=matches[0];}
+  for(const name of def.optionalFiles || []){const matches=all.filter(f=>path.basename(f).toLowerCase()===name.toLowerCase());if(!matches.length)continue;
+    const hashes=await Promise.all(matches.map(digest));if(new Set(hashes).size!==1)throw fail('组件包内存在多个不同版本：'+name);files[name]=matches[0];}
   return files;
 }
 class ComponentUpdates{
   constructor(library,{fetcher=globalThis.fetch,onProgress=()=>{}}={}){this.lib=library;this.fetcher=fetcher;this.onProgress=onProgress;this.cache=path.join(library.root,'updates.json');this.busy=false;this.controller=null;}
   cancel(){this.controller?.abort();return{ok:true};}
   readIndex(){
-    const index = read(this.cache,{checkedAt:null,candidates:[],errors:[]});
-    if (index.sourcesVersion === 2) return index;
+    let text;
+    try { text = fs.readFileSync(this.cache, 'utf8'); }
+    catch (error) {
+      if (error.code === 'ENOENT') return emptyIndex();
+      throw fail('无法读取组件更新缓存：' + path.basename(this.cache));
+    }
+    let index;
+    try { index = JSON.parse(text); }
+    catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return emptyIndex(true);
+    }
+    // This is replaceable release metadata, not the installed package catalog.
+    // Keep viewing read-only; the next explicit check rebuilds the damaged cache.
+    if (!validIndex(index)) return emptyIndex(true);
+    if (index.sourcesVersion === 3) return index;
     // A cached Enhanced release must not appear or delay the first check after upgrading.
     return {...index, nextCheckAt:index.errors.some(e => e.message === 'GitHub 请求已限流') ? index.nextCheckAt : 0,
       candidates:index.candidates.filter(c => Object.hasOwn(PROVIDERS,c.provider)),
@@ -134,14 +165,25 @@ class ComponentUpdates{
   withLocalModels(index) {
     const packages = this.lib.catalog().packages;
     const {MODEL_DATABASE} = require('./neural-models');
+    const runtimePacks = require('./runtime-catalog.json').packs;
     return {...index, candidates:index.candidates.map(c => {
       const pinned = pinnedModelFor(c);
       const cached = findCachedPackage(packages,c,pinned);
-      if (c.component !== 'dlss-nr') return {...c, cachedPackageId:cached?.id};
-      const dllHash = c.name.toLowerCase() === MODEL_NAME ? c.sha256 :
+      const compatibility = componentCompatibility(cached || c);
+      const engine = ['encore','mfg-universal'].includes(c.component) ? require('./engine-packages').describe(c.component,cached || c) : undefined;
+      const dllHash = c.name?.toLowerCase() === MODEL_NAME ? c.sha256 :
         pinned?.modelSha256 || cached?.files.find(file => file.rel === MODEL_NAME)?.sha256;
+      const direct = DEFINITIONS[c.component]?.files;
+      const fingerprints = cached?.files || (dllHash ? [{rel:MODEL_NAME,sha256:dllHash}] :
+        direct?.length === 1 && direct[0].toLowerCase() === c.name?.toLowerCase() && c.sha256 ? [{rel:direct[0],sha256:c.sha256}] : []);
+      const paired = runtimePacks.find(pack=>pack.component===c.component &&
+        (fingerprints.length ? fingerprints.every(f=>pack.files.some(file=>path.basename(file.path).toLowerCase()===f.rel.toLowerCase() && file.sha256===f.sha256)) :
+          !!c.sha256 && pack.sha256===c.sha256));
+      const metadata = {cachedPackageId:cached?.id, compatibility, engine, pairedPackId:paired?.id};
+      if (c.component !== 'dlss-nr') return {...c, ...metadata};
       const catalogModelId = dllHash ? MODEL_DATABASE.find(model => model.sha256 === dllHash)?.id : undefined;
-      return {...c, cachedPackageId:cached?.id, downloadId:pinned?.id, catalogModelId};
+      return {...c, ...metadata, downloadId:pinned?.id, catalogModelId,
+        modelRequirements:modelRequirements({...c,dllSha256:dllHash})};
     })};
   }
   status(){return this.withLocalModels(this.readIndex());}
@@ -203,7 +245,7 @@ class ComponentUpdates{
       }
     }
     const now = Date.now();
-    const result = {sourcesVersion:2, checkedAt:new Date(now).toISOString(), nextCheckAt:Math.max(now + CHECK_INTERVAL_MS, limitedUntil), candidates:items, errors};
+    const result = {sourcesVersion:3, checkedAt:new Date(now).toISOString(), nextCheckAt:Math.max(now + CHECK_INTERVAL_MS, limitedUntil), candidates:items, errors};
     await journal.atomicJson(this.cache, {...result, etags});
     return {ok:true, ...this.withLocalModels(result)};
   }

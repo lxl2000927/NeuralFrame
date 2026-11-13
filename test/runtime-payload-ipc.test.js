@@ -7,7 +7,7 @@ test('lightweight IPC prepares cache before real native preview, then installs a
  const exe=path.join(game,'Game.exe');writePe(exe,{bitness:64,text:'D3D12CreateDevice',size:131072});
  const original=path.join(game,'nvngx_dlss.dll');writePe(original,{bitness:64,version:[2,3,0,0]});const before=fs.readFileSync(original);
  const main=path.resolve(__dirname,'../main.js'),requireReal=createRequire(main),handlers=new Map();
- const cache=new RuntimePayload(profile,{bundledRoot:path.resolve(__dirname,'../dist/runtime-bootstrap'),legacyRoots:[path.resolve(__dirname,'../payload')],fetcher:()=>{throw Error('offline');}});
+ const cache=new RuntimePayload(profile,{bundledRoot:path.resolve(__dirname,'../dist/runtime-bootstrap'),legacyRoots:[require('./fixtures/payload').root],fetcher:()=>{throw Error('offline');}});
  const stubs={electron:{app:{isPackaged:true,setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>profile},ipcMain:{handle:(n,f)=>handlers.set(n,f)},dialog:{showMessageBox:async()=>({response:0})}},'./src/core/install-guards':{assertGameClosed:async()=>{},gpuInfo:async()=>[],driverNeuralFault:()=>false}};
  const packagedProcess=Object.create(process,{resourcesPath:{value:path.join(root,'resources')}});
  const context=vm.createContext({require:n=>stubs[n]||requireReal(n),__dirname:path.dirname(main),process:packagedProcess,AbortController,Buffer,console,testCache:cache});vm.runInContext(fs.readFileSync(main,'utf8'),context,{filename:main});vm.runInContext('runtimeCache=testCache',context);

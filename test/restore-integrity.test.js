@@ -36,7 +36,18 @@ test('full restore preserves an untracked localization add-on beside the game an
   assert.equal(fs.readFileSync(hostFile, 'utf8'), 'custom host translation');
 });
 
+test('enabling one add-on retains disabled plugins with similar names and restores the original list', async t => {
+  const {game,manifest} = fixture(t), file = path.join(game,'ReShade.ini');
+  const original = '[ADDON]\r\nDisabledAddons=renodx-dlss,renodx-dlss5-extra.addon64,third-party,dlss5-zh-cn\r\n';
+  fs.writeFileSync(file,original);
+  await journal.transaction(game,()=>core.enableAddonInIni(game,'renodx-dlss.addon64',()=>{},game,manifest));
+  assert.equal(fs.readFileSync(file,'utf8'),'[ADDON]\r\nDisabledAddons=renodx-dlss5-extra.addon64,third-party,dlss5-zh-cn\r\n');
+  await core.restore(game);
+  assert.equal(fs.readFileSync(file,'utf8'),original);
+});
+
 test('localization deployment and full restore retain originals and remove managed additions', async t => {
+  require('./fixtures/payload').use(t);
   const {game, manifest} = fixture(t);
   const host = path.join(game, 'host64');
   const original = path.join(host, 'dlss5-zh-cn.addon64');

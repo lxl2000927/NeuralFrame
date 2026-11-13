@@ -80,11 +80,24 @@ export type StatusDiagnostics = {
   };
 };
 type NativeRuntimeFile = { rel: string; version: string | null };
+export type EngineInfo = {
+  version?: string; packageId?: string | null; recommended?: boolean; recommendedVersion?: string;
+  verified?: boolean; compatible?: boolean; reason?: string; sha256?: string;
+  capabilities?: { diagnosticLogging?: boolean; nrPassPlacement?: boolean; dlssCustomScaleMin?: number; [key: string]: unknown };
+};
+export type MfgAdvanced = {
+  model?: number; structure?: number; tone?: number; characterMask?: boolean; character?: number; diagnosticLogging?: boolean;
+};
 export type Status = {
+  installedRoute?: string | null;
+  encore?: {available:boolean; reason?:string | null; version:string; installed:boolean; filesPresent?:boolean;
+    exePath?:string; proxy?:string; error?:string; hasNativeDlss:boolean; settings:EncoreSettings;
+    engine?:EngineInfo; recommendedVersion?:string; capabilities?:EngineInfo['capabilities']};
   standaloneProfile?: { target: ProxySettings; saved: ProxySettings | null; adapterVersion: number | null } | null;
   launcherProtected?: boolean;
   nativeRuntimeStack?: {
     indexAvailable: boolean;
+    indexMissing?: boolean;
     sr?: NativeRuntimeFile;
     fg?: NativeRuntimeFile;
     streamline?: NativeRuntimeFile;
@@ -118,6 +131,7 @@ export type Status = {
     runtimeStack?: string;
   };
   mfg?: {
+    engine?: EngineInfo; advanced?: MfgAdvanced; version?: string; packageId?: string;
     status?: string;
     statusBadge?: string;
     dlssg?: { version?: string; exists?: boolean; valid?: boolean };
@@ -152,6 +166,7 @@ export type Details = {
 export type GameExecutable = {
   path: string; rel: string; api: string; apiLabel: string; bitness: number; size: number;
   apiOverride?: string; reshadeProxy?: string; hasNativeDlss?: boolean; hasNativeUpscaler?: boolean;
+  hasNativeFg?: boolean;
   emulator?: { name: string; system?: string; hint?: string }; installIssue?: string;
   antiCheatWarning?: boolean;
   antiCheatComponents?: string[];
@@ -163,6 +178,12 @@ export type Draft = {
   hardwareProfile: string;
   runtimeStack: string;
   hdrCompatibility: boolean;
+};
+export type EncoreSettings = {
+  mfgMode:string; neuralMode:string; neuralModelId:string; upscaling:string; motion:string;
+  nrResolution:string; nrScale:number; nrPasses:number;
+  nrPass1Placement?:string; nrPass2Placement?:string; nrPass3Placement?:string; nrPass4Placement?:string;
+  dlssRenderScale?:string; dlssCustomScale?:number;
 };
 export type RuntimeItem = {
   requestedMode?: string;
@@ -251,6 +272,13 @@ export type Progress = {
   count?: number;
   id?: string;
 };
+export type ComponentCompatibility = {
+  assessment?: "supported" | "verify" | "unsupported" | "route" | "route-version" | "internal";
+  kind?: "selectable" | "route" | "pending" | "internal";
+  ready: boolean; label: string; reason: string;
+};
+export type ModelRequirements = {architectures: string[]; source: "fingerprint" | "catalog"};
+export type ComponentSource = {name: string; url?: string; kind?: "project" | "release"};
 export type Library = {
   ok: boolean;
   code?: string;
@@ -262,16 +290,31 @@ export type Library = {
     component: string;
     version: string;
     source: string;
+    releaseUrl?: string | null;
+    files?: {rel: string; sha256: string; size: number; version?: string | null}[];
     present: boolean;
-    compatibility: { ready: boolean; label: string; reason: string };
+    engine?: EngineInfo;
+    compatibility: ComponentCompatibility;
+    modelRequirements?: ModelRequirements;
   }[];
   warnings?: string[];
   runtimePacks: {
+    repository?: string;
+    upstreams?: ComponentSource[];
     id: string;
+    component: string;
+    packageIds?: string[];
+    compatibility: ComponentCompatibility;
+    modelRequirements?: ModelRequirements;
     name: string;
     version: string;
     size: number;
     downloaded: boolean;
+    engine?: EngineInfo;
+    url?: string;
+    sha256?: string;
+    files?: {path: string; sha256: string; size: number}[];
+    cacheRoot?: string;
   }[];
   profile?: { selected: Record<string, string> };
   inventory?: Inventory;
@@ -289,12 +332,19 @@ export type Updates = {
     name: string;
     size: number;
     repo: string;
+    releaseUrl?: string;
+    publishedAt?: string;
     provider?: string;
     downloadId?: string;
     cachedPackageId?: string;
+    pairedPackId?: string;
     catalogModelId?: string;
     downloadable: boolean;
     stale?: boolean;
+    sha256?: string | null;
+    compatibility?: ComponentCompatibility;
+    engine?: EngineInfo;
+    modelRequirements?: ModelRequirements;
   }[];
   errors: { provider: string; message: string }[];
 };
@@ -347,19 +397,22 @@ export interface Lab {
     groupGamesByStore?: boolean;
   }>;
   window(action: string): Promise<void>;
+  onWindowFocus?(fn: (focused: boolean) => void): () => void;
   library(): Promise<Game[]>;
   artFetch(
     dir: string,
     name: string,
     appid?: string | null,
-    kind?: "tile",
+    kind?: "tile" | "cover" | "hero",
+    options?: { retry?: boolean; invalidUrl?: string },
   ): Promise<{ cover?: string; hero?: string; tile?: string; error?: string }>;
   scan(dir: string): Promise<NonNullable<Game["cached"]>>;
   details(dir: string, priority?: "selection"): Promise<Details>;
   enhancedStatus(dir: string, profileId?: string, priority?: "selection"): Promise<Status>;
   enhancedApply(
     dir: string,
-    config: Partial<Draft>,
+    config: Partial<Draft> & {route?: "encore"; exePath?: string; apiOverride?: string; encore?: Partial<EncoreSettings>;
+      encorePackageId?:string; mfgPackageId?:string; mfgAdvanced?:MfgAdvanced; resetNeuralTuning?:boolean},
     token?: string,
   ): Promise<Result>;
   enhancedImportModel(filePath?: string, meta?: {expectedModelId: string}): Promise<Result & {model?: Model & {compatibility?: {status: string}}}>;
@@ -393,7 +446,7 @@ export interface Lab {
   removeFolder(dir: string): Promise<unknown>;
   launchGame(dir: string): Promise<Result>;
   open(dir: string): Promise<unknown>;
-  openProject(dest: string): Promise<unknown>;
+  openProject(dest: string | {componentSource: string}): Promise<unknown>;
   settings(): Promise<Settings>;
   setTheme(theme: string): Promise<unknown>;
   setLang(lang: string): Promise<string>;
@@ -427,8 +480,7 @@ export interface Lab {
   /* ---- 补齐：preload 已暴露、UI 此前未声明的接口 ---- */
   checkUpdate(refresh?: boolean): Promise<UpdateInfo>;
   copyText(text: string): Promise<boolean>;
-  enhancedHardware(forceRefresh?: boolean): Promise<HardwareResult>;
-  enhancedSetProfile(profileId: string): Promise<Result & { hardwareProfile: string; hardwareProfiles: Record<string, HardwareProfile> }>;
+  enhancedHardware(forceRefresh?: boolean, includeDisplay?: boolean): Promise<HardwareResult>;
   enhancedModels(profileId?: string): Promise<Result & { models: Model[]; runtimeStacks: RuntimeStack[] }>;
   install(dir: string, exePath: string, route: string, api: string, token?: string): Promise<Result>;
   setApiOverride(dir: string, exePath: string, value: string): Promise<Result>;

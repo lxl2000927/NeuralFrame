@@ -9,8 +9,10 @@ function recognize(dir, launcher) {
   if (file(path.join(dir, 'StarRail.exe')) && file(path.join(dir, 'UnityPlayer.dll')))
     return {launcher:launcher || 'HoYoPlay / Starward', id:null, name:'崩坏：星穹铁道', dir:path.resolve(dir), poster:null};
   const client = path.join('Client', 'Binaries', 'Win64', 'Client-Win64-Shipping.exe');
+  // Channel installs and user-renamed folders need not use Kuro's directory
+  // name. Match both game executables, as the protected installer does.
   if (file(path.join(dir, 'Wuthering Waves Game', client)) ||
-      (/^Wuthering Waves Game$/i.test(path.basename(dir)) && file(path.join(dir, client))))
+      ((/^Wuthering Waves Game$/i.test(path.basename(dir)) || file(path.join(dir, 'Wuthering Waves.exe'))) && file(path.join(dir, client))))
     return {launcher:launcher || 'Kuro Games', id:null, name:'鸣潮', dir:path.resolve(dir), poster:null};
   return null;
 }

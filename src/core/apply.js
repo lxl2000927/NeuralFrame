@@ -15,6 +15,8 @@ const vulkanLayer = require('./vulkan-layer');
 const journal = require('./file-journal');
 const replaceFile = require('./replace-file');
 const compatibility = require('./compatibility');
+const legacyRegistry = require('./legacy-installscript');
+const legacyCompat = require('./legacy-compat');
 const crypto = require('crypto');
 
 const BACKUP_DIR = '_DLSS5_Backup';
@@ -46,6 +48,7 @@ function beginManifest(gameDir, exePath, api) {
       throw fail('errBackupInvalid');
     }
     if (!previous || previous.version !== 1) throw fail('errBackupInvalid');
+    if (previous.restorePhase) throw fail('errBackendRecovery');
   }
 
   return {
@@ -147,7 +150,7 @@ async function copyOver(src, dest) {
   // payload inside an installed app is read-only. A read-only ReShade.ini is
   // exactly what "Unable to save configuration" on the game's screen means,
   // and a read-only DLL makes the next install or restore fail on overwrite.
-  await replaceFile.copyFile(src, dest, { writable: true });
+  await replaceFile.copyFile(src, dest, { writable: true, clearReadOnly: true });
 }
 
 function runSetup(setupExe, args, log) {
@@ -336,10 +339,13 @@ function isForeignProxyDll(filePath) {
 }
 
 function selectSafeReShadeHook(exeDir, api = 'dxgi', apiLabel = '', requestedProxy = 'dxgi') {
-  const preferred = hookForApi(api, requestedProxy);
+  const isWrappedLegacy = ['d3d8', 'd3d9', 'ddraw'].includes(api);
+  const effectiveApi = (isWrappedLegacy || api === 'd3d10') ? 'dxgi' : api;
+  const preferred = hookForApi(effectiveApi, requestedProxy);
   const preferredIsForeign = isForeignProxyDll(path.join(exeDir, preferred));
   const existingReShade = inspectReShade(exeDir);
-  if (existingReShade.installed && existingReShade.kind === 'proxy' && existingReShade.file) {
+  if (existingReShade.installed && existingReShade.kind === 'proxy' && existingReShade.file &&
+      !(isWrappedLegacy && /^(d3d8|d3d9|ddraw)\.dll$/i.test(existingReShade.file))) {
     return {
       hook: existingReShade.file,
       proxy: existingReShade.file.replace(/\.dll$/i, '').toLowerCase(),
@@ -353,7 +359,7 @@ function selectSafeReShadeHook(exeDir, api = 'dxgi', apiLabel = '', requestedPro
       avoidedConflict: null
     };
   }
-  const fallbacks = api === 'dxgi'
+  const fallbacks = isWrappedLegacy ? ['d3d11.dll'] : effectiveApi === 'dxgi'
     ? (String(apiLabel || '').includes('12')
         ? ['d3d12.dll', 'dinput8.dll', 'd3d11.dll']
         : ['d3d11.dll', 'dinput8.dll', 'd3d12.dll'])
@@ -553,11 +559,12 @@ async function applyFeeder(config, log) {
     for (const staleName of ['DDraw.dll', 'D3DImm.dll', 'D3D8.dll', 'D3D9.dll']) {
       if (activeDgDlls.has(staleName.toLowerCase())) continue;
       const stalePath = path.join(exeDir, staleName);
-      try {
-        if (fs.existsSync(stalePath) && pe.versionMentions(stalePath, 'dgVoodoo')) {
-          fs.unlinkSync(stalePath);
-        }
-      } catch {}
+      if (fs.existsSync(stalePath) && pe.versionMentions(stalePath, 'dgVoodoo')) {
+        await trackBeforeWrite(manifest, gameDir, stalePath, { kind: 'disabled-component' });
+        await saveActiveManifest(gameDir, manifest);
+        await replaceFile.makeWritable(stalePath);
+        await fs.promises.unlink(stalePath);
+      }
     }
     for (const src of [dgDll, dgCpl, ...(immediate && fs.existsSync(immediate) ? [immediate] : [])]) {
       const rel = await copyTracked(manifest, gameDir, src, path.join(exeDir, path.basename(src)), { kind: 'dgvoodoo' });
@@ -567,29 +574,42 @@ async function applyFeeder(config, log) {
     const baseConf = fs.existsSync(confPath)
       ? feederConfig.readText(confPath)
       : feederConfig.readText(dgConf);
-    const configuredDg = feederConfig.configureDgVoodoo(baseConf);
+    const configuredDg = feederConfig.configureDgVoodoo(baseConf, { bitness, api, preserveExisting: fs.existsSync(confPath) });
     await writeTracked(manifest, gameDir, confPath, configuredDg, { kind: 'config' });
     for (const subDirName of ['e2driver', 'drivers', 'driver', 'renderers']) {
       const subDir = path.join(exeDir, subDirName);
       if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
-        await writeTracked(manifest, gameDir, path.join(subDir, 'dgVoodoo.conf'), configuredDg, { kind: 'config' });
+        const subConfig = path.join(subDir, 'dgVoodoo.conf');
+        const subText = fs.existsSync(subConfig)
+          ? feederConfig.configureDgVoodoo(feederConfig.readText(subConfig), { bitness, api, preserveExisting: true }) : configuredDg;
+        await writeTracked(manifest, gameDir, subConfig, subText, { kind: 'config' });
       }
     }
-    if (bitness === 32) {
-      // Use the selected payload, including during a dry-run. The location of
-      // the game (e.g. a temporary test directory) must not change the plan.
-      // Existing third-party winmm proxies remain owned by the user.
-      const winmmSrc = source.feeder.preloader32;
-      const winmmDest = path.join(exeDir, 'winmm.dll');
-      if (winmmSrc && fs.existsSync(winmmSrc) &&
-          (!fs.existsSync(winmmDest) || wasAdded(manifest, path.relative(gameDir, winmmDest)))) {
-        if (pe.getBitness(winmmSrc) !== 32) throw fail('errReShadeArchitecture');
-        const rel = await copyTracked(manifest, gameDir, winmmSrc, winmmDest, { kind: 'dgvoodoo' });
-        log('added', { rel, version: pe.getFileVersion(winmmSrc) });
-      }
-    }
-    reshadeApi = 'dxgi';
   }
+  let legacyRegistration;
+  let preloaderInstalled = false;
+  if (legacyCompat.supported(bitness, api)) {
+    // Use the selected payload, including during a dry-run. The location of
+    // the game (e.g. a temporary test directory) must not change the plan.
+    // Existing third-party winmm proxies remain owned by the user.
+    const winmmSrc = source.feeder.preloader32;
+    const winmmDest = path.join(exeDir, 'winmm.dll');
+    if (winmmSrc && fs.existsSync(winmmSrc) &&
+        (!fs.existsSync(winmmDest) || wasAdded(manifest, path.relative(gameDir, winmmDest)))) {
+      if (pe.getBitness(winmmSrc) !== 32) throw fail('errReShadeArchitecture');
+      const rel = await copyTracked(manifest, gameDir, winmmSrc, winmmDest, { kind: 'dgvoodoo' });
+      log('added', { rel, version: pe.getFileVersion(winmmSrc) });
+      preloaderInstalled = true;
+      if (process.platform === 'win32' || registryRunner) {
+        legacyRegistration = await legacyRegistry.prepare(gameDir, exeDir, manifest.legacyRegistry, registryRunner);
+        if (legacyRegistration.info) manifest.legacyRegistry = legacyRegistration.info;
+      }
+      const configPath = path.join(exeDir, legacyCompat.CONFIG);
+      await writeTracked(manifest, gameDir, configPath,
+        legacyCompat.configure(feederConfig.readText(configPath), exePath, legacyRegistration?.info), { kind: 'config' });
+    }
+  }
+  if (['d3d8', 'd3d9', 'ddraw'].includes(api)) reshadeApi = 'dxgi';
 
   if (api === 'vulkan') {
     manifest.vulkanLayer = await vulkanLayer.register({
@@ -602,7 +622,7 @@ async function applyFeeder(config, log) {
     await saveActiveManifest(gameDir, manifest);
     log('vulkanLayerInstalled', { global: true, manifest: manifest.vulkanLayer.manifest });
   } else {
-    await installReShadeAt({
+    const installedHookPath = await installReShadeAt({
       gameDir, exePath, api: reshadeApi, manifest, reshadeSetup, setupRunner, log, gameInstance: true, bitness, source,
       // A wrapped DirectX 8/9 game becomes a DirectX 11 one inside dgVoodoo, and
       // which name that layer loads is not the same on every setup: some load
@@ -613,6 +633,12 @@ async function applyFeeder(config, log) {
       // for an install that already works.
       reshadeProxy
     });
+    if (preloaderInstalled && api === 'opengl') {
+      const target = path.join(exeDir, 'ReShade32.dll');
+      if (fs.existsSync(target) && !wasAdded(manifest, path.relative(gameDir, target)) &&
+          (!pe.versionMentions(target, 'ReShade') || pe.getBitness(target) !== 32)) throw fail('errLoaderConflict');
+      await copyTracked(manifest, gameDir, installedHookPath, target, { kind: 'reshade' });
+    }
   }
 
   const addonRel = await copyTracked(
@@ -645,7 +671,10 @@ async function applyFeeder(config, log) {
     ]) {
       const staleFx = path.join(exeDir, 'reshade-shaders', 'Shaders', unusedFx);
       if (fs.existsSync(staleFx)) {
-        try { fs.unlinkSync(staleFx); } catch {}
+        await trackBeforeWrite(manifest, gameDir, staleFx, { kind: 'disabled-component' });
+        await saveActiveManifest(gameDir, manifest);
+        await replaceFile.makeWritable(staleFx);
+        await fs.promises.unlink(staleFx);
       }
     }
     const kernelSrc = path.join(source.feeder.lumeniteRoot, 'Shaders', 'lumenite_Kernel.fx');
@@ -776,6 +805,7 @@ async function applyFeeder(config, log) {
   await enableAddonInIni(exeDir, bitness === 32 ? 'dlss5-feed.addon32' : 'dlss5-feed.addon64', log, gameDir, manifest);
   await enableAddonInIni(hostDir, consumerName, log, gameDir, manifest);
   await saveActiveManifest(gameDir, manifest);
+  if (legacyRegistration?.commit && !journal.deferExternal(gameDir, 'legacy-registry', legacyRegistration.commit)) await legacyRegistration.commit();
   log('applyDone');
   return manifest;
 }
@@ -799,14 +829,11 @@ async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
   if (!fs.existsSync(ini)) return;
   let text = fs.readFileSync(ini, 'utf8');
   let changed = false;
-  const stem = addonName.replace(/\.addon(?:32|64)?$/i, '');
-  const match = text.match(/^DisabledAddons=(.*)$/m);
-  if (match && (match[1].toLowerCase().includes(stem.toLowerCase()) || match[1].toLowerCase().includes('dlss5-zh-cn'))) {
-    const kept = match[1].split(',').filter(name => {
-      const lower = name.toLowerCase();
-      return !lower.includes(stem.toLowerCase()) && !lower.includes('dlss5-zh-cn');
-    });
-    text = text.replace(/^DisabledAddons=.*$/m, 'DisabledAddons=' + kept.join(','));
+  const localization = /\.addon32$/i.test(addonName) ? 'dlss5-zh-cn.addon32' : 'dlss5-zh-cn.addon64';
+  const enabled = feederConfig.enableAddons(text, [addonName,
+    ...(fs.existsSync(path.join(exeDir, localization)) ? [localization] : [])]);
+  if (enabled !== text) {
+    text = enabled;
     changed = true;
     log('addonEnabledInIni');
   }
@@ -1143,10 +1170,11 @@ async function applySwap(config, onLog) {
   return manifest;
 }
 
-async function restoreFiles(gameDir, manifest, onLog, { archived = false } = {}) {
+async function restoreFiles(gameDir, manifest, onLog, { archived = false, skipLegacyRegistry = false, registryRunner } = {}) {
   const log = (code, params) => onLog && onLog({ code, params: params || {} });
   if (manifest.version !== 1 || !Array.isArray(manifest.replaced) || !Array.isArray(manifest.added)) throw fail('errBackupInvalid');
   manifest = require('./wuthering-waves').restoreManifest(gameDir, manifest, archived, true, onLog);
+  require('./encore').assertOwnedFiles(gameDir, manifest);
   // Validate every path and backup before restoring the first file.
   for (const item of manifest.replaced) {
     journal.safePath(gameDir, item.rel);
@@ -1156,6 +1184,12 @@ async function restoreFiles(gameDir, manifest, onLog, { archived = false } = {})
   }
   for (const rel of [...manifest.added, ...(manifest.addedDirs || [])]) journal.safePath(gameDir, rel);
   journal.safePath(gameDir, manifest.game.exe);
+  legacyRegistry.checkOwned(manifest.legacyRegistry, gameDir);
+  if (!skipLegacyRegistry && manifest.legacyRegistry) {
+    const info = manifest.legacyRegistry;
+    const detach = () => legacyRegistry.detach(info, gameDir, registryRunner);
+    if (!journal.deferExternal(gameDir, 'legacy-registry', detach)) await detach();
+  }
   for (const item of manifest.replaced) {
     const backupPath = originalPath(gameDir, manifest, item.rel);
     const target = journal.safePath(gameDir, item.rel);
@@ -1263,7 +1297,7 @@ function recoverableManifest(gameDir) {
   return null;
 }
 
-async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTarget } = {}) {
+async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTarget, registryRunner } = {}) {
   const log = (code, params) => onLog && onLog({ code, params: params || {} });
   const manifestPath = journal.safePath(gameDir, path.join(BACKUP_DIR, MANIFEST));
   let manifest = null;
@@ -1282,7 +1316,9 @@ async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTar
     log('restoreRecovered', { date: manifest.date, route: manifest.route || null });
   }
   const detachOwnedLayer = vulkanLayer.checkOwnedTarget(manifest.vulkanLayer, vulkanLayerTarget);
-  const awaitingDetach = !archived && detachOwnedLayer && manifest.restorePhase === 'detach-vulkan';
+  const detachOwnedRegistry = legacyRegistry.checkOwned(manifest.legacyRegistry, gameDir);
+  const needsDetach = detachOwnedLayer || detachOwnedRegistry;
+  const awaitingDetach = !archived && needsDetach && ['detach-vulkan', 'detach-external'].includes(manifest.restorePhase);
   delete manifest.restorePhase;
   async function retireManifest() {
     let serial = Date.now();
@@ -1294,22 +1330,25 @@ async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTar
   if (!awaitingDetach) {
     await journal.transaction(gameDir, async () => {
       if (beforeFiles) await beforeFiles();
-      await restoreFiles(gameDir, manifest, onLog, { archived });
-      if (detachOwnedLayer) {
+      await restoreFiles(gameDir, manifest, onLog, { archived, skipLegacyRegistry: true });
+      if (needsDetach) {
         // The registry and shared layer are outside the game transaction. Keep
         // a live, retryable record after committing the local restore.
-        await saveActiveManifest(gameDir, { ...manifest, restorePhase: 'detach-vulkan' });
+        await saveActiveManifest(gameDir, { ...manifest, restorePhase: detachOwnedRegistry ? 'detach-external' : 'detach-vulkan' });
       } else if (!archived) await retireManifest();
     });
   }
   if (detachOwnedLayer) {
     const removed = await vulkanLayer.detach(detachOwnedLayer, gameDir);
     log(removed ? 'vulkanLayerRemoved' : 'vulkanLayerKept');
+  } else if (manifest.vulkanLayer) log('vulkanLayerKept');
+  if (detachOwnedRegistry) await legacyRegistry.detach(detachOwnedRegistry, gameDir, registryRunner);
+  if (needsDetach) {
     await journal.transaction(gameDir, async () => {
       await saveActiveManifest(gameDir, manifest);
       await retireManifest();
     });
-  } else if (manifest.vulkanLayer) log('vulkanLayerKept');
+  }
   log('restoreDone', { date: manifest.date, route: manifest.route, game: manifest.game,
     replaced: manifest.replaced.length, added: manifest.added.length });
   onRestored?.(manifest);

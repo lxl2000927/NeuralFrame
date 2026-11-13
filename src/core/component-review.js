@@ -11,7 +11,7 @@ const key = p => path.resolve(p).toLowerCase();
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const binary = file => /\.(dll|addon32|addon64|asi|exe)$/i.test(file);
 const known = name => /^(nvngx|_nvngx|sl\.|libxess|amd_fidelityfx|ffx_fsr|renodx|dlss5|ReShade|OptiScaler|RTXMFG|MFGUnlocker|dxgi\.dll$|d3d\d+\.dll$|opengl32\.dll$|dinput8\.dll$|winmm\.dll$)/i.test(name);
-const category = name => /nvngx_dlssnr/i.test(name) ? '神经模型' : /\.addon|\.asi/i.test(name) ? '插件' : /\.(ini|cfg|json)$/i.test(name) ? '配置' : /\.(fx|fxh|png|dds)$/i.test(name) ? '着色器 / 资源' : binary(name) ? '运行库 / 加载器' : '辅助文件';
+const category = name => /nvngx_dlssnr/i.test(name) ? '神经模型' : /\.addon|\.asi/i.test(name) ? '插件' : /\.(ini|cfg|jsonc?)$/i.test(name) ? '配置' : /\.(fx|fxh|png|dds)$/i.test(name) ? '着色器 / 资源' : binary(name) ? '运行库 / 加载器' : '辅助文件';
 const err = (code, message) => Object.assign(new Error(message), { code });
 function diskInfo(file) {
   if (!fs.existsSync(file)) return null;
@@ -182,6 +182,7 @@ class ComponentReview {
     const wuwa = require('./wuthering-waves');
     const gameRoot = wuwa.gameRoot(dir, inventory.exePath);
     if (gameRoot) wuwa.checkPreview(gameRoot, dir, rows, state, request.kind);
+    require('./encore').checkPreview(dir, rows, request.kind);
     for (const row of inventory.rows) {
       const planned = rows.find(r => r.scope === row.scope && r.rel.toLowerCase() === row.rel.toLowerCase());
       if (planned) planned.backup = row.backup || (row.present && planned.action === 'replace' ? { version: row.version, create: true } : null);
@@ -197,7 +198,17 @@ class ComponentReview {
     let antiCheat;
     if (['enhanced', 'component-update', 'component-rollback'].includes(request.kind) &&
         rows.some(row => row.scope === 'game' && (row.action === 'add' || row.action === 'replace'))) {
-      const details = require('./compatibility').antiCheatDetails(dir, inventory.exePath);
+      // A reviewed backend switch may target another executable while the
+      // on-disk manifest (and inventory scan) still points at the old one.
+      // Only the enhanced installer validates a requested target; component
+      // updates and rollback keep using the installed executable.
+      const requestedExe = request.kind === 'enhanced' && (request.config?.exePath || request.exePath);
+      let exePath = inventory.exePath;
+      if (requestedExe) {
+        if (typeof requestedExe !== 'string' || !path.isAbsolute(requestedExe)) throw err('errUnsafeTarget', '无效的游戏程序路径');
+        exePath = journal.safePath(dir, path.relative(dir, requestedExe));
+      }
+      const details = require('./compatibility').antiCheatDetails(dir, exePath);
       if (details.antiCheatWarning) antiCheat = { components: details.antiCheatComponents.sort() };
     }
     const signature = hash(JSON.stringify({ request, rows: rows.map(r => [r.rel, r.action, r.before?.sha256, r.after?.sha256, r.source]), externalSteps: state.externalSteps, antiCheat }));

@@ -5,7 +5,18 @@ const context=new AsyncLocalStorage(),journal=require('./file-journal'),pe=requi
 const {fail,safe}=require('./component-library');
 const digest=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const same=(a,b)=>path.resolve(a).toLowerCase()===path.resolve(b).toLowerCase();
+function executableStamp(file) {
+  try {
+    const stat = fs.lstatSync(file);
+    return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, stat.isFile(), stat.isSymbolicLink()].join(':');
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+    throw error;
+  }
+}
 function resolveManagedSelection(lib, selected, request) {
+  if ((request.requestedRoute === 'encore' || request.route === 'encore' || request.config?.route === 'encore') && Object.keys(selected).some(id => id !== 'dlss-nr'))
+    throw fail('Encore 使用固定配套运行库，请先在组件与版本中清除其他组件的版本覆盖；原选择不会自动删除。');
   if (request.kind !== 'enhanced' || !selected['dlss-nr']) return { selection: selected, request };
   // The graphics installer owns its model, including every deep copy and the
   // manifest identity. Never let the generic component pass overwrite it later.
@@ -105,15 +116,26 @@ async function applySelection(lib,dir,selection,{strict=false,previousSelection}
   const packages=await prepare(lib,selection),{scan,manifest,rows}=await targets(dir,packages);
   const missing=packages.filter(p=>!rows.some(r=>r.p.id===p.id));
   if(strict&&missing.length)throw fail('请先通过安装路线启用这些组件，再独立更新：'+missing.map(p=>p.component).join('、'));
-  const changed=rows.filter(r=>digest(r.file)!==r.f.sha256);
+  const exeBefore=executableStamp(scan.chosen.path),manifestBefore=JSON.stringify(manifest),observed=rows.map(r=>({...r,beforeHash:digest(r.file)}));
+  const changed=observed.filter(r=>r.beforeHash!==r.f.sha256);
+  const verifyInputs=()=>{
+    if(executableStamp(scan.chosen.path)!==exeBefore)throw fail('游戏主程序已变化，请重新预览');
+    if(JSON.stringify(require('./backend-manager').readManifest(dir))!==manifestBefore)throw fail('组件安装记录已变化，请重新预览');
+    for(const r of observed)if(!fs.existsSync(r.file)||digest(r.file)!==r.beforeHash)throw fail('游戏组件已被其他操作更改，请重新预览');
+    for(const r of changed){const source=safe(lib.directory(r.p),r.f.rel);if(!fs.existsSync(source)||digest(source)!==r.f.sha256)throw fail('组件文件已变化或缺失，请重新下载：'+r.f.rel);}
+  };
   if(!changed.length){
     if (manifest && updateModelIdentity(dir, manifest, rows.map(row => row.file))) {
       await require('./install-guards').assertGameClosed(dir,scan.chosen.path);
+      verifyInputs();
       await journal.transaction(dir, () => require('./apply').saveActiveManifest(dir,manifest));
     }
     return{ok:true,changed:0,message:'已安装文件与所选版本一致。'};
   }
   await require('./install-guards').assertGameClosed(dir,scan.chosen.path);
+  // The process check is asynchronous; none of its preflight inputs may drift
+  // before committing the already-reviewed component replacement.
+  verifyInputs();
   return journal.transaction(dir,async()=>{
     const apply=require('./apply'),m=manifest||apply.beginManifest(dir,scan.chosen.path,scan.chosen.api||'dxgi');
     if (!manifest) m.componentOnlySince = m.date;
@@ -126,6 +148,7 @@ async function applySelection(lib,dir,selection,{strict=false,previousSelection}
       revision.files.push({rel,snapshot,sha256:beforeHash,after:r.f.sha256});
       historyManifest.replaced.push({ rel, oldVersion: pe.getFileVersion(saved), newVersion: r.f.version, beforeHash, afterHash: r.f.sha256 });
       await apply.copyTracked(m,dir,safe(lib.directory(r.p),r.f.rel),r.file,{kind:'component-library',newVersion:r.f.version});
+      if(digest(r.file)!==r.f.sha256)throw fail('复制期间组件发生变化，请重新下载：'+r.f.rel);
     }
     updateModelIdentity(dir, m, changed.map(row => row.file));
     m.componentHistory=[...(m.componentHistory||[]),revision];m.componentSelection=selection;
@@ -137,13 +160,18 @@ async function rollback(lib,dir,snapshotId){
   if(!revision||revision.id!==snapshotId)throw fail('回滚记录已变化，请刷新列表');
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(revision.id) || !Array.isArray(revision.files) || !revision.files.length) throw fail('上一版组件快照损坏或缺失');
   const folder = `_DLSS5_Backup/component-revisions/${revision.id}`;
+  const exe=journal.safePath(dir,manifest.game.exe),exeBefore=executableStamp(exe);
+  await require('./install-guards').assertGameClosed(dir,exe);
+  // Process enumeration can take time. Validate the rollback inputs after it
+  // completes, so an external edit during that wait cannot be overwritten.
+  if (executableStamp(exe) !== exeBefore) throw fail('游戏主程序已变化，请重新预览');
+  if (JSON.stringify(require('./backend-manager').readManifest(dir)) !== JSON.stringify(manifest)) throw fail('回滚记录已变化，请刷新列表');
   for(const [i,f] of revision.files.entries()){
     if(!f || f.snapshot !== folder + '/' + i + '.bin') throw fail('上一版组件快照损坏或缺失');
     const saved = journal.safePath(dir, f.snapshot), target = journal.safePath(dir, f.rel);
     if(!fs.existsSync(saved) || digest(saved)!==f.sha256)throw fail('上一版组件快照损坏或缺失');
     if(!fs.existsSync(target) || digest(target)!==f.after)throw fail('游戏组件已被其他操作更改，不能覆盖；请先查看组件清单');
   }
-  const exe=journal.safePath(dir,manifest.game.exe);await require('./install-guards').assertGameClosed(dir,exe);
   const result = await journal.transaction(dir,async()=>{
     const apply = require('./apply');
     const historyManifest = { date: manifest.date, game: manifest.game, route: 'component-library', replaced: [] };
@@ -152,6 +180,7 @@ async function rollback(lib,dir,snapshotId){
       const oldVersion = pe.getFileVersion(target), newVersion = pe.getFileVersion(saved);
       historyManifest.replaced.push({ rel: f.rel, oldVersion, newVersion, beforeHash: f.after, afterHash: f.sha256 });
       await apply.copyTracked(manifest, dir, saved, target, { kind: 'component-rollback', newVersion });
+      if(digest(target)!==f.sha256)throw fail('复制期间回滚快照发生变化，已停止回滚');
       await journal.capture(dir, saved);
       await fs.promises.unlink(saved);
     }

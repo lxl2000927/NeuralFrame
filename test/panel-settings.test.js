@@ -18,18 +18,68 @@ function load(root, overrides = {}) {
   return (name, ...args) => handlers.get(name)({}, ...args);
 }
 
-test('hardware profile IPC rejects unsupported and non-string IDs without changing a saved selection', t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-hardware-profile-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const call = load(root);
-  assert.equal(call('enhanced-set-profile', 'rtx40_desktop').ok, true);
-  const savedFile = path.join(root, 'library.json');
-  const saved = fs.readFileSync(savedFile, 'utf8');
-  assert.equal(JSON.parse(saved).hardwareProfile, 'rtx40_desktop');
-  for (const invalid of ['unknown', '__proto__', ['rtx50_desktop'], null]) {
-    assert.equal(call('enhanced-set-profile', invalid).ok, false);
-    assert.equal(fs.readFileSync(savedFile, 'utf8'), saved);
-  }
+test('home library scans configure the persistent symbol cache before a detail page is opened', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-home-scan-cache-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  const game = path.join(root, 'Game'), requests = [];
+  const call = load(root, {'./src/core/game-inspection': {GameInspection:class {
+    async run(task, dir, options) {
+      requests.push({task, dir, options});
+      return {chosen:{path:path.join(dir, 'Game.exe'), rel:'Game.exe', api:'dx12', apiLabel:'DirectX 12', bitness:64}, reshade:{installed:false}};
+    }
+  }}});
+  assert.equal((await call('scan', game)).ok, true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].task, 'scan');
+  assert.equal(requests[0].dir, game);
+  assert.equal(requests[0].options?.userDataDir, root);
+});
+
+
+test('component GPU reads do not wait for monitor enumeration; settings still includes it', async () => {
+  const handlers = new Map();
+  let monitorReads = 0;
+  require('../src/hardware-ipc')({
+    ipcMain:{handle:(name, handler)=>handlers.set(name,handler)},
+    screen:{getPrimaryDisplay(){monitorReads++;return {bounds:{width:1920,height:1080},scaleFactor:1,displayFrequency:60};}},
+    window:()=>null, loadState:()=>({}), saveState:()=>true, inspections:()=>({setHardware(){}})
+  });
+  const read = (...args) => handlers.get('enhanced-hardware')({},...args);
+  assert.equal((await read(false,false)).hardware.display,null);
+  assert.equal(monitorReads,0);
+  assert.equal((await read()).hardware.display.resolution,'1920x1080');
+  assert.equal(monitorReads,1);
+});
+
+test('retired global presets cannot override detected hardware or game selection; existing files are preserved', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-retired-profile-'));
+  t.after(() => fs.rmSync(root, {recursive:true,force:true}));
+  const game = path.join(root, 'Game'), backup = path.join(game, '_DLSS5_Backup');
+  fs.mkdirSync(backup, {recursive:true});
+  const manifest = path.join(backup, 'manifest.json');
+  const manifestText = JSON.stringify({hardwareProfile:'rtx40_laptop',neuralRendering:{mode:'off',hardwareProfile:'rtx40_laptop'}});
+  fs.writeFileSync(manifest, manifestText);
+  const stateFile = path.join(root,'library.json');
+  const preferenceText = JSON.stringify({hardwareProfile:'rtx50_desktop',manual:[game]});
+  fs.writeFileSync(stateFile, preferenceText);
+  const requests = [];
+  const call = load(root, {'./src/core/game-inspection':{GameInspection:class {
+    run(task, dir, options) { requests.push({task,dir,options}); return Promise.resolve({status:{ok:true}}); }
+  }}});
+  const hardware = await call('enhanced-hardware',false,false);
+  assert.equal(hardware.ok,true);assert.notEqual(hardware.hardwareProfileSource,'default');
+  assert.equal(hardware.hardwareProfile,require('../src/core/hardware-profile').selectHardwareProfile({gpu:hardware.hardware.gpu}).id);
+  await call('enhanced-status',game);
+  await call('enhanced-status',game,'rtx40_desktop');
+  await call('enhanced-models');
+  await call('enhanced-models','rtx40_desktop');
+  assert.ok(requests.every(r=>!Object.hasOwn(r.options,'defaultHardwareProfile')));
+  assert.equal(requests[0].options.hardwareProfile,undefined);
+  assert.equal(requests[1].options.hardwareProfile,'rtx40_desktop');
+  assert.equal(requests[2].options.hardwareProfile,hardware.hardwareProfile);
+  assert.equal(requests[3].options.hardwareProfile,'rtx40_desktop');
+  assert.equal(fs.readFileSync(stateFile,'utf8'),preferenceText);
+  assert.equal(fs.readFileSync(manifest,'utf8'),manifestText);
 });
 
 test('a library discovery finishing after a root edit or reset cannot publish old roots', async t => {
@@ -130,6 +180,23 @@ test('old language settings resolve consistently in the desktop and native folde
     assert.equal(title, resolved === 'en' ? 'Scan this folder for games' : '扫描游戏文件夹');
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'library.json'))).lang, stored);
   }
+});
+
+test('add-on metadata refreshes after a same-size replacement preserves its modification time', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(),'nf-addon-refresh-'));
+  t.after(() => fs.rmSync(root,{recursive:true,force:true}));
+  const file = path.join(root,'custom','versioned.addon64'), time = new Date('2026-11-01T00:00:00Z');
+  writePe(file,{version:[1,2,3,4]});
+  fs.utimesSync(file,time,time);
+  fs.writeFileSync(path.join(root,'library.json'),JSON.stringify({addonFiles:[file]}));
+  const call = load(root), before = fs.statSync(file);
+  assert.equal(call('addons').find(row => row.path === file).version,'1.2.3.4');
+  writePe(file,{version:[2,3,4,5]});
+  fs.utimesSync(file,time,time);
+  const after = fs.statSync(file);
+  assert.equal(after.size,before.size);
+  assert.equal(after.mtimeMs,before.mtimeMs);
+  assert.equal(call('addons').find(row => row.path === file).version,'2.3.4.5');
 });
 
 test('add-ons save metadata first, enable by full path, replace same-name builds and retain originals on removal', t => {

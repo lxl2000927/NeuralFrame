@@ -8,6 +8,7 @@ import {
 import { getBridge } from "../bridge";
 import { Empty, Loading, Row, Select } from "../components";
 import { errorText } from "../domain";
+import { HardwareSettings } from "./HardwareSettings";
 import type {
   Settings as SettingsData,
 
@@ -16,6 +17,9 @@ import type {
 type Message = { message: (s: string) => void };
 
 export function Settings({
+  active,
+  refreshToken,
+  operationBusy,
   message,
   theme,
   onTheme,
@@ -26,6 +30,9 @@ export function Settings({
   onGroupingChange,
   ask,
 }: {
+  active: boolean;
+  refreshToken: number;
+  operationBusy: boolean;
   theme: string;
   onTheme: (t: string) => void;
   libraryRevision?: number;
@@ -43,6 +50,7 @@ export function Settings({
   const [saving, setSaving] = useState(false);
   const refresh = () => setRev((v) => v + 1);
   useEffect(() => {
+    if (!active) return;
     let alive = true;
     getBridge()
       .settings()
@@ -55,7 +63,7 @@ export function Settings({
     return () => {
       alive = false;
     };
-  }, [rev, libraryRevision]);
+  }, [active, rev, libraryRevision, refreshToken]);
   const action = async (fn: () => Promise<unknown>) => {
     if (actionLock.current) return;
     actionLock.current = true; setSaving(true);
@@ -80,6 +88,7 @@ export function Settings({
   };
   return (
     <div className="page-scroll settings-page">
+      <HardwareSettings active={active} refreshToken={refreshToken} disabled={saving || operationBusy} />
       {error && <p className="error">{t(error)}</p>}
       {!data ? (
         !error ? <Loading /> : <button onClick={refresh}>{t("重试")}</button>

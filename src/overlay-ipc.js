@@ -2,7 +2,7 @@
 const path = require('node:path');
 const { createOverlayLibrary } = require('./overlays');
 
-module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, window, bridge = () => null, language = () => 'en' }) {
+module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, window, bridge = () => null, language = () => 'en', exclusiveMutation = work => work() }) {
   const nativeDialog = dialog, zh = require('./shared/overlay-zh');
   const localized = options => language().startsWith('zh') ? zh.dialog(options) : options;
   dialog = {
@@ -23,6 +23,13 @@ module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, wind
     try { return { ok: true, value: await fn(...args) }; }
     catch (error) { return { ok: false, error: error.message }; }
   });
+  // Native confirmations stay outside the shared writer lock. Once accepted,
+  // overlay changes must not interleave with game deployment or restoration.
+  const mutate = async work => {
+    const result = await exclusiveMutation(work);
+    if (result?.ok === false) throw Error(result.message || result.code || 'Overlay operation failed.');
+    return result;
+  };
   handle('list', () => library().list());
   // What the panel in the game is waiting for, said on the Overlay page:
   // whether the service is up at all, and whether a game is attached.
@@ -44,7 +51,7 @@ module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, wind
       message: 'This file contains native code. A ReShade add-on can access your files when loaded by a game.',
       detail: 'Adding it here only stores a copy; it is not executed here. A checksum does not certify that the file is safe.',
       buttons: ['Cancel', 'Add trusted file'], defaultId: 0, cancelId: 0 });
-    return confirm.response === 1 ? library().add(picked.filePaths[0]) : null;
+    return confirm.response === 1 ? mutate(() => library().add(picked.filePaths[0])) : null;
   });
   handle('remove', async id => {
     if (id === 'builtin') throw Error('The built-in overlay cannot be deleted.');
@@ -52,8 +59,10 @@ module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, wind
     if (!entry) throw Error('Invalid overlay ID.');
     const confirm = await dialog.showMessageBox(window(), { type: 'question', message: `Remove ${entry.name}?`, detail: 'Your original imported file is kept.', buttons: ['Cancel', 'Remove'], defaultId: 0, cancelId: 0 });
     if (confirm.response !== 1) return null;
-    library().remove(id);
-    return true;
+    return mutate(() => {
+      library().remove(id);
+      return true;
+    });
   });
   handle('install', async id => {
     const entry = library().resolve(id);
@@ -68,16 +77,20 @@ module.exports = function registerOverlayIpc({ app, ipcMain, dialog, shell, wind
       detail: `${picked.filePaths[0]}\n\nOnly a uniquely named overlay add-on is copied next to this executable. No existing DLLs or configuration files are replaced by installation. No Vulkan registry changes. Avoid online / anti-cheat games.\n\n${panelDetail}`,
       buttons: ['Cancel', 'Install test overlay'], defaultId: 0, cancelId: 0 });
     if (confirm.response !== 1) return null;
-    new (require('./core/component-review').ComponentReview)(app.getPath('userData')).assertUnlockedWithin(path.dirname(picked.filePaths[0]));
-    return library().install(id, picked.filePaths[0]);
+    return mutate(() => {
+      new (require('./core/component-review').ComponentReview)(app.getPath('userData')).assertUnlockedWithin(path.dirname(picked.filePaths[0]));
+      return library().install(id, picked.filePaths[0]);
+    });
   });
   handle('uninstall', async id => {
-    const installed = library().list().installations.find(record => record.id === id);
     const confirm = await dialog.showMessageBox(window(), { type: 'question', message: 'Is the test game closed?', detail: 'Remove only the unchanged overlay this app copied. Keep ReShade, DLSS, presets, and every original file.', buttons: ['Cancel', 'Remove test overlay'], defaultId: 0, cancelId: 0 });
     if (confirm.response !== 1) return null;
-    if (installed) new (require('./core/component-review').ComponentReview)(app.getPath('userData')).assertUnlockedWithin(installed.directory);
-    library().uninstall(id);
-    return true;
+    return mutate(() => {
+      const installed = library().list().installations.find(record => record.id === id);
+      if (installed) new (require('./core/component-review').ComponentReview)(app.getPath('userData')).assertUnlockedWithin(installed.directory);
+      library().uninstall(id);
+      return true;
+    });
   });
   handle('source', async () => {
     const directory = app.isPackaged ? path.dirname(builtin()) : path.join(appRoot, 'overlay');

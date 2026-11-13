@@ -9,6 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { getBridge } from "../bridge";
+import { useWindowReturn } from "../useWindowReturn";
 import { Empty, Loading, Select } from "../components";
 import { errorText, profiles } from "../domain";
 import type { HistoryRow } from "../types";
@@ -84,6 +85,7 @@ export function History({
   const request = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
   const [warning,setWarning] = useState(false);
+  const returnRevision = useWindowReturn(active);
   const load = async () => {
     const revision = ++request.current;
     try {
@@ -102,7 +104,7 @@ export function History({
   useEffect(() => {
     if (active) void load();
     return () => { ++request.current; };
-  }, [active, refreshToken]);
+  }, [active, refreshToken, returnRevision]);
   const copyHistory = async () => {
     if (!rows?.length) return;
     const text = rows.map(row => [

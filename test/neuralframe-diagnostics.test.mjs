@@ -34,3 +34,13 @@ test('VRAM headroom is an estimate; the backend budget level determines warnings
   assert.equal(check('safe').state, 'estimate');
   assert.equal(check('caution').state, 'warn');
 });
+
+test('standalone routes do not report a missing RenoDX setting as a failure or a passing HUD check', () => {
+  const checks = diagnosticChecks({coExecution:{bothActive:true,
+    motionVectorCheck:{ok:true,configurationSupported:false,mitigationActive:false,message:'Standalone motion input requires runtime verification'},
+    hudFlickerCheck:{ok:true,configurationSupported:false,qualityGuardMode:'0',message:'Standalone route has no RenoDX QualityGuard'}}});
+  assert.equal(checks[2].state,'unknown');
+  assert.match(checks[2].message,/Standalone/);
+  assert.equal(checks[3].state,'unknown');
+  assert.match(checks[3].message,/no RenoDX/);
+});

@@ -2,6 +2,7 @@ import { t } from "./i18n";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Gamepad2, X, LoaderCircle } from "lucide-react";
 import type { Game } from "./types";
+import { useArtwork } from "./useArtwork";
 export { Select } from "./Select";
 export function Artwork({
   game,
@@ -12,18 +13,15 @@ export function Artwork({
   large?: boolean;
   layout?: "thumbnail" | "cover" | "banner";
 }) {
-  const [failed, setFailed] = useState<string[]>([]);
   const [backdropSource, setBackdropSource] = useState<string>();
-  const url = typeof game.poster === "string" ? game.poster : game.poster?.url;
-  const custom = typeof game.poster === "object" && game.poster?.custom;
-  const hero = game.hero;
+  const {ref, url, tile, hero, custom, failed} = useArtwork(game, layout);
   const candidates = layout === "thumbnail"
-    ? [url, hero]
-    : custom ? [url, game.tile, hero] : [game.tile, hero, url];
-  const source = candidates.find((s) => s && !failed.includes(s));
-  useEffect(() => setFailed([]), [url, hero, game.tile]);
+    ? [url, hero, tile]
+    : custom ? [url, tile, hero] : [tile, hero, url];
+  const source = candidates.find(Boolean);
   return (
     <span
+      ref={ref}
       className={`artwork ${large ? "large" : ""}`}
     >
       {source ? (
@@ -38,13 +36,13 @@ export function Artwork({
           <img
             src={source}
             alt=""
-            loading={layout === "thumbnail" ? "eager" : "lazy"}
+            loading="lazy"
             decoding="async"
             onLoad={layout === "cover" ? (event) => {
               const { naturalWidth, naturalHeight } = event.currentTarget;
               setBackdropSource(Math.abs(naturalWidth / naturalHeight - 16 / 9) > 0.035 ? source : undefined);
             } : undefined}
-            onError={() => setFailed((urls) => [...urls, source])}
+            onError={() => failed(source)}
           />
         </>
       ) : (
@@ -125,24 +123,44 @@ export function Modal({
   children,
   footer,
   onClose,
+  className = "",
+  dismissOnBackdrop = false,
 }: {
   title: string;
   children: ReactNode;
   footer?: ReactNode;
   onClose: () => void;
+  className?: string;
+  dismissOnBackdrop?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const backdropPress = useRef(false);
   const titleId = useId();
   useEffect(() => {
     const dialog = ref.current!;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialog.showModal();
-    return () => dialog.close();
+    return () => {
+      dialog.close();
+      if (previousFocus?.isConnected) previousFocus.focus({preventScroll: true});
+    };
   }, []);
   return (
     <dialog
       ref={ref}
-      className="modal"
+      className={`modal ${className}`}
       aria-labelledby={titleId}
+      onPointerDown={e => {
+        const box = e.currentTarget.getBoundingClientRect();
+        backdropPress.current = e.target === e.currentTarget &&
+          (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom);
+      }}
+      onClick={e => {
+        const box = e.currentTarget.getBoundingClientRect();
+        const outside = e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom;
+        if (dismissOnBackdrop && backdropPress.current && e.target === e.currentTarget && outside) onClose();
+        backdropPress.current = false;
+      }}
       onCancel={(e) => {
         e.preventDefault();
         onClose();

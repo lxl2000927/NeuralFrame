@@ -74,5 +74,7 @@ test('Vulkan keeps identified DXVK proxies while unknown, wrong-bitness and Dire
 test('About links only open the project and its latest releases', () => {
   assert.equal(projectUrl('github'), 'https://github.com/lxl2000927/NeuralFrame');
   assert.equal(projectUrl('releases'), 'https://github.com/lxl2000927/NeuralFrame/releases/latest');
+  assert.equal(projectUrl({componentSource:'https://github.com/RankFTW/rhi-repo/releases/tag/dlssnr-310.9.16'}), 'https://github.com/RankFTW/rhi-repo/releases/tag/dlssnr-310.9.16');
+  for (const componentSource of ['file:///C:/Windows', 'https://github.com.evil.test/RankFTW/rhi-repo', 'https://github.com/unknown/repo', 'https://user:pass@github.com/RankFTW/rhi-repo', 'https://github.com/RankFTW/rhi-repo/issues', 'https://github.com:444/RankFTW/rhi-repo']) assert.equal(projectUrl({componentSource}), null);
   for (const key of ['__proto__', 'constructor', 'file:///C:/Windows', 'javascript:alert(1)', 'https://example.com', null, {}]) assert.equal(projectUrl(key), null);
 });

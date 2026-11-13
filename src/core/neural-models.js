@@ -19,6 +19,7 @@ const FATBIN_MAGIC = Buffer.from([0x50, 0xED, 0x55, 0xBA, 0x01, 0x00, 0x10, 0x00
 
 // 缓存已扫描的 DLL 指纹与 CUDA Fatbin 架构信息，避免重复读取 165MB 大文件
 const binaryInspectionCache = new Map();
+const binaryContentCache = new Map();
 
 // 三大硬件专属优化档位定义（笔记本 40 系保持原版黄金参数不动；新增 40 系桌面卡与 50 系桌面卡专属通道）
 const HARDWARE_PROFILES = Object.freeze({
@@ -60,9 +61,9 @@ const HARDWARE_PROFILES = Object.freeze({
   }),
   rtx50_desktop: Object.freeze({
     id: 'rtx50_desktop',
-    label: '🚀 50 系列桌面卡 (Blackwell 原生直通 + 原生硬件补帧)',
-    shortLabel: '50 系列桌面卡',
-    gpuSeries: 'RTX 50 Desktop',
+    label: '🚀 RTX 50 系列 (原生多帧生成控制)',
+    shortLabel: 'RTX 50 系列',
+    gpuSeries: 'RTX 50',
     sm: '120',
     ngxArch: '0x1B0',
     vramBudgetMB: 16384,
@@ -72,9 +73,9 @@ const HARDWARE_PROFILES = Object.freeze({
     nrPasses: 1,
     nrMaxWorksets: 8,
     mfgStrategy: 'blackwell_native',
-    mfgLabel: '50 系 Blackwell 原生硬件补帧直通 (第 5 代硬件 Flip Metering · 禁用 40 系补丁防冲突)',
-    nrLabel: '100% 原生 sm_120 (23核) 全分辨率张量直通 + 2026-10 极速运行时栈 (50系原生档)',
-    description: '专为 RTX 5060 / 5070 / 5070Ti / 5080 / 5090D (Blackwell sm_120) 调优：直接调用原生 sm_120 核函数与第 5 代硬件 Flip Metering 多帧生成，零劫持冲突。'
+    mfgLabel: 'RTX 50 原生多帧生成控制，无需解锁；实际倍率以游戏与运行库为准。',
+    nrLabel: '100% 工作分辨率与 8 个工作集；模型需包含 sm_120，低显存设备可调整参数。',
+    description: 'Blackwell 参考参数，不代表游戏已兼容或运行生效。RTX 50 原生支持多帧生成，应用时按实际显卡关闭 Ada 专用修补，保留倍率与动态模式控制。'
   })
 });
 
@@ -315,14 +316,10 @@ function identifyNgxBuffer(buf, filePath = '') {
   // 检查是否包含 DLSS 5 神经渲染特有的内部符号与 PDB 标识
   const hasDlssNrPdb = hasAscii('nvngx_dlssnr.pdb');
   const hasDlssNrCallbacks = hasAscii('DLSSNRGetStatsCallback') || hasAscii('DLSSNRComputeScalingRatioCallback');
-  const hasDlssNrFeaturePath = hasAscii('source/features/dlssnr/') || hasMarker('NVSDK_NGX_D3D12_DLSSNR') || hasMarker('dlssnr');
-
   // 检查是否为传统 Super Resolution、Ray Reconstruction 或 Frame Generation
-  const hasDlssSrPdb = hasAscii('nvngx_dlss.pdb');
-  const hasDlssRrPdb = hasAscii('nvngx_dlssd.pdb');
-  const hasDlssFgPdb = hasAscii('nvngx_dlssg.pdb');
-
-  if (hasDlssSrPdb && !hasDlssNrCallbacks) {
+  // Callback symbols already distinguish NR. Avoid searching the entire model
+  // for every absent fallback marker; keep SR/RR/FG precedence without them.
+  if (!hasDlssNrCallbacks && hasAscii('nvngx_dlss.pdb')) {
     return {
       validPe: true,
       kind: 'dlss_sr',
@@ -330,7 +327,7 @@ function identifyNgxBuffer(buf, filePath = '') {
       reason: '该文件实际为传统 DLSS Super Resolution (nvngx_dlss.dll)，而非 DLSS 5 神经渲染模型'
     };
   }
-  if (hasDlssRrPdb && !hasDlssNrCallbacks) {
+  if (!hasDlssNrCallbacks && hasAscii('nvngx_dlssd.pdb')) {
     return {
       validPe: true,
       kind: 'dlss_rr',
@@ -338,7 +335,7 @@ function identifyNgxBuffer(buf, filePath = '') {
       reason: '该文件实际为 DLSS Ray Reconstruction 光线重建 (nvngx_dlssd.dll)，而非 DLSS 5 神经渲染模型'
     };
   }
-  if (hasDlssFgPdb && !hasDlssNrCallbacks) {
+  if (!hasDlssNrCallbacks && hasAscii('nvngx_dlssg.pdb')) {
     return {
       validPe: true,
       kind: 'dlss_fg',
@@ -347,7 +344,7 @@ function identifyNgxBuffer(buf, filePath = '') {
     };
   }
 
-  if (hasDlssNrPdb || hasDlssNrCallbacks || hasDlssNrFeaturePath) {
+  if (hasDlssNrPdb || hasDlssNrCallbacks || hasAscii('source/features/dlssnr/') || hasMarker('NVSDK_NGX_D3D12_DLSSNR') || hasMarker('dlssnr')) {
     return {
       validPe: true,
       kind: 'dlss_nr',
@@ -367,7 +364,7 @@ function identifyNgxBuffer(buf, filePath = '') {
 }
 
 // 扫描并验证单个 DLL 文件的完整特征（带文件状态缓存）
-function inspectNeuralModelBinary(filePath) {
+function inspectNeuralModelBinary(filePath, { fresh = false } = {}) {
   let stat;
   try {
     stat = fs.statSync(filePath);
@@ -382,7 +379,7 @@ function inspectNeuralModelBinary(filePath) {
   // zero timestamps. A cached identity is only reusable for a real file.
   const cacheable = stat.ino !== undefined;
   const cached = cacheable && binaryInspectionCache.get(cacheKey);
-  if (cached && cached.stamp === stamp) return cached.result;
+  if (!fresh && cached && cached.stamp === stamp) return cached.result;
 
   const bitness = pe.getBitness(filePath);
   const version = pe.getFileVersion(filePath);
@@ -393,8 +390,16 @@ function inspectNeuralModelBinary(filePath) {
     return { exists: true, valid: false, reason: `读取失败: ${err.message}` };
   }
 
-  const identity = identifyNgxBuffer(buf, filePath);
   const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+  // Runtime views and the component library can contain identical DLL copies.
+  // Every file is still hashed; only repeat parsing of identical bytes is skipped.
+  const identical = binaryContentCache.get(sha256);
+  if (identical) {
+    const result = {...identical, filePath:path.resolve(filePath), fileName:path.basename(filePath)};
+    if (cacheable) binaryInspectionCache.set(cacheKey, {stamp,result});
+    return result;
+  }
+  const identity = identifyNgxBuffer(buf, filePath);
   const fatbin = identity.isNeuralRendering
     ? scanBufferArchitectures(buf)
     : { architectures: [], smCounts: {}, containerCount: 0 };
@@ -435,6 +440,10 @@ function inspectNeuralModelBinary(filePath) {
   };
 
   if (cacheable) binaryInspectionCache.set(cacheKey, { stamp, result });
+  if (valid) {
+    binaryContentCache.set(sha256, result);
+    if (binaryContentCache.size > 16) binaryContentCache.delete(binaryContentCache.keys().next().value);
+  }
   return result;
 }
 
@@ -555,9 +564,13 @@ function listNeuralModels({ payloadDir, userDataDir, gpuName = '', hardwareProfi
   if(userDataDir){
     const library=new (require('./component-library').ComponentLibrary)(userDataDir);
     for(const p of library.catalog().packages.filter(p=>p.component==='dlss-nr')){
+      const expected = p.files.find(f=>f.rel==='nvngx_dlssnr.dll')?.sha256;
+      // An already verified source supplies this identity. Reading an identical
+      // catalog copy cannot add a model; applying that package still verifies it.
+      if (localSources.some(m=>m.sha256===expected)) continue;
       const file=require('./component-library').safe(library.directory(p),'nvngx_dlssnr.dll');
       const info=inspectNeuralModelBinary(file);
-      if(info.valid&&info.sha256===p.files.find(f=>f.rel==='nvngx_dlssnr.dll')?.sha256&&!localSources.some(m=>m.sha256===info.sha256))localSources.push({...info,sourceType:'统一组件库',bundled:false});
+      if(info.valid&&info.sha256===expected&&!localSources.some(m=>m.sha256===info.sha256))localSources.push({...info,sourceType:'统一组件库',bundled:false});
     }
   }
   const asLocalModel = (info, entry = {}) => {
@@ -607,7 +620,7 @@ function importNeuralModel(sourceFilePath, userDataDir, meta = {}) {
   if (!sourceFilePath || !fs.existsSync(sourceFilePath)) {
     throw Object.assign(new Error('未找到指定的模型文件'), { code: 'errModelFileNotFound' });
   }
-  const info = inspectNeuralModelBinary(sourceFilePath);
+  const info = inspectNeuralModelBinary(sourceFilePath, {fresh:true});
   if (!info.valid) {
     throw Object.assign(new Error(info.reason || '无效的 DLSS 5 神经渲染模型文件'), {
       code: info.kind === 'dlss_sr' || info.kind === 'dlss_rr' || info.kind === 'dlss_fg'
@@ -867,8 +880,10 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
   const modelId = normalizeModelId(selection.neuralModelId);
   const effectivePayloadDir = resolvePayloadDir(payloadDir);
 
-  const scan = require('./game-api').withGameApi(await scanGame(gameDir), options.apiOverride);
+  const scan = require('./game-api').withGameApi(await scanGame(gameDir, options.exePath), options.apiOverride);
   if (!scan.chosen) throw Object.assign(new Error('未在游戏目录中找到可执行文件'), { code: 'errNoExe' });
+  if (options.exePath && path.resolve(options.exePath).toLowerCase() !== path.resolve(scan.chosen.path).toLowerCase())
+    throw Object.assign(new Error('所选游戏程序已不在扫描列表中，请重新选择。'), { code: 'errSelectedExeMissing' });
   const exePath = scan.chosen.path;
   const exeDir = path.dirname(exePath);
   const bitness = scan.chosen.bitness || 64;
@@ -971,7 +986,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     }
 
     // 校验目标模型二进制文件合法性与 GPU 架构兼容性
-    const binaryCheck = inspectNeuralModelBinary(chosenModel.filePath);
+    const binaryCheck = inspectNeuralModelBinary(chosenModel.filePath, {fresh:true});
     if (binaryCheck.sha256 !== chosenModel.sha256 || (selection.neuralModelSha256 && binaryCheck.sha256 !== selection.neuralModelSha256)) {
       throw Object.assign(new Error('所选神经模型的文件指纹已变化，请重新选择并预览。'), { code: 'errInvalidNeuralModel' });
     }
@@ -998,12 +1013,9 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
       await apply.writeTracked(manifest, gameDir, optiIni, updated, { kind: 'config' });
     }
 
-    // 根据所选硬件档位写入经过多游戏实机验证的 [RenoDX.DLSS5] 配置：
-    // 1. ConfigVersion=7 阻止 v8.5.0-rc10 启动时触发 pre-v7-migration 强行覆写 NRPreset=2 / NRStyle=1；
-    // 2. NRIntensity=1 (100% 原始神经渲染强度，防止 NRIntensity=2 导致 200% 过曝与边缘振铃伪影)；
-    // 3. NRPreset=0 (Natural)、NRStyle=0 (Balanced)、NRLookMode=0 (Native)、NRAutoMask=0、NRUICorrection=0；
-    // 4. 8GB 笔记本使用 NRResolutionScale=0.75 + NRLookUpsample=1 (Auto 边缘感知上采样)，确保在 007 First Light / 赛博朋克 2077
-    //    等 4 工作集游戏中显存占用始终低于 85% (杜绝 97% vram_over_budget 降速至 50 FPS)，桌面 16GB+ 显卡使用 NRResolutionScale=1。
+    // Defaults for new fields or an explicit tuning reset. Hardware profiles
+    // own resolution/workset budgets; these are configuration targets, not
+    // measurements or guarantees of in-game VRAM usage or frame rate.
     const feederConfig = require('./feeder-config');
     const reshadeIniPath = path.join(targetDir, 'ReShade.ini');
     const isDesktopProfile = hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx50_desktop';
@@ -1072,8 +1084,19 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
       ['RenoDX.DLSS5', 'NRHookPoint', '0'],
       ['RenoDX.DLSS5', 'UiLanguage', 'zh-Hans']
     ];
+    // Reapplying NR should not erase tuning made in the in-game panel. Only
+    // loader requirements are mandatory; a profile change updates its resource
+    // budget, while an explicit reset restores the complete managed defaults.
+    const previousProfile = manifest.neuralRendering?.hardwareProfile || manifest.hardwareProfile;
+    const profileChanged = !!previousProfile && previousProfile !== hardwareProfile;
+    const profileKeys = new Set(['NRResolutionScale', 'NRMaxWorksets']);
+    const requiredKeys = new Set(['ConfigVersion', 'EnableHooks', 'NeuralUplift', 'NREnableUpscaling']);
     for (const [sec, k, v] of nrSettings) {
-      iniText = feederConfig.setIni(iniText, sec, k, v);
+      if (options.resetNeuralTuning === true || feederConfig.getIni(iniText, sec, k) === null ||
+          requiredKeys.has(k) || (isHost64 && k === 'NRToggleKey') ||
+          (profileChanged && profileKeys.has(k))) {
+        iniText = feederConfig.setIni(iniText, sec, k, v);
+      }
     }
     await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
     await apply.enableAddonInIni(targetDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);

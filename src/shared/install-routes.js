@@ -19,6 +19,23 @@
     const added = ((scan.install && scan.install.added) || []).map(item => item.replace(/\\/g, '/').toLowerCase());
     return scan.upscalerFiles.some(file => !added.includes(String(file.rel || '').replace(/\\/g, '/').toLowerCase()));
   }
+  function nativeFgPresent(scan) {
+    const added = new Set(((scan?.install?.added) || []).map(rel => rel.replace(/\\/g, '/').toLowerCase()));
+    return [...(scan?.dlssFiles || []), ...(scan?.streamlineFiles || []), ...(scan?.upscalerFiles || [])]
+      .some(file => !added.has(String(file.rel || '').replace(/\\/g, '/').toLowerCase()) &&
+        /^(?:nvngx_dlssg|sl\.dlss_g|libxess_fg|ffx_fsr3.*|amd_fidelityfx_.*(?:frame|fsr3).*)\.dll$/i
+          .test(file.name || String(file.path || '').split(/[\\/]/).pop()));
+  }
+  function encoreReason(target, api = target?.api) {
+    if (target?.launcherProtected) return '鸣潮继续使用独立加载路线，不切换 Encore。';
+    if (!target || target.bitness !== 64 || !['dxgi', 'vulkan'].includes(api) ||
+        (api === 'dxgi' && !['DirectX 11', 'DirectX 12'].includes(target.apiLabel)))
+      return 'Encore 首批支持 64 位 DirectX 11、DirectX 12 和 Vulkan 游戏。';
+    if (target.hasNativeFg !== false) return target.hasNativeFg
+      ? '已检测到原生帧生成文件；Encore 首批仅适配没有原生补帧的游戏。'
+      : '帧生成文件检查尚未完成。';
+    return null;
+  }
   function optiReason(target, api = target && target.api) {
     if (!target || target.bitness !== 64 || target.emulator) return 'optiUnsupported';
     if (!['dxgi', 'vulkan'].includes(api) || target.apiLabel === 'DirectX 10') return 'optiUnsupported';
@@ -35,6 +52,7 @@
     if (api === 'd3d8' || api === 'ddraw') return target.bitness === 32 ? ['feeder'] : [];
     if (['d3d9', 'opengl', 'vulkan'].includes(api)) {
       const list = !optiReason(target, api) ? ['feeder', 'optiscaler'] : ['feeder'];
+      if (!encoreReason(target, api)) list.push('encore');
       // The DLSS Tool presents on D3D9 itself - "D3D9 and D3D11 use a
       // same-adapter, device-only D3D12 endpoint" - so it does not need
       // dgVoodoo's translation the way the Feeder route does here. OpenGL and
@@ -55,6 +73,7 @@
     // the reason this route exists. D3D9 goes through dgVoodoo here and is a
     // separate question. 32-bit is out: the add-on is 64-bit only.
     if (target.bitness === 64) routes.push('renodx');
+    if (!encoreReason(target, api)) routes.push('encore');
     return routes;
   }
   function recommendedRoute(scan, target = scan.chosen) {
@@ -64,7 +83,7 @@
       ? 'feeder' : nativeDlss ? 'native' : 'feeder';
     return routes.includes(wanted) ? wanted : (routes[0] || null);
   }
-  const api = { routesFor, recommendedRoute, nativeDlssPresent, nativeUpscalerPresent, optiReason };
+  const api = { routesFor, recommendedRoute, nativeDlssPresent, nativeUpscalerPresent, nativeFgPresent, encoreReason, optiReason };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.installRoutes = api;
 })(typeof window !== 'undefined' ? window : globalThis);

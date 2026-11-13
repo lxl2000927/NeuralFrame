@@ -14,7 +14,8 @@ const backends = require('../src/core/backend-manager');
 const ini = require('../src/core/feeder-config');
 
 const ROOT = path.resolve(__dirname, '..');
-const PAYLOAD_DIR = path.join(ROOT, 'payload');
+const PAYLOAD_DIR = require('./fixtures/payload').root;
+test.beforeEach(t => require('./fixtures/payload').use(t));
 
 test('模块 A：真实 nvngx_dlssnr.dll CUDA Fatbin 架构扫描与 RTX 4070 Laptop (sm_89) 兼容性校验', () => {
   const nrPath = path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlssnr.dll');
@@ -353,14 +354,15 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
   assert.equal(resDesktop50.status.mfg.status, actualBlackwell ? 'verified' : 'experimental');
 
   const iniDesktop50 = fs.readFileSync(path.join(gameDir, 'ReShade.ini'), 'utf8');
-  // 50 系桌面卡 MFG 必须开启 DynamicMFG=1、QualityGuardMode=0 并关闭所有 40 系二进制补丁，直通 Blackwell 原生硬件 Flip Metering
+  // A manually selected RTX 50 preset must not impersonate physical hardware.
+  const actualAda = neuralModels.detectGpuArchitecture(resDesktop50.status.hardware.gpu.name).code === 'ada';
   assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ForceMultiplier'), '4');
   assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'DynamicMFG'), '1');
   assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'QualityGuardMode'), '0');
-  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'TemporalFix'), '0');
-  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'BlackwellFrameworkKernels'), '0');
-  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ForceFlipMeteringOff'), '0');
-  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ExperimentalAdaptiveQuality'), '0');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'TemporalFix'), actualAda ? '1' : '0');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'BlackwellFrameworkKernels'), actualAda ? '1' : '0');
+  if (!actualAda) assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ForceFlipMeteringOff'), '0');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ExperimentalAdaptiveQuality'), actualAda ? '1' : '0');
   assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'RaiseFrameCeiling'), '1');
 });
 
@@ -464,6 +466,8 @@ test('老游戏全自动离线管线：32位 DX9 与 64位 DX10 无原生 DLSS �
     fs.rmSync(userDataDir, { recursive: true, force: true });
   });
 
+  require('./fixtures/payload').seedRuntimeComponents(userDataDir);
+
   // 1. 构造 32 位 DirectX 9 老游戏（无原生 DLSS）
   writePe(path.join(gameDx9Dir, 'LegacyDX9.exe'), { bitness: 32, text: 'Direct3DCreate9' });
   const resDx9 = await combinedManager.applyCombinedConfiguration(gameDx9Dir, {
@@ -526,6 +530,8 @@ test('破解版与老版本 DLSS 专项兼容：深层 2.x/3.x 自动升级、DL
     fs.rmSync(crackedDlss1Dir, { recursive: true, force: true });
     fs.rmSync(userDataDir, { recursive: true, force: true });
   });
+
+  require('./fixtures/payload').seedRuntimeComponents(userDataDir);
 
   // 场景 1：UE4/UE5 破解版游戏（含 steamclient_loader.exe、Game_org.exe 备份、破解补丁 dxgi.dll 以及深层插件目录 2.3.0.0 旧版 DLSS）
   const binDir = path.join(crackedUeDir, 'Game', 'Binaries', 'Win64');

@@ -87,12 +87,13 @@ test('the route follows what the add-on says it presents on', () => {
 // in a file named after it, and the writer refused a name it did not know -
 // so a route could be offered, chosen, and then rejected at install with no
 // clue why. The list that decides is one line, and it had not been updated.
-test('the route can keep its own settings, like every other route', () => {
+test('the route can keep its own settings, like every other route', async t => {
   const backends = require('../src/core/backend-manager');
-  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'backend-manager.js'), 'utf8');
-  assert.match(source, /\['native', 'feeder', 'optiscaler', 'renodx'\]\.includes\(route\)/,
-    'renodx is on the list profileFile checks');
-  assert.ok(typeof backends.saveProfile === 'function' && typeof backends.loadProfile === 'function');
+  const dir=temp(t),exe=writePe(path.join(dir,'Game.exe'));
+  fs.writeFileSync(path.join(dir,'ReShade.ini'),'[RenoDX.DLSS]\nDirectNeuralRenderingPassCount=3\n');
+  await backends.saveProfile(dir,{route:'renodx',game:{exe:'Game.exe',api:'dxgi'}});
+  const saved=backends.loadProfile({gameDir:dir,exePath:exe,api:'dxgi',route:'renodx'});
+  assert.equal(saved['ReShade.ini'],fs.readFileSync(path.join(dir,'ReShade.ini'),'utf8'));
 });
 
 test('nothing treats the route as OptiScaler, which has a different installer', () => {

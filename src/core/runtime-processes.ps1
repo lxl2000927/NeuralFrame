@@ -21,7 +21,7 @@ foreach ($item in Get-CimInstance Win32_Process) {
     $proc = Get-Process -Id $item.ProcessId -ErrorAction Stop
     $started = $proc.StartTime.ToUniversalTime()
     foreach ($module in $proc.Modules) {
-      if ($module.ModuleName -match '(?i)(nvngx|renodx|mfg|dlss|reshade|optiscaler|^sl\.|^dxgi\.|^d3d\d+\.|^libxess)') {
+      if ($module.ModuleName -match '(?i)(nvngx|renodx|mfg|dlss|reshade|optiscaler|rtx-encore|^version\.dll$|^dinput8\.dll$|^winmm\.dll$|^sl\.|^dxgi\.|^d3d\d+\.|^libxess)') {
         $modules += @{ path = $module.FileName; name = $module.ModuleName }
       }
     }

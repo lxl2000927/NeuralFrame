@@ -15,6 +15,10 @@
 .module-fields { display:grid; gap:16px; }
 .module-field { display:grid; gap:8px; min-width:0; }
 .module-field > span { font-size:13px; color:var(--text); font-weight:600; }
+.module-field input[type="number"] { width:100%; min-width:0; min-height:32px; padding:6px 10px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); }
+.module-fields > label:not(.module-field) { display:flex; align-items:center; gap:8px; }
+.engine-version .footnote { margin:0; line-height:1.6; }
+.engine-version > button { justify-self:start; }
 .native-stack h3 { margin:0; font-size:13px; }
 .native-stack .module-facts { margin:0; padding:0 12px; border:1px solid var(--border); border-radius:7px; }
 .native-stack .module-facts > div:last-child { border-bottom:0; }

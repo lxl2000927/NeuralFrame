@@ -1,0 +1,62 @@
+const {_electron:electron}=require('@playwright/test');
+const path=require('node:path'),assert=require('node:assert/strict'),fs=require('node:fs');
+const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+(async()=>{
+ const app=await electron.launch({executablePath:require('electron'),args:[path.resolve('test/fixtures/neuralframe-flow-main.cjs')],env});
+ try{
+  const p=await app.firstWindow();p.setDefaultTimeout(15000);
+  const errors=[];p.on('pageerror',e=>errors.push(e.message));
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].show());
+  await p.evaluate(async()=>{window.qa.setEngineCatalog(true);await window.lab.componentPrepare();});
+  const nav=p.getByRole('navigation');
+  await nav.getByRole('button',{name:'游戏',exact:true}).click();
+  const choose=async(label,option)=>{await p.getByRole('combobox',{name:label,exact:true}).click();await p.getByRole('option',{name:option}).click();};
+  const pickGame=async name=>p.locator('.game-list').getByRole('button',{name}).click();
+  await pickGame(/Wuthering Waves/);
+  const engine=p.getByRole('combobox',{name:'鸣潮独立加载器版本',exact:true});
+  await engine.waitFor();assert.equal(await engine.getAttribute('data-value'),'__keep__');
+  await p.getByText('神经渲染高级参数',{exact:true}).click();
+  const logging=p.getByRole('checkbox',{name:'插件诊断日志',exact:true});
+  assert.equal(await logging.isDisabled(),true,'Installed MFG 1.7.0 has no adapted diagnostics flag');
+  await choose('鸣潮独立加载器版本','使用推荐版本 1.7.1');
+  assert.equal(await logging.isEnabled(),true);
+  await p.getByRole('spinbutton',{name:'结构强度',exact:true}).fill('1.15');
+  await pickGame(/Workflow test/);await pickGame(/Wuthering Waves/);
+  assert.equal(await engine.getAttribute('data-value'),'');
+  await p.getByText('神经渲染高级参数',{exact:true}).click();
+  assert.equal(await p.getByRole('spinbutton',{name:'结构强度',exact:true}).inputValue(),'1.15');
+  const preview=async(button='预览并应用')=>{
+   await p.getByRole('button',{name:button,exact:true}).click();
+   await p.getByRole('heading',{name:'应用前变更预览'}).waitFor();
+   return p.evaluate(()=>window.qa.audit().requests.at(-1).patch);
+  };
+  const cancel=()=>p.getByRole('button',{name:'取消',exact:true}).click();
+  let patch=await preview('仅应用补帧设置');
+  assert.equal(patch.mfgPackageId,'');assert.equal(patch.mfgAdvanced,undefined,'MFG-only does not apply pending NR appearance');await cancel();
+  patch=await preview();assert.equal(patch.mfgAdvanced.structure,1.15);assert.equal(patch.mfgPackageId,'');await cancel();
+  await p.locator('.apply-bar').getByRole('button',{name:'撤销',exact:true}).click();
+  assert.equal(await engine.getAttribute('data-value'),'__keep__');
+  assert.equal(await p.getByRole('spinbutton',{name:'结构强度',exact:true}).inputValue(),'0.7');
+  await p.getByRole('spinbutton',{name:'色调强度',exact:true}).fill('1.2');
+  patch=await preview();assert.equal(patch.mfgAdvanced.tone,1.2);assert.equal(patch.mfgPackageId,undefined,'Appearance-only edit must retain installed engine');await cancel();
+  if(process.env.NEURALFRAME_QA_OUT){fs.mkdirSync(process.env.NEURALFRAME_QA_OUT,{recursive:true});await p.screenshot({path:path.join(process.env.NEURALFRAME_QA_OUT,'wuwa-engine.png'),fullPage:true});}
+  await pickGame(/Unconfigured game/);
+  await choose('渲染后端','RTX Encore');
+  await p.getByText('已安装：未安装 · 推荐：2.4.1',{exact:false}).waitFor();
+  await choose('Encore 神经渲染','启用');await choose('NR 处理次数','2');
+  await p.getByText('逐遍处理位置',{exact:true}).click();
+  await choose('第 2 遍处理位置','最终画面');
+  await choose('原生 DLSS 超分比例','自定义');
+  await p.getByRole('spinbutton',{name:'DLSS 自定义比例',exact:true}).fill('33');
+  await choose('Encore 引擎版本',/^2\.3\.0 ·/);
+  assert.equal(await p.locator('.apply-bar').getByRole('button',{name:'预览并应用',exact:true}).isDisabled(),true,'Old version must not accept 33% or per-pass placement');
+  await choose('Encore 引擎版本','使用推荐版本 2.4.1');
+  patch=await preview();assert.equal(patch.encorePackageId,'');assert.equal(patch.encore.dlssCustomScale,33);assert.equal(patch.encore.nrPass2Placement,'present');await cancel();
+  if(process.env.NEURALFRAME_QA_OUT)await p.screenshot({path:path.join(process.env.NEURALFRAME_QA_OUT,'encore-engine.png'),fullPage:true});
+  await choose('可执行文件',/^Alt\\game.exe/);
+  assert.equal(await p.getByRole('combobox',{name:'Encore 引擎版本',exact:true}).getAttribute('data-value'),'__keep__','Engine overrides belong to their executable');
+  assert.equal(await p.getByRole('combobox',{name:'原生 DLSS 超分比例',exact:true}).count(),0,'SR override is limited to native DLSS');
+  assert.deepEqual(errors,[]);assert.equal((await p.evaluate(()=>window.qa.audit())).applied,0,'All new controls are previewed, not deployed by reading');
+  console.log('PASS: engine recommendations, version gates, per-game drafts, scope isolation and preview payloads');
+ }finally{await app.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

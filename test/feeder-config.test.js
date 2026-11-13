@@ -5,6 +5,14 @@ const assert = require('node:assert/strict');
 
 const config = require('../src/core/feeder-config');
 
+test('enabling add-ons removes exact identifiers while preserving unrelated sections and INI formatting', () => {
+  const before = '\uFEFFDisabledAddons=foo,foobar\r\n[ADDON]\r\n  DisabledAddons = .\\FOO.addon64,foo.addon32,foo-backup,keep\r\n[Other]\r\nDisabledAddons=foo\r\n';
+  const expected = '\uFEFFDisabledAddons=foobar\r\n[ADDON]\r\n  DisabledAddons = foo.addon32,foo-backup,keep\r\n[Other]\r\nDisabledAddons=foo\r\n';
+  assert.equal(config.enableAddons(before,['foo.addon64']),expected);
+  assert.equal(config.enableAddons(expected,['foo.addon64']),expected);
+  assert.equal(config.enableAddons('[ADDON]\nOther=1\n',['foo.addon64']),'[ADDON]\nOther=1\n');
+});
+
 test('32-bit ReShade configuration preserves user settings and orders the feeder', () => {
   const ini = config.configureGameReShade([
     '[GENERAL]',

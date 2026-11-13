@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const standaloneGames = require('./library-standalone');
+const pe = require('./core/pe');
 
 // Entries that are tooling rather than games.
 const NOT_A_GAME = /redistributabl|steamworks common|directx|vcredist|proton|steam linux runtime|soundtrack/i;
@@ -56,21 +57,32 @@ const kv = (text, key) => (text.match(new RegExp(`"${key}"\\s+"([^"]+)"`, 'i')) 
 
 // ---------- Steam ----------
 
-// Steam already downloaded the art when the game was installed. The tall
-// poster keeps its classic name; everything else in the folder is icons.
+// Steam already downloaded artwork when the game was installed. The poster
+// and landscape artwork have distinct roles; a header must not become a tile.
 function steamPoster(steamRoot, appid) {
-  const dir = path.join(steamRoot, 'appcache', 'librarycache', String(appid));
+  const cache = path.join(steamRoot, 'appcache', 'librarycache');
+  // Prefer a portrait across both layouts before considering either header.
+  // Steam upgrades can leave a flat portrait beside a newer nested header.
   for (const name of ['library_600x900.jpg', 'header.jpg']) {
-    const file = path.join(dir, name);
-    if (fs.existsSync(file)) return { file, tall: name.startsWith('library_600x900') };
-  }
-  // Older clients kept them flat, prefixed with the appid.
-  const flat = path.join(steamRoot, 'appcache', 'librarycache');
-  for (const name of [`${appid}_library_600x900.jpg`, `${appid}_header.jpg`]) {
-    const file = path.join(flat, name);
-    if (fs.existsSync(file)) return { file, tall: name.includes('600x900') };
+    for (const file of [path.join(cache,String(appid),name),path.join(cache,`${appid}_${name}`)]) {
+      try { if (fs.statSync(file).isFile()) return {file,tall:name.startsWith('library_600x900')}; } catch {}
+    }
   }
   return null;
+}
+
+function steamArtwork(steamRoot, appid) {
+  const cache = path.join(steamRoot, 'appcache', 'librarycache');
+  const find = names => {
+    // Check fixed filenames only; large Steam libraries need no artwork walk.
+    for (const name of names) {
+      for (const file of [path.join(cache, String(appid), name), path.join(cache, `${appid}_${name}`)]) {
+        try { if (fs.statSync(file).isFile()) return file; } catch {}
+      }
+    }
+    return null;
+  };
+  return { hero: find(['library_hero.jpg', 'header.jpg']), tile: find(['capsule_616x353.jpg']) };
 }
 
 function linuxSteamRoots(home = os.homedir(), env = process.env) {
@@ -112,16 +124,19 @@ function steam(options = {}) {
         const appid = kv(text, 'appid');
         const installdir = kv(text, 'installdir');
         const name = kv(text, 'name') || installdir;
+        const stateFlags = Number(kv(text, 'StateFlags') || 0);
         if (!appid || !installdir || NOT_A_GAME.test(name)) continue;
         const dir = path.join(appsDir, 'common', installdir);
         if (!fs.existsSync(dir)) continue;
         games.push({
           launcher: 'Steam', id: appid, name, dir, poster: steamPoster(base, appid),
+          artwork: steamArtwork(base, appid),
           steamRoot: base,
+          stateFlags,
           // A prefix only exists for titles launched through Steam Play. This
           // metadata lets the installer run the Windows ReShade setup in the
           // same Proton bottle as the game instead of invoking a host Wine.
-          protonPrefix: platform === 'linux' ? path.join(base, 'steamapps', 'compatdata', appid, 'pfx') : null
+          protonPrefix: platform === 'linux' ? path.join(lib, 'steamapps', 'compatdata', appid, 'pfx') : null
         });
       }
       if (!options.roots && platform === 'win32') {
@@ -132,7 +147,7 @@ function steam(options = {}) {
             if (!entry.isDirectory() || NOT_A_GAME.test(entry.name) || NOT_A_GAME_DIR.test(entry.name)) continue;
             const dir = path.join(commonDir, entry.name);
             const norm = path.resolve(dir).toLowerCase();
-            if (seenDirs.has(norm) || !holdsGame(dir, 2)) continue;
+            if (seenDirs.has(norm) || !holdsGame(dir, 2) || isBrokenSteamOrphan(dir)) continue;
             seenDirs.add(norm);
             games.push({ launcher: 'Steam', id: null, name: entry.name, dir, poster: null, steamRoot: base, protonPrefix: null });
           }
@@ -213,7 +228,7 @@ const SYSTEM_DIRS = new Set([
 
 // Folder names people give a games library. Matched first so a library that
 // happens to hold one game is still recognised.
-const LIBRARY_NAME = /^(games?|my ?games|steamlibrary|gog ?games|epic ?games|xbox ?games|origin ?games|repacks?|emulation)$/i;
+const LIBRARY_NAME = /^(games?|my ?games|steamlibrary|gog ?games|epic ?games|xbox ?games|origin ?games|repacks?|emulation|游戏|单机游戏|学习版|免安装.*)$/i;
 const NOT_A_GAME_EXE = /^(unins|setup|install|vcredist|dxsetup|dotnet|oalinst|crashpad|launcher_installer|dgvoodoocpl|dlss5-feed-host)/i;
 
 // Fixed disks only. A disconnected network drive would block on every read.
@@ -441,6 +456,29 @@ function xbox(options = {}) {
 
 // One game can be installed twice - a launcher copy and a loose copy. They are
 // different installs, so both are kept; only the exact same folder is merged.
+function isBrokenSteamOrphan(dir, systemDirs) {
+  // Only inspect manifest-less Steam leftovers. Uncertain dependency lookup
+  // (SxS manifests, nested launchers, unreadable PE) keeps the entry visible.
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+  if (entries.some(e => e.isFile() && /\.manifest$/i.test(e.name))) return false;
+  const exes = entries.filter(e => e.isFile() && /\.exe$/i.test(e.name) && !NOT_A_GAME_EXE.test(e.name));
+  if (!exes.length) return false;
+  if (entries.some(e => e.isDirectory() && holdsGame(path.join(dir, e.name), 1))) return false;
+  const winRoot = process.env.SystemRoot || 'C:\\Windows';
+  const roots = systemDirs || [path.join(winRoot, 'SysWOW64'), path.join(winRoot, 'System32'), ...(process.env.PATH || '').split(path.delimiter).filter(Boolean)];
+  const localDirs = [dir, ...entries.filter(e => e.isDirectory()).map(e => path.join(dir, e.name))];
+  return exes.every(exe => {
+    let imports;
+    try { imports = pe.getImports(path.join(dir, exe.name)); } catch { return false; }
+    if (!imports.length) return false;
+    return imports.some(name => {
+      if (!/\.dll$/i.test(name) || /^(api-ms-win-|ext-ms-win-|msvcr|msvcp|vcruntime|vcomp|mfc\d|atl\d)/i.test(name)) return false;
+      return ![...localDirs, ...roots].some(root => fs.existsSync(path.join(root, name)));
+    });
+  });
+}
+
 function dedupe(games) {
   const seen = new Map();
   for (const entry of games) {
@@ -449,8 +487,10 @@ function dedupe(games) {
     const existing = seen.get(key);
     // A launcher entry carries a real name and art, so it wins over a folder.
     const dlc = game => /\bdlc\b|phantom liberty/i.test(game.name || '');
-    if (!existing || (dlc(existing) && !dlc(g)) ||
-        (!dlc(g) && existing.launcher.startsWith('My folders') && !g.launcher.startsWith('My folders'))) {
+    const sharedStub = game => game?.launcher === 'Steam' && Boolean(game.stateFlags & 64);
+    if (!existing || (sharedStub(existing) && !sharedStub(g)) ||
+        (!sharedStub(g) && dlc(existing) && !dlc(g)) ||
+        (!sharedStub(g) && !dlc(g) && existing.launcher.startsWith('My folders') && !g.launcher.startsWith('My folders'))) {
       seen.set(key, g);
     }
   }
@@ -464,7 +504,8 @@ function canonicalGame(game) {
   if (/cyberpunk|phantom liberty/i.test(game.name || '') &&
       fs.existsSync(path.join(game.dir, 'bin', 'x64', 'Cyberpunk2077.exe'))) {
     return { ...game, name: 'Cyberpunk 2077', ...(game.launcher === 'Steam'
-      ? { id: '1091500', poster: game.id === '1091500' ? game.poster : null } : {}) };
+      ? { id: '1091500', poster: game.id === '1091500' ? game.poster : null,
+        ...(game.id !== '1091500' && game.artwork ? { artwork: { hero: null, tile: null } } : {}) } : {}) };
   }
   return game;
 }
@@ -519,5 +560,5 @@ function discover(extraFolders = [], scanDrives = false, excludedRoots = [], fin
 
 module.exports = {
   discover, folder, dedupe, autoRoots, drives, isInside, filterExcluded,
-  steam, linuxSteamRoots, gog, ubisoft, xbox, standalone, gamingRootFolder, setRegistryRunner
+  steam, linuxSteamRoots, gog, ubisoft, xbox, standalone, gamingRootFolder, setRegistryRunner, isBrokenSteamOrphan
 };

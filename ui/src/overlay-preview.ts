@@ -24,15 +24,6 @@ const runtime = window as typeof window & {
 };
 const panel = document.getElementById("panel")!;
 let currentLanguage = "";
-const reportSize = () =>
-  parent.postMessage(
-    {
-      type: "neuralframe-preview-height",
-      height: Math.ceil(panel.getBoundingClientRect().height),
-    },
-    "*",
-  );
-new ResizeObserver(reportSize).observe(panel);
 window.addEventListener("message", (event) => {
   if (
     event.source !== parent ||
@@ -66,5 +57,4 @@ window.addEventListener("message", (event) => {
       "{0} 显示／隐藏 · 拖动标题栏移动 · 右下角缩放 · Home 高级菜单",
       [panel.dataset.overlayHotkey],
     );
-  reportSize();
 });

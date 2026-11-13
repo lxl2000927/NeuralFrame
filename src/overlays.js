@@ -67,7 +67,9 @@ function createOverlayLibrary(root, builtinFile, forbiddenRoots = []) {
   function customEntry(id) {
     idCheck(id);
     const entry = readJson(path.join(entries, `${id}.json`));
-    if (entry.id !== id || ![32, 64].includes(entry.architecture)) throw Error('Invalid overlay record.');
+    if (!entry || entry.id !== id || entry.sha256 !== id || ![32, 64].includes(entry.architecture) ||
+        typeof entry.name !== 'string' || !entry.name.trim() || typeof entry.description !== 'string' ||
+        entry.ready !== true || (entry.builtin !== undefined && entry.builtin !== false)) throw Error('Invalid overlay record.');
     const file = path.join(entries, `${id}.addon${entry.architecture}`);
     return { ...entry, file };
   }
@@ -141,7 +143,26 @@ function createOverlayLibrary(root, builtinFile, forbiddenRoots = []) {
       fs.writeFileSync(target, binary.data, { flag:'wx' });
     }
     const metadata = path.join(entries, `${id}.json`);
-    if (!fs.existsSync(metadata)) fs.writeFileSync(metadata, JSON.stringify(entry), { flag: 'wx' });
+    let validMetadata = false;
+    try {
+      const current = customEntry(id);
+      validMetadata = current.architecture === binary.architecture && current.sha256 === id;
+    } catch (error) {
+      if (error.code && error.code !== 'ENOENT') throw error;
+    }
+    if (!validMetadata) {
+      // A failed first import can leave a partial record. Explicit reimport of
+      // these verified bytes repairs only our metadata, never installed files.
+      const temporary = path.join(entries, crypto.randomUUID() + '.tmp');
+      const handle = fs.openSync(temporary, 'wx');
+      try {
+        try { fs.writeFileSync(handle, JSON.stringify(entry)); }
+        finally { fs.closeSync(handle); }
+        fs.renameSync(temporary, metadata);
+      } finally {
+        if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+      }
+    }
     return entry;
   }
   function remove(id) {

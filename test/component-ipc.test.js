@@ -3,6 +3,41 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {createRequire}=require('module');
 const {writePe}=require('./fixtures/pe');
 
+for (const phase of ['initialization','catalog read']) {
+test(`cancelling a component download during library ${phase} prevents the transfer and permits retry`, async () => {
+  const main = path.resolve(__dirname, '../main.js'), realRequire = createRequire(main), handlers = new Map();
+  const electron = {app:{setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>os.tmpdir()},
+    ipcMain:{handle:(name,handler)=>handlers.set(name,handler)}};
+  const host = Object.create(process); host.on = () => host;
+  const context = vm.createContext({require:name=>name === 'electron' ? electron : realRequire(name),
+    __dirname:path.dirname(main),process:host,Buffer,console});
+  vm.runInContext(fs.readFileSync(main,'utf8'),context,{filename:main});
+  let finishWait, initializations = 0, downloads = 0, cancellations = 0;
+  context.library = {initialized:true, init:async()=>{
+    if (++initializations === 1 && phase === 'initialization') await new Promise(resolve=>{ finishWait = resolve; });
+  }, list:async()=>{ await new Promise(resolve=>{ finishWait = resolve; }); return {ok:true}; }};
+  context.updater = {status:()=>({}), download:async()=>{ downloads++; return {ok:true}; },cancel:()=>{ cancellations++; return {ok:true}; }};
+  context.runtime = {list:()=>[]};
+  vm.runInContext('unifiedComponents=library; componentUpdates=updater; runtimeCache=runtime',context);
+  const event = {sender:{send(){},isDestroyed:()=>false}};
+  const download = () => handlers.get('library-download')(event,'fixture');
+  const read = phase === 'catalog read' ? handlers.get('library-components')() : null;
+  const pending = download();
+  const competing = await handlers.get('library-download')({sender:{}},'other');
+  assert.equal(competing.code,'errJobBusy','a rejected competing request must preserve the first cancellation owner');
+  handlers.get('library-cancel')({sender:{}});
+  assert.equal(cancellations,0,'another window cannot cancel this request');
+  handlers.get('library-cancel')(event);
+  finishWait();
+  if (read) await read;
+  assert.equal((await pending).cancelled,true,'cancellation must survive the pre-download wait');
+  assert.equal(downloads,0,'a cancelled request must not start downloading later');
+  if (read) assert.equal(initializations,0,'a cancelled queued request need not start initialization');
+  assert.equal((await download()).ok,true);
+  assert.equal(downloads,1,'the next explicit request can start normally');
+});
+}
+
 test('component browsers share reads during update checks and wait for committed game writes', async () => {
   const main = path.resolve(__dirname, '../main.js');
   const realRequire = createRequire(main);
@@ -42,6 +77,7 @@ test('component browsers share reads during update checks and wait for committed
   assert.equal(invalidations, 1);
 });
 test('real main IPC previews before install, records only committed work, enforces tokens and persisted lock',async t=>{
+ require('./fixtures/payload').use(t);
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'component-ipc-')),game=path.join(root,'Game');fs.mkdirSync(game);
  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
  const exe=path.join(game,'Game.exe');writePe(exe,{bitness:64,text:'D3D12CreateDevice',size:131072});

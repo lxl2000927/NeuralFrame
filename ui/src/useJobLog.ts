@@ -6,6 +6,7 @@ const labels: Record<string, string> = {
   wuwaProxyConfigured: "已配置鸣潮独立加载器",
   wuwaExternalModelKept: "已保留外部变更后的模型和归属记录",
   restored: "已还原",
+  encoreConfigured: "已写入 Encore 配置",
   deleted: "已移除",
   added: "已添加",
   replaced: "已替换",

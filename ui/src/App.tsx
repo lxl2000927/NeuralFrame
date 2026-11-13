@@ -15,7 +15,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Puzzle,
-  Zap,
   Info,
   FolderPlus,
   CheckCircle2,
@@ -23,6 +22,7 @@ import {
 } from "lucide-react";
 import { getBridge } from "./bridge";
 import { Loading } from "./components";
+import { retryMissingArtwork } from "./useArtwork";
 import { GameCard, showGameMenu, type CardAction, type GameMenuHandler } from "./GameCard";
 import { HomeIntake, HomeActivity, HomeShelf } from "./features/Home";
 import { errorText, groupByLauncher } from "./domain";
@@ -52,7 +52,6 @@ const Library = preloadablePage(async () => ({ default: (await import("./feature
 const Addons = lazy(() =>
   import("./features/Addons").then((m) => ({ default: m.Addons })),
 );
-const Profile = preloadablePage(async () => ({ default: (await import("./features/Profile")).Profile }));
 const Settings = lazy(() =>
   import("./features/Utilities").then((m) => ({ default: m.Settings })),
 );
@@ -64,7 +63,6 @@ const Overlay = preloadablePage(async () => ({ default: (await import("./feature
 const nav = [
   { id: "home", label: "首页", icon: Home },
   { id: "games", label: "游戏", icon: Gamepad2 },
-  { id: "profile", label: "档位", title: "DLSS 5 与多帧生成控制中心", icon: Zap },
   { id: "library", label: "组件", title: "组件库", icon: Package },
   { id: "addons", label: "附加组件", icon: Puzzle },
   { id: "overlay", label: "叠加层", icon: Layers },
@@ -90,7 +88,12 @@ const pages: { id: string; label: string; title?: string; icon: typeof Home }[] 
 export default function App() {
   useLanguage();
   useEffect(() => {
-    const commonPages = [Games, Profile, Library, Overlay];
+    const online = () => retryMissingArtwork(true);
+    window.addEventListener("online", online);
+    return () => window.removeEventListener("online", online);
+  }, []);
+  useEffect(() => {
+    const commonPages = [Games, Library, Overlay];
     let cancelled = false;
     let idle: number;
     const next = () => {
@@ -105,8 +108,6 @@ export default function App() {
   const [page, setPage] = useState("home"),
     [modelLibraryOrigin, setModelLibraryOrigin] = useState(""),
     [importTarget, setImportTarget] = useState<string>(),
-    [pageRevision, setPageRevision] = useState<Record<string, number>>({}),
-    [forcing, setForcing] = useState(false),
     [visited, setVisited] = useState(() => new Set(["home"])),
     [refreshToken, setRefreshToken] = useState(0),
     [games, setGames] = useState<Game[]>([]),
@@ -124,7 +125,6 @@ export default function App() {
     [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const noticeId = useRef(0);
   const revisionClock = useRef(0);
-  const activeGameTab = useRef("graphics");
   const setNotice = useCallback((text: string, tone?: NoticeTone) => {
     if (!text) {
       setNoticeState(null);
@@ -163,7 +163,7 @@ export default function App() {
     return updated;
   });
   const [scanning,setScanning] = useState(false);
-  const load = async (preferredDir?: string, rescan = false) => {
+  const load = async (preferredDir?: string) => {
     const request = ++libraryRequest.current;
     setLoading(true);
     setScanning(false);
@@ -172,43 +172,9 @@ export default function App() {
       if (request !== libraryRequest.current) return;
       setGames(g);
       setRefreshToken(++revisionClock.current);
-      // Covers are independent of the library. Limit background fetches and keep
-      // the game controls usable while artwork arrives.
-      const needsPortrait = ({ poster }: Game) => !poster ||
-        (typeof poster === "object" && !poster.custom && poster.tall === false);
-      const needsTile = (game: Game) => !game.tile &&
-        !(typeof game.poster === "object" && game.poster?.custom);
-      const missing = g.filter(game => needsPortrait(game) || needsTile(game));
-      const worker = async () => {
-        for (let game = missing.shift(); game && request === libraryRequest.current; game = missing.shift()) {
-          const { dir, name, appid } = game;
-          if (needsPortrait(game)) {
-            try {
-              const art = await getBridge().artFetch(dir, name, appid);
-              if ((art.cover || art.hero) && request === libraryRequest.current)
-                setGames((current) =>
-                  current.map((item) => {
-                    if (item.dir !== dir || !needsPortrait(item)) return item;
-                    const poster = art.cover ? { url: art.cover, tall: true } :
-                      item.poster || (art.hero ? { url: art.hero, tall: false } : null);
-                    return { ...item, poster, hero: art.hero || item.hero };
-                  }),
-                );
-            } catch {
-              /* An unavailable cover must not prevent configuration. */
-            }
-          }
-          if (needsTile(game) && request === libraryRequest.current) {
-            try {
-              const { tile } = await getBridge().artFetch(dir, name, appid, "tile");
-              if (tile && request === libraryRequest.current)
-                setGames(current => current.map(item => item.dir === dir ? { ...item, tile } : item));
-            } catch { /* Keep the existing artwork when the card image is unavailable. */ }
-          }
-        }
-      };
-      void Promise.all([worker(), worker()]);
-      const pending = g.filter(game => rescan || !game.cached);
+      // Artwork requests belong to visible Artwork instances, independently of
+      // the library scan. Offscreen games must not delay the selected game's art.
+      const pending = g.filter(game => !game.cached);
       if (pending.length) {
         setScanning(true);
         void (async () => {
@@ -374,7 +340,6 @@ export default function App() {
         aria-current={current} onClick={() => navigate(id)}
         onPointerEnter={() => {
           if (id === "games") void import("./features/Games");
-          else if (id === "profile") void import("./features/Profile");
           else if (id === "library") void import("./features/Library");
           else if (id === "addons") void import("./features/Addons");
           else if (id === "history") void import("./features/History");
@@ -386,38 +351,6 @@ export default function App() {
       </button>
     );
   };
-  const refreshPage = async (force: boolean) => {
-    if (operation.busy || forcing) return;
-    if (page === "home" || (page === "games" && !selected)) {
-      await load(undefined, force);
-      return;
-    }
-    if (force && (page === "games" || page === "profile")) {
-      setForcing(true);
-      try {
-        const result = await getBridge().enhancedHardware(true);
-        if (!result.ok) throw Error(result.message || t("硬件检测失败"));
-      } catch (e) {
-        setNotice(errorText(e), "error");
-        return;
-      } finally {
-        setForcing(false);
-      }
-    }
-    const version = ++revisionClock.current;
-    if (!force && page === "games" && ["runtime", "components"].includes(activeGameTab.current)) {
-      const tab = activeGameTab.current;
-      setPageRevision(previous => ({ ...previous, [tab]: version }));
-    } else if (page === "games" || page === "profile") {
-      setPageRevision(previous => ({ ...previous, games: version, profile: version }));
-    } else {
-      setPageRevision(previous => ({ ...previous, [page]: version }));
-    }
-  };
-  const revisionFor = (id: string) => Math.max(refreshToken, pageRevision[id] || 0);
-  const refreshHint = page === "home" || (page === "games" && !selected)
-    ? "刷新 · Shift + 点击重新扫描游戏库" : page === "games" || page === "profile"
-      ? "刷新 · Shift + 点击重新检测硬件" : "刷新";
   return (
     <DownloadContext.Provider value={operation.downloads}><div className="app-shell">
       <header
@@ -460,14 +393,14 @@ export default function App() {
       <main className="app-content" data-page={page}>
         <div className="appbar">
           <h1><span className="page-emblem" aria-hidden="true"><PageIcon size={18} /></span>{t(currentPage?.title || currentPage?.label)}</h1>
-          {(page === "settings" || page === "about") && (
-            <button onClick={() => navigate(page === "about" ? "settings" : "about")}>
-              {page === "about" ? <ArrowLeft size={16} /> : <Info size={16} />}
-              {page === "about" ? t("返回设置") : t("关于 NeuralFrame")}
-            </button>
-          )}
-          {nav.some(item => item.id === page) && (
+          {(nav.some(item => item.id === page) || page === "settings" || page === "about") && (
             <div className="inline-actions">
+              {(page === "settings" || page === "about") && (
+                <button onClick={() => navigate(page === "about" ? "settings" : "about")}>
+                  {page === "about" ? <ArrowLeft size={16} /> : <Info size={16} />}
+                  {page === "about" ? t("返回设置") : t("关于 NeuralFrame")}
+                </button>
+              )}
               {page === "games" && (
                 <>
                   <button disabled={operation.busy} onClick={() => void add()}>
@@ -478,15 +411,14 @@ export default function App() {
                   </button>
                 </>
               )}
-              <button
-                className="icon-button"
-                aria-label={t("刷新")}
-                title={t(scanning ? "正在扫描游戏目录…" : refreshHint)}
-                disabled={forcing || operation.busy || ((page === "home" || page === "games") && (loading || scanning))}
-                onClick={event => void refreshPage(event.shiftKey)}
+              {page === "home" && <button
+                aria-busy={loading || scanning}
+                disabled={operation.busy || loading || scanning}
+                onClick={() => { retryMissingArtwork(); void load(); }}
               >
-                <RefreshCw size={19} />
-              </button>
+                <RefreshCw size={17} className={loading || scanning ? "refresh-spinning" : undefined} />
+                {t(loading || scanning ? "正在扫描游戏库…" : "扫描游戏库")}
+              </button>}
             </div>
           )}
         </div>
@@ -510,8 +442,6 @@ export default function App() {
                       onImportModel={id => navigate("library", "games", id)}
                         onDownloadModel={operation.downloadVersion}
                         games={games}
-                        componentRevision={revisionFor("components")} runtimeRevision={revisionFor("runtime")}
-                        onTabChange={tab => { activeGameTab.current = tab; }}
                         grouped={groupGames}
                         openMenu={openMenu}
                         selected={selected}
@@ -523,12 +453,12 @@ export default function App() {
                         message={setNotice}
                         ask={operation.ask}
                         active={page === "games"}
-                        refreshToken={revisionFor(id)}
+                        refreshToken={refreshToken}
                       />
                     ))}
                   {id === "home" && (
                     <div className="page-scroll home-page">
-                      <HomeIntake games={games} active={page === "home"} refreshToken={revisionFor(id)} disabled={loading || operation.busy}
+                      <HomeIntake games={games} active={page === "home"} refreshToken={refreshToken} disabled={loading || operation.busy}
                         browse={() => void add(true)} drop={dropGame} select={select} message={setNotice}/>
                       <div className="section-toolbar">
                         <h2 className="library-heading">{t("游戏库")} <small>{games.length}</small></h2>
@@ -584,40 +514,23 @@ export default function App() {
                       run={operation.run}
                       busy={operation.busy}
                       message={setNotice}
-                      refreshToken={revisionFor(id)}
+                      refreshToken={refreshToken}
                     />
                   )}{" "}
-                  {id === "addons" && <Addons message={setNotice} active={page === "addons"} refreshToken={revisionFor(id)} />}{" "}
-                  {id === "profile" && (
-                    <Profile
-                      onBrowseModels={() => navigate("library", "profile")}
-                      onImportModel={id => navigate("library", "profile", id)}
-                      onDownloadModel={operation.downloadVersion}
-                      message={setNotice}
-                      games={games}
-                      dir={selected}
-                      onSelect={setSelected}
-                      onAddGame={add}
-                      savedDraft={drafts[selected]}
-                      setDraft={setGameDraft}
-                      run={runForGame}
-                      ask={operation.ask}
-                      operationBusy={operation.busy}
-                      refreshToken={revisionFor(id)}
-                      active={page === "profile"}
-                      onChanged={() => setRefreshToken(++revisionClock.current)}
-                    />
-                  )}{" "}
-                  {id === "overlay" && <Overlay message={setNotice} active={page === "overlay"} refreshToken={revisionFor(id)} />}{" "}
+                  {id === "addons" && <Addons message={setNotice} active={page === "addons"} refreshToken={refreshToken} />}{" "}
+                  {id === "overlay" && <Overlay message={setNotice} active={page === "overlay"} refreshToken={refreshToken} />}{" "}
                   {id === "history" && (
                     <History
                       message={setNotice}
                       ask={operation.ask}
-                      active={page === "history"} refreshToken={revisionFor(id)}
+                      active={page === "history"} refreshToken={refreshToken}
                     />
                   )}{" "}
                   {id === "settings" && (
                     <Settings
+                      active={page === "settings"}
+                      refreshToken={refreshToken}
+                      operationBusy={operation.busy}
                       message={setNotice}
                       theme={theme}
                       onTheme={changeTheme}

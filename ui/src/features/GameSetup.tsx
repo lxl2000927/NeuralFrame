@@ -11,19 +11,24 @@ import * as renderingApi from "../../../src/shared/rendering-api.js";
 const routes: Record<string, string> = {
   native: "原生 DLSS（RenoDX）", feeder: "Feeder + ReShade",
   renodx: "RenoDX DLSS Tool", optiscaler: "OptiScaler DLSS-NR",
+  encore: "Encore 新增帧生成（实验性）",
 };
 export type SetupSelection = { exePath: string; route: string };
 export function resolveSetup(details: Details, selection: SetupSelection | null) {
   const exes = details.exes || [];
-  const exe = exes.find(item => item.path === selection?.exePath) ||
+  const exe = selection ? exes.find(item => item.path === selection.exePath) :
     exes.find(item => item.rel === details.installedExe) ||
     exes.find(item => item.path === details.exePath) || exes[0];
   const target = exe ? renderingApi.effective(exe, exe.apiOverride || "auto") : null;
   const available: string[] = target ? installRoutes.routesFor(target) : [];
+  // Keep an installed backend visible even if a game update changes eligibility.
+  if (target && (selection?.route === 'encore' || (!selection && details.installedRoute === 'encore')) && !available.includes('encore')) available.push('encore');
   const wanted = selection?.route || details.installedRoute || details.recommendedRoute || "";
-  const route = available.includes(wanted) ? wanted : available.includes(details.recommendedRoute || "")
+  const route = selection?.route === 'encore' ? 'encore' : available.includes(wanted) ? wanted : available.includes(details.recommendedRoute || "")
     ? details.recommendedRoute! : available[0] || "";
-  return { exe, target, available, route };
+  const encoreIssue = target ? installRoutes.encoreReason({...target,launcherProtected:details.launcherProtected})
+    : "所选游戏程序已不在扫描列表中，请重新选择。";
+  return { exe, target, available, route, encoreIssue };
 }
 
 export function GameSetup({ dir, details, status, busy, selection, onChange, message, onUpdated }: {
@@ -50,10 +55,11 @@ export function GameSetup({ dir, details, status, busy, selection, onChange, mes
     finally { lock.current = false; setSaving(false); }
   };
   const chooseRoute = (value: string) => { if (exe) onChange({ exePath: exe.path, route: value }); };
-  const reshadeRoutes = available.filter(id => id !== "optiscaler");
-  const backend = protectedGame ? "native" : route === "optiscaler" ? "optiscaler" : "reshade";
+  const reshadeRoutes = available.filter(id => !["optiscaler","encore"].includes(id));
+  const backend = protectedGame ? "native" : ["optiscaler","encore"].includes(route) ? route : "reshade";
   const currentVersion = protectedGame ? status?.nativeRuntimeStack?.sr?.version || details.currentDlss?.version : details.currentDlss?.version;
   const installedBackend = details.installedRoute === "wuwa-proxy" ? "version.dll"
+    : details.installedRoute === "encore" ? "RTX Encore"
     : details.optiscaler?.installed ? "OptiScaler"
     : details.reshade?.installed ? "ReShade" : t("无");
   const files = details.files || [];
@@ -62,7 +68,7 @@ export function GameSetup({ dir, details, status, busy, selection, onChange, mes
     <fieldset disabled={busy || saving}>
       <div className="setup-fields">
         <label className="setup-field setup-wide"><span>{t("可执行文件")}</span>
-          <Select label={t("可执行文件")} value={exe?.path || ""} disabled={!exe || protectedGame}
+          <Select label={t("可执行文件")} value={exe?.path || selection?.exePath || ""} disabled={!details.exes?.length || protectedGame}
             onChange={exePath => onChange({ exePath, route })}
             options={(details.exes || []).map(item => [item.path,
               `${item.rel} — ${item.apiLabel} — ${item.bitness}-bit — ${size(item.size)}`])} />
@@ -81,17 +87,18 @@ export function GameSetup({ dir, details, status, busy, selection, onChange, mes
             options={protectedGame ? [["native", t("游戏原生运行库")]] : [
               ...(reshadeRoutes.length ? [["reshade", t("ReShade（默认）")]] : []),
               ...(available.includes("optiscaler") ? [["optiscaler", "OptiScaler"]] : []),
+              ...(available.includes("encore") ? [["encore", "RTX Encore"]] : []),
             ]}
-            onChange={value => chooseRoute(value === "optiscaler" ? value : reshadeRoutes[0])} />
+            onChange={value => chooseRoute(value === "reshade" ? reshadeRoutes[0] : value)} />
         </label>
         <label className="setup-field"><span>{t("安装方式")}</span>
           <Select label={t("安装方式")} value={protectedGame ? "wuwa-proxy" : route}
             disabled={!available.length || protectedGame}
             options={protectedGame ? [["wuwa-proxy", t("鸣潮兼容路线（version.dll）")]]
-              : (backend === "optiscaler" ? ["optiscaler"] : reshadeRoutes).map(id => [id, t(routes[id])])}
+              : (backend === "reshade" ? reshadeRoutes : [backend]).map(id => [id, t(routes[id])])}
             onChange={chooseRoute} />
         </label>
-        {!protectedGame && route !== "optiscaler" && target && ["dxgi", "d3d8", "d3d9", "ddraw"].includes(target.api) && target.apiLabel !== "DirectX 12" &&
+        {!protectedGame && backend === "reshade" && target && ["dxgi", "d3d8", "d3d9", "ddraw"].includes(target.api) && target.apiLabel !== "DirectX 12" &&
           <label className="setup-field setup-wide"><span>{t("ReShade 加载文件")}</span>
             <Select label={t("ReShade 加载文件")} value={exe?.reshadeProxy || "dxgi"} options={[["dxgi", "dxgi.dll"], ["d3d11", "d3d11.dll"]]}
               onChange={value => void save(async () => {
@@ -118,11 +125,12 @@ export function GameSetup({ dir, details, status, busy, selection, onChange, mes
       <div><dt>{t("已安装的后端")}</dt><dd>{installedBackend}</dd></div>
       <div><dt>DLSS</dt><dd>{currentVersion || t("未检测到")}
         {protectedGame ? <span className="setup-version-note">{t("保留游戏原版")}</span>
-          : details.newDlss && details.newDlss !== currentVersion && selection && route !== "optiscaler"
+          : details.newDlss && details.newDlss !== currentVersion && selection && backend === "reshade"
             ? <><span className="setup-version-arrow">→</span><span className="setup-positive">{details.newDlss}</span></> : null}</dd></div>
       <div><dt>{t("神经渲染插件")}</dt><dd>{details.addon || status?.neural?.installed ? t("已安装") : t("未安装")}</dd></div>
       <div><dt>ReShade</dt><dd>{details.reshade?.installed ? details.reshade.version || t("已安装") : t("未安装")}</dd></div>
     </dl>
+    {!protectedGame && target && installRoutes.encoreReason(target) && <p className="footnote">RTX Encore：{t(installRoutes.encoreReason(target)!)}</p>}
     <details className="setup-files" open>
       <summary><span>{t("检测到的组件文件")}</span><span>{t("{0} 个", [files.length])}</span><ChevronDown size={15} /></summary>
       <div className="setup-file-list">
@@ -131,7 +139,8 @@ export function GameSetup({ dir, details, status, busy, selection, onChange, mes
         </div>) : <p className="setup-empty">{t("未检测到组件文件")}</p>}
       </div>
     </details>
-    {!available.length && <p className="error">{t("当前 API 或程序位数没有可用路线，可核对程序或手动指定 API。")}</p>}
+    {!exe && selection ? <p className="error">{t("所选游戏程序已不在扫描列表中，请重新选择。")}</p>
+      : !available.length && <p className="error">{t("当前 API 或程序位数没有可用路线，可核对程序或手动指定 API。")}</p>}
     {exe?.installIssue && <p className="error">{t(exe.installIssue)}</p>}
   </section>;
 }

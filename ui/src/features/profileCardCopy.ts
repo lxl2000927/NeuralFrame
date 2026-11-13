@@ -11,9 +11,9 @@ export const profileCardCopy: Record<string, { label: string; neural: string; mf
     mfg: "【MFG 多帧生成策略】开启 DllMain 抢先挂钩 + NVIDIA 动态多帧生成 (DynamicMFG=1) + V3 方向性高锐度插值 (AdaptiveQualityProfile=2) + Reflex 强制低延迟护栏。",
   },
   rtx50_desktop: {
-    label: "🚀 50 系列桌面卡 (Blackwell 原生直通)",
-    neural: "【DLSS 5 神经渲染策略】直通 CUDA sm_120 (23 个 Blackwell 原生核函数) + 100% 满血工作分辨率 (NRResolutionScale=1) + 8 表面缓冲池 + 2026-10 极速运行时管线。",
-    mfg: "【MFG 多帧生成策略】自动旁路所有 40 系二进制补丁 (TemporalFix=0, BlackwellFrameworkKernels=0, ForceFlipMeteringOff=0)，零冲突直通第 5 代 Tensor 硬件 Flip Metering + Dynamic MFG。",
+    label: "🚀 RTX 50 系列 (原生多帧生成控制)",
+    neural: "【DLSS 5 神经渲染策略】100% 工作分辨率与 8 个工作集，模型需包含 sm_120；运行库版本独立选择。",
+    mfg: "【MFG 多帧生成策略】实际显卡为 RTX 50 时关闭 Ada 专用修补，保留原生倍率与动态模式控制。无需解锁，实际支持以游戏与运行库为准。",
   },
 };
 

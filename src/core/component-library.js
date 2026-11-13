@@ -4,6 +4,7 @@ const { finished } = require('node:stream/promises');
 const { setTimeout: delay } = require('node:timers/promises');
 const pe=require('./pe'),journal=require('./file-journal');
 const {DEFINITIONS,builtins}=require('./component-definitions');
+const {componentCompatibility,modelRequirements}=require('./component-compatibility');
 const key=p=>path.resolve(p).toLowerCase();
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const fail=m=>Object.assign(Error(m),{code:'errComponentLibrary'});
@@ -35,7 +36,7 @@ class ComponentLibrary {
   async init(){if(this.initialized)return;if(this.ready)return this.ready;this.ready=(async()=>{
     const marker=path.join(this.root,'seed.json'),seed=read(marker,{});
     const candidates=this.payloadDir?builtins(this.payloadDir,this.overlayDir):[];
-    const adaptedIds = new Set(this.catalog().packages.filter(p => p.trustedAdapter).map(p => p.id));
+    const adapted = new Map(this.catalog().packages.filter(p => p.trustedAdapter).map(p => [p.id, p]));
     // Only seed on explicit library use. An app update appends new snapshots;
     // it never overwrites existing packages or game selections.
     for (const spec of candidates) {
@@ -46,9 +47,14 @@ class ComponentLibrary {
       })));
       // Older seed records only held the stamp, even if a manual import had
       // won deduplication. Reconcile those records once against the actual bytes.
-      if (seed[key]?.stamp === stamp && adaptedIds.has(seed[key].id)) continue;
+      const cached = adapted.get(seed[key]?.id);
+      // The runtime view and library snapshot are separate copies. An intact
+      // runtime cache must not conceal a deleted or changed library file.
+      // Remember verified metadata so normal startup does not rehash every DLL.
+      const localStamp = cached && this.cacheStamp(cached);
+      if (seed[key]?.stamp === stamp && localStamp && seed[key].localStamp === localStamp) continue;
       const installed = await this.importPackage(spec);
-      seed[key] = { stamp, id: installed.id };
+      seed[key] = { stamp, id: installed.id, localStamp: this.cacheStamp(installed) };
     }
     this.warnings=[];
     await this.importLegacyModels();
@@ -77,18 +83,31 @@ class ComponentLibrary {
   }
   package(id){if(!/^[a-f0-9]{64}$/.test(String(id)))throw fail('无效的组件版本');const p=this.catalog().packages.find(p=>p.id===id);if(!p||!DEFINITIONS[p.component])throw fail('组件版本不存在');return p;}
   directory(p){return safe(path.join(this.root,'packages'),p.id);}
+  cacheStamp(p){
+    try {
+      return hash(JSON.stringify(p.files.map(f => {
+        const stat = fs.lstatSync(safe(this.directory(p), f.rel));
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== f.size) throw fail('组件缓存已变化');
+        return [f.rel, f.sha256, stat.size, stat.mtimeMs, stat.ctimeMs];
+      })));
+    } catch { return null; }
+  }
   async verify(p){for(const f of p.files){const file=safe(this.directory(p),f.rel);if(!fs.existsSync(file)||await digest(file)!==f.sha256)throw fail('组件文件已变化或缺失，请重新下载：'+f.rel);}return p;}
-  compatibility(p){const def=DEFINITIONS[p.component];if(def?.pinned)return {ready:false,label:'随汉化适配层维护',reason:'保留现有中文面板；不单独替换这个适配层。'};
-    if(def?.managedRoute||['feeder','reshade','preloader','optiscaler'].includes(p.component))return {ready:false,label:'由安装路线成组管理',reason:'包含配套宿主、图层或加载链。可单独下载入库，应用仍使用现有安装路线的已适配组合。'};
-    if(p.trustedAdapter||['dlss-sr','dlss-nr'].includes(p.component))return {ready:true,label:'可选择',reason:p.component==='dlss-nr'?'应用前还会检查实际 GPU 架构。':'文件校验通过，游戏内效果仍需验证。'};
-    return {ready:false,label:'已入库 · 等待适配',reason:'此版本尚未验证现有汉化面板、配置协议或组件依赖；可以下载保留，暂不替换游戏中的组件。'};}
-  async importPackage(spec, signal){
+  compatibility(p){return componentCompatibility(p);}
+  importPackage(spec, signal){
+    // First-use seeding can overlap a manual import already in flight. Each
+    // publication reads and replaces the catalog, so keep these writes ordered.
+    const pending = (this.importPending || Promise.resolve()).then(() => this.importOnePackage(spec, signal));
+    this.importPending = pending.catch(() => {});
+    return pending;
+  }
+  async importOnePackage(spec, signal){
     signal?.throwIfAborted();
     const def=DEFINITIONS[spec.component];if(!def)throw fail('未知组件');
     if(!spec.files||!Object.keys(spec.files).length||Object.keys(spec.files).length>200)throw fail('无效的组件清单');
     const expected=def.files;
     if(expected.length&&expected.some(n=>!spec.files[n]))throw fail('组件包不完整，缺少配套文件');
-    if(expected.length&&Object.keys(spec.files).some(n=>!expected.includes(n)))throw fail('组件包含未声明文件');
+    if(expected.length&&Object.keys(spec.files).some(n=>!expected.includes(n)&&!def.optionalFiles?.includes(n)))throw fail('组件包含未声明文件');
     const entries=[];
     for(const [rel,file] of Object.entries(spec.files).sort(([a],[b])=>a.localeCompare(b))){safe(this.root,rel);const st=fs.lstatSync(file);if(!st.isFile()||st.isSymbolicLink()||st.size>512*1024*1024)throw fail('无效或过大的组件文件');
       const bits=pe.getBitness(file),binary=/\.(dll|asi|addon32|addon64|exe)$/i.test(rel);
@@ -100,7 +119,10 @@ class ComponentLibrary {
       if(spec.component==='dlss-sr'&&require('./neural-models').identifyNgxBuffer(fs.readFileSync(file)).kind!=='dlss_sr')throw fail('不是有效的 DLSS 超分运行库');
       entries.push({rel,sha256:await digest(file),size:st.size,version:binary?pe.getFileVersion(file):null,bitness:bits||null});
     }
-    const id=hash(JSON.stringify([spec.component,entries.map(f=>[f.rel,f.sha256])])),catalog=this.catalog();
+    // Adding the upstream notice to an existing engine does not create a
+    // second engine identity or invalidate saved game package selections.
+    const identityEntries=entries.filter(f=>!def.optionalFiles?.includes(f.rel));
+    const id=hash(JSON.stringify([spec.component,identityEntries.map(f=>[f.rel,f.sha256])])),catalog=this.catalog();
     const existing=catalog.packages.find(p=>p.id===id);
     let updated = existing && !existing.trustedAdapter && spec.trustedAdapter === true
       ? { ...existing, trustedAdapter: true, version: String(spec.version || existing.version).slice(0,100), source: String(spec.source || '已适配组件缓存').slice(0,200) }
@@ -113,6 +135,7 @@ class ComponentLibrary {
       }
       let valid = true;
       try { await this.verify(existing); } catch { valid = false; }
+      if(entries.some(f=>def.optionalFiles?.includes(f.rel)&&!existing.files.some(old=>old.rel===f.rel&&old.sha256===f.sha256)))valid=false;
       signal?.throwIfAborted();
       if (valid) {
         if (!updated) return existing;
@@ -143,7 +166,7 @@ class ComponentLibrary {
   profile(dir){const p=read(this.profileFile(dir),{schema:1,dir:path.resolve(dir),selected:{},history:[]});if(p.schema!==1||key(p.dir)!==key(dir)||!p.selected||!Array.isArray(p.history))throw fail('游戏组件选择记录损坏');return p;}
   async select(dir,selection){if(!selection||typeof selection!=='object'||Array.isArray(selection))throw fail('无效的版本选择');const clean={};for(const [component,id] of Object.entries(selection)){if(!id)continue;const p=this.package(id);if(p.component!==component||!this.compatibility(p).ready)throw fail('所选版本尚未适配：'+(DEFINITIONS[component]?.name||component));await this.verify(p);clean[component]=id;}
     const profile=this.profile(dir);profile.selected=clean;await journal.atomicJson(this.profileFile(dir),profile);return {ok:true};}
-  async list(dir){await this.init();const packages=this.catalog().packages.map(p=>({...p,compatibility:this.compatibility(p),present:p.files.every(f=>{
+  async list(dir){await this.init();const packages=this.catalog().packages.map(p=>({...p,compatibility:this.compatibility(p),engine:['encore','mfg-universal'].includes(p.component)?require('./engine-packages').describe(p.component,p):undefined,modelRequirements:modelRequirements(p),present:p.files.every(f=>{
     try {
       const stat = fs.statSync(safe(this.directory(p),f.rel));
       return stat.isFile() && (f.size == null || stat.size === f.size);

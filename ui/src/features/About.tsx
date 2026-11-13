@@ -75,7 +75,8 @@ export default function About({ message, launchRelease }: { message: (s: string)
             <small>v{__APP_VERSION__}</small>
           </div>
         </div>
-        <p>{t("管理游戏的神经渲染模型、多帧生成和配套组件。")}</p>
+        <p>{t("集成社区与开源项目的图形组件，为 RTX 20–50 系列显卡管理神经渲染、多帧生成和配套运行库。")}</p>
+        <p>{t("RTX 20–40 可通过相应组件解锁支持的多帧生成路线；RTX 50 原生支持多帧生成，提供参数与组件管理。具体功能取决于显卡、游戏和所选组件。")}</p>
         <div className="inline-actions">
           <button onClick={() => void openProjectLink("github", message)}>
             <ExternalLink size={15} />GitHub

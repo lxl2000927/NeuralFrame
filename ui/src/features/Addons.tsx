@@ -2,6 +2,7 @@ import { t } from "../i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { getBridge } from "../bridge";
+import { useWindowReturn } from "../useWindowReturn";
 import { Empty, Loading, Modal } from "../components";
 import { errorText, size } from "../domain";
 import type { AddonPick, AddonRow } from "../types";
@@ -19,6 +20,7 @@ export function Addons({
     [error, setError] = useState("");
   const [busy, setBusy] = useState(false),
     [pending, setPending] = useState<AddonPick | null>(null);
+  const returnRevision = useWindowReturn(active, busy || !!pending);
   const [name, setName] = useState(""),
     [tag, setTag] = useState(""),
     [description, setDescription] = useState(""),
@@ -42,7 +44,7 @@ export function Addons({
     return () => {
       ++generation.current;
     };
-  }, [active, load, refreshToken]);
+  }, [active, load, refreshToken, returnRevision]);
   const run = async (fn: () => Promise<void>) => {
     if (locked.current) return;
     locked.current = true;

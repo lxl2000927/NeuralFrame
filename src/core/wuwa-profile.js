@@ -41,4 +41,52 @@ function mfgSettings(mode) {
   };
 }
 
-module.exports = { neuralSettings, mfgSettings };
+const profileFields = ['dlss5HookStage', 'dlss5ResolutionScale', 'dlss5ResolutionScaleAuto',
+  'dlss5PassCount', 'dlss5UpsampleFilter', 'dlss5UiCorrection'];
+const advancedFields = Object.freeze({
+  model: { key: 'dlss5Model', min: 0, max: 2, integer: true },
+  structure: { key: 'dlss5StructureIntensity', min: 0, max: 2 },
+  tone: { key: 'dlss5ToneIntensity', min: 0, max: 2 },
+  characterMask: { key: 'dlss5CharacterMask', boolean: true },
+  character: { key: 'dlss5CharacterIntensity', min: -1, max: 2 },
+  diagnosticLogging: { boolean: true },
+});
+
+function configureNeural(settings, profileId, { previousProfile, reset = false } = {}) {
+  const defaults = neuralSettings(profileId);
+  // A repeated Apply is not a factory reset of the in-game tuning panel.
+  // A deliberate profile change only owns its performance/routing controls.
+  for (const [key, value] of Object.entries(defaults)) {
+    if (reset || settings[key] === undefined ||
+        (previousProfile !== profileId && profileFields.includes(key))) settings[key] = value;
+  }
+  return settings;
+}
+
+function validateAdvanced(value) {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('独立加载高级设置格式无效。');
+  for (const [name, input] of Object.entries(value)) {
+    const field = advancedFields[name];
+    if (!field || (field.boolean ? typeof input !== 'boolean' :
+      typeof input !== 'number' || !Number.isFinite(input) || input < field.min || input > field.max ||
+      (field.integer && !Number.isInteger(input)))) throw Error('独立加载高级设置无效：' + name);
+  }
+  return value;
+}
+
+function configureAdvanced(settings, value) {
+  for (const [name, input] of Object.entries(validateAdvanced(value))) {
+    const key = advancedFields[name].key;
+    if (key) settings[key] = input;
+  }
+}
+
+function inspectAdvanced(settings, diagnosticLogging) {
+  // Absent external control keys use the upstream defaults, not our preset.
+  const defaults = { ...neuralSettings('rtx40_laptop'), dlss5CharacterMask: true };
+  return Object.fromEntries(Object.entries(advancedFields).map(([name, field]) =>
+    [name, field.key ? settings[field.key] ?? defaults[field.key] : diagnosticLogging]));
+}
+
+module.exports = { neuralSettings, mfgSettings, configureNeural, validateAdvanced, configureAdvanced, inspectAdvanced };

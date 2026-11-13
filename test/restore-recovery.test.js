@@ -158,7 +158,7 @@ test('restore IPC previews and confirms retired records after an executable disa
   assert.equal(hasBackup(dir), false);
   assert.equal(status().canRestore, false);
   assert.equal((await restore()).code, 'errNoBackup');
-  assert.equal((await diagnostics()).badge, '原版纯净状态 (无需还原)');
+  assert.equal((await diagnostics()).badge, '无 NeuralFrame 部署记录');
 
   const owned = apply.beginManifest(dir, exe, 'vulkan');
   const shared = path.join(profile, 'reshade-vulkan');

@@ -11,8 +11,11 @@ function parseStandalone(s, log, now, previous) {
   // Upstream publishes by atomically replacing the status file. Its inode and
   // birth time change on every sample. History is keyed by process birth +
   // path in RuntimeStatus, not by file identity.
+  const ready = s.dlss5 !== false && s.dlss5State === 2 && s.dlss5Live > 0 && s.dlss5Pending !== true;
   const advanced = previous && log.mtime > previous.at && count > previous.count;
-  const lastProgress = advanced ? log.mtime : previous && log.mtime >= previous.at && count >= previous.count ? previous.progress : null;
+  // Off/error/pending samples interrupt the evidence of continuous execution.
+  // Re-enabling with a frozen cumulative count must wait for fresh progress.
+  const lastProgress = !ready ? null : advanced ? log.mtime : previous && log.mtime >= previous.at && count >= previous.count ? previous.progress : null;
   const settings = Object.fromEntries(fields.filter(k => typeof s[k] === typeof defaults[k])
     .map(k => [k, s[k]]));
   const version = prefix => {

@@ -9,14 +9,25 @@ const { digest, safe } = require('./component-library');
 const { downloadAsset, sweepPartials } = require('./asset-download');
 const { unpack, allowedAsset } = require('./component-updates');
 const catalog = require('./runtime-catalog.json');
+const {componentCompatibility,modelRequirements}=require('./component-compatibility');
 const error = message => Object.assign(new Error(message), {code:'errRuntimeComponents'});
 const nonempty = value => value !== undefined && value !== 'off';
 
 function requiredPacks({kind, config = {}, route, mfgRoute, target = {}, scan = {}, customModel = false, reuseProxy = false} = {}) {
   if (kind === 'restore') return [];
   const ids = new Set();
+  if (route === 'encore') {
+    // A retained engine or a library selection is verified by its route. Do
+    // not download/replace the recommended engine when only settings change.
+    if (!reuseProxy && !config.encorePackageId) ids.add('encore');
+    ids.add('sl-modern'); ids.add('fg-modern');
+    if (config.encore?.upscaling === 'dlss') ids.add('sr-modern');
+    if (nonempty(config.neuralMode) && !customModel) ids.add('nr-3108');
+    return [...ids];
+  }
   if (route === 'wuwa-proxy') {
-    if (!reuseProxy) ids.add('mfg-universal');
+    if (!reuseProxy && !config.mfgPackageId) ids.add('mfg-universal');
+    if (!reuseProxy || config.mfgPackageId !== undefined) ids.add('mfg-license');
     if (nonempty(config.neuralMode) && !customModel) ids.add('nr-3108');
     return [...ids];
   }
@@ -42,7 +53,8 @@ function requiredPacks({kind, config = {}, route, mfgRoute, target = {}, scan = 
   }
   if (mfg) {
     const opti = config.backend === 'mfg-unlocker-asi' || (config.backend !== 'renodx-mfgunlock' && (mfgRoute || route) === 'optiscaler');
-    ids.add(opti ? 'mfg-universal' : 'mfg-renodx');
+    ids.add(opti ? 'mfg-optiscaler-170' : 'mfg-renodx');
+    if (opti) ids.add('mfg-license');
     // Adding RenoDX can change the auto backend in an existing OptiScaler-INI
     // setup. Keep both small unlockers available for that mixed transition.
     if(opti && nr && route !== 'optiscaler')ids.add('mfg-renodx');
@@ -66,7 +78,8 @@ class RuntimePayload {
     for (const p of manifest.packs) {
       if (!/^[a-z0-9-]+$/.test(p.id) || !/^[a-f0-9]{64}$/.test(p.contentId) || !p.files?.length) throw error('无效的组件标识');
       for (const f of p.files) { safe(this.payloadDir,f.path); if (!/^[a-f0-9]{64}$/.test(f.sha256) || !(f.size > 0)) throw error('无效的组件文件'); }
-      if (!p.bundled && (!allowedAsset(p.url,manifest.repository) || !/^[a-f0-9]{64}$/.test(p.sha256) || !(p.size > 0 && p.size <= 512*1024*1024))) throw error('组件下载地址或校验值无效');
+      for (const f of p.files) if (f.archivePath) safe(this.payloadDir, f.archivePath);
+      if (!p.bundled && (!allowedAsset(p.url,p.repository || manifest.repository) || !/^[a-f0-9]{64}$/.test(p.sha256) || !(p.size > 0 && p.size <= 512*1024*1024))) throw error('组件下载地址或校验值无效');
     }
   }
   pack(id) { const p=this.packs.get(id); if (!p) throw error('未知的配套组件：'+id); return p; }
@@ -82,8 +95,19 @@ class RuntimePayload {
     } catch { return false; }
   }
   async complete(base,p) { for(const f of p.files) if(!await this.valid(safe(base,f.path),f)) return false; return true; }
-  list() {
-    return [...this.packs.values()].filter(p=>!p.bundled).map(p=>({id:p.id,name:p.name,component:p.component,version:p.version,size:p.size,downloaded:p.files.every(f=>{try{const s=fs.lstatSync(safe(this.payloadDir,f.path));return s.isFile()&&!s.isSymbolicLink()&&s.size===f.size;}catch{return false;}})}));
+  list(packages = []) {
+    return [...this.packs.values()].filter(p=>!p.bundled).map(p=>({
+      id:p.id,name:p.name,component:p.component,version:p.version,size:p.size,repository:p.repository || this.catalog.repository,
+        url:p.url,sha256:p.sha256,files:p.files,cacheRoot:this.payloadDir,upstreams:p.upstreams || [],
+      compatibility:componentCompatibility({...p, trustedAdapter:true}),
+      ...(['encore','mfg-universal'].includes(p.component) ? {engine:require('./engine-packages').describe(p.component,p)} : {}),
+      modelRequirements:modelRequirements(p),
+      // Match all package files by name and digest, never by displayed version.
+      // A route pack can contain several complete local packages (e.g. Feeder).
+      packageIds:packages.filter(local=>local.component===p.component && local.files?.length &&
+        local.files.every(f=>p.files.some(file=>path.basename(file.path).toLowerCase()===f.rel.toLowerCase() && file.sha256===f.sha256))).map(local=>local.id),
+      downloaded:p.files.every(f=>{try{const s=fs.lstatSync(safe(this.payloadDir,f.path));return s.isFile()&&!s.isSymbolicLink()&&s.size===f.size;}catch{return false;}})
+    }));
   }
   async require(ids) {
     const missing=[];
@@ -96,20 +120,25 @@ class RuntimePayload {
   cancel() { this.controller?.abort(); return {ok:true}; }
   async localCandidates() {
     const index = new Map();
+    const add = (sha256,file) => {
+      if (!index.has(sha256)) index.set(sha256,new Set());
+      index.get(sha256).add(file);
+    };
     // Existing component versions are reusable by fingerprint, never selected
-    // merely because a file happens to have the same name.
+    // merely because a file happens to have the same name. Keep every source:
+    // a stale duplicate must not hide a valid copy earlier in the catalogue.
     try {
       const root=path.join(this.userData,'component-library-v1');
       const old=JSON.parse(await fs.promises.readFile(path.join(root,'catalog.json'),'utf8'));
       for(const p of old.packages||[]) if(/^[a-f0-9]{64}$/.test(p.id)) for(const f of p.files||[]) if(/^[a-f0-9]{64}$/.test(f.sha256)) {
-        try { index.set(f.sha256,safe(path.join(root,'packages',p.id),f.rel)); } catch { /* ignore invalid migration records */ }
+        try { add(f.sha256,safe(path.join(root,'packages',p.id),f.rel)); } catch { /* ignore invalid migration records */ }
       }
     } catch { /* An empty profile has no component catalogue. */ }
     try { const old=JSON.parse(await fs.promises.readFile(path.join(this.userData,'neural-models/index.json'),'utf8'));
-      for(const f of old) if(/^[a-f0-9]{64}$/.test(f.sha256)&&path.isAbsolute(f.filePath||'')) index.set(f.sha256,f.filePath);
+      for(const f of old) if(/^[a-f0-9]{64}$/.test(f.sha256)&&path.isAbsolute(f.filePath||'')) add(f.sha256,f.filePath);
     } catch {}
     const original=this.packs.get('nr-3108')?.files.find(f=>/nvngx_dlssnr\.dll$/.test(f.path));
-    if(original&&!index.has(original.sha256))index.set(original.sha256,path.join(this.userData,'neural-models/bundled-310.8.SF-v2.dll'));
+    if(original)add(original.sha256,path.join(this.userData,'neural-models/bundled-310.8.SF-v2.dll'));
     return index;
   }
   checkCancelled() { if(this.controller?.signal.aborted) throw error('组件下载已取消，游戏文件未修改。'); }
@@ -124,7 +153,7 @@ class RuntimePayload {
     let local=true;
     for(const f of p.files) {
       this.checkCancelled();
-      const candidates=[index.get(f.sha256),...([this.bundledRoot,...this.legacyRoots].filter(Boolean).map(r=>safe(r,f.path)))].filter(Boolean);
+      const candidates=[...(index.get(f.sha256) || []),...([this.bundledRoot,...this.legacyRoots].filter(Boolean).map(r=>safe(r,f.path)))];
       let found;
       for(const file of candidates) if(await this.valid(file,f)) {found=file;break;}
       if(!found) {local=false;break;}
@@ -144,8 +173,11 @@ class RuntimePayload {
     } catch (cause) { throw error(`无法下载 ${p.name}：${cause.message}`); }
     this.checkCancelled();this.onProgress({stage:'verify',...tag,loaded:p.size,total:p.size});
     const extracted=safe(temp,'__unpacked');await fs.promises.mkdir(extracted);await unpack(archive,extracted,this.controller.signal);
-    if(!await this.complete(extracted,p))throw error('组件压缩包内容与固定清单不一致');
-    for(const f of p.files) await this.copy(safe(extracted,f.path),safe(temp,f.path));
+    for(const f of p.files) {
+      const source = safe(extracted, f.archivePath || f.path);
+      if(!await this.valid(source,f))throw error('组件压缩包内容与固定清单不一致');
+      await this.copy(source,safe(temp,f.path));
+    }
     await fs.promises.rm(archive,{force:true});await fs.promises.rm(extracted,{recursive:true,force:true});
   }
   async prepare(ids) {
@@ -163,26 +195,35 @@ class RuntimePayload {
         this.checkCancelled();
         if(ready)continue;
         const stored=this.directory(p);
-        if(!await this.complete(stored,p)) {
+        const storedReady=await this.complete(stored,p);
+        this.checkCancelled();
+        if(!storedReady) {
           const temp=safe(this.root,'staging/'+crypto.randomUUID());await fs.promises.mkdir(temp,{recursive:true});
           try {
             this.onProgress({stage:'prepare',id:p.id,name:p.name,loaded:0,total:p.size||0,...at});
             await this.obtain(p,index,temp,at);this.checkCancelled();
             if(!await this.complete(temp,p))throw error('组件缓存校验失败');
+            // Hashing can outlive a cancel click; do not publish that result.
+            this.checkCancelled();
             await fs.promises.mkdir(stored,{recursive:true});
             for(const f of p.files) {const dest=safe(stored,f.path);await fs.promises.mkdir(path.dirname(dest),{recursive:true});await fs.promises.rename(safe(temp,f.path),dest);}
           } finally {await fs.promises.rm(temp,{recursive:true,force:true});}
         }
         for(const f of p.files) {
           const source=safe(stored,f.path),dest=safe(this.payloadDir,f.path);
-          if(await this.valid(dest,f))continue;
+          const viewReady=await this.valid(dest,f);
+          this.checkCancelled();
+          if(viewReady)continue;
           await fs.promises.mkdir(path.dirname(dest),{recursive:true});
           const pending=dest+'.'+crypto.randomUUID()+'.pending';
-          try {try{await fs.promises.link(source,pending);}catch{await fs.promises.copyFile(source,pending);}await fs.promises.rename(pending,dest);}
+          try {try{await fs.promises.link(source,pending);}catch{await fs.promises.copyFile(source,pending);}this.checkCancelled();await fs.promises.rename(pending,dest);}
           finally {await fs.promises.rm(pending,{force:true});}
         }
+        // A completed rename remains cached, but a late stop must not report ready.
+        this.checkCancelled();
         this.onProgress({stage:'ready',id:p.id,name:p.name,loaded:p.size||0,total:p.size||0,...at});
       }
+      this.checkCancelled();
       return {ok:true};
     } catch(e) {
       // A cancellation is a normal outcome the caller reports in place, not a

@@ -15,7 +15,8 @@ const mfg = require('../src/core/mfg-manager');
 const journal = require('../src/core/file-journal');
 const previewFs = require('../src/core/preview-fs');
 const vulkan = require('../src/core/vulkan-layer');
-const payload = path.resolve(__dirname, '../payload');
+const payload = require('./fixtures/payload').root;
+test.beforeEach(t => require('./fixtures/payload').use(t));
 const config = { apiOverride: 'd3d12', hardwareProfile: 'rtx40_laptop', neuralMode: 'latest_compatible', mfgMode: 'x3' };
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 

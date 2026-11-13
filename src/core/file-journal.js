@@ -165,7 +165,9 @@ async function recoverPending(gameDir) {
     if (item.existed) {
       await fs.promises.mkdir(path.dirname(target), { recursive: true });
       const snapshot = safePath(gameDir, item.snapshot);
-      await replaceFile.copyFile(snapshot, target);
+      // Windows refuses to overwrite a read-only destination. Clear only the
+      // owned target; copying the snapshot restores its original attribute.
+      await replaceFile.copyFile(snapshot, target, { clearReadOnly: true });
       const plan = require('./preview-fs').active();
       if (plan) (plan.recoveredSources ||= new Map()).set(rootKey(target), rootKey(snapshot));
     } else if (fs.existsSync(target)) await fs.promises.unlink(target);

@@ -17,10 +17,10 @@ const profileGuide: Record<string, { icon: string; tag: string; gpus: string; ne
     mfg: "通过 DllMain 提前加载插件，启用动态补帧（DynamicMFG=1）和 V3 方向性插值（AdaptiveQualityProfile=2）。",
   },
   rtx50_desktop: {
-    icon: "🚀", tag: "Blackwell 原生直通",
-    gpus: "RTX 5060 / 5070 / 5070 Ti / 5080 / 5090 D",
+    icon: "🚀", tag: "原生多帧生成控制",
+    gpus: "RTX 5060 / 5070 / 5070 Ti / 5080 / 5090 · Desktop / Laptop",
     neural: "使用模型中的 Blackwell 原生 CUDA 内核（sm_120）。",
-    mfg: "支持原生 2× / 3× / 4× 补帧，使用 Blackwell Flip Metering。关闭 Ada 兼容补丁（TemporalFix=0，BlackwellFrameworkKernels=0），保留硬件帧调度（ForceFlipMeteringOff=0）。",
+    mfg: "RTX 50 原生支持多帧生成，无需解锁。应用时按实际显卡关闭 Ada 专用修补，保留倍率与动态模式控制；具体倍率仍需游戏和运行库支持。",
   },
 };
 
@@ -93,7 +93,7 @@ export function HardwareProfileChoices({ catalog, profileId, source, disabled = 
             onClick={() => onSelect(id)}
           >
             <span className="profile-choice-heading">
-              <strong><span aria-hidden="true">{card.icon} </span>{t(id === "rtx50_desktop" ? "RTX 50 桌面显卡" : label)}</strong>
+              <strong><span aria-hidden="true">{card.icon} </span>{t(label)}</strong>
               <small className="profile-tag">{t(standalone && id === "rtx40_desktop" ? "桌面 Ada · 全分辨率" : card.tag)}</small>
             </span>
             {!game && <small>{t("代表型号：{0}", [card.gpus])}</small>}

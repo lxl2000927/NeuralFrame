@@ -2,6 +2,27 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { RuntimeStatus } = require('../src/core/runtime-status');
+const { parseStandalone } = require('../src/core/standalone-runtime');
+
+test('resuming standalone NR after off, pending or an error requires new progress', () => {
+  const base = {pid:77,dlss5:true,dlss5State:2,dlss5Live:1,dlss5Evaluations:100};
+  for (const interruption of [
+    {dlss5:false,dlss5State:0}, {dlss5State:7}, {dlss5Pending:true}, {dlss5Live:0}
+  ]) {
+    let at = 100000, previous;
+    const sample = patch => {
+      at += 1000;
+      const result = parseStandalone({...base,...patch},{file:'status.json',mtime:at},at,previous);
+      previous = result.history;
+      return result.nr.state;
+    };
+    assert.equal(sample({}),'observed');
+    assert.equal(sample({dlss5Evaluations:120}),'active');
+    sample({...interruption,dlss5Evaluations:120});
+    assert.equal(sample({dlss5Evaluations:120}),'observed','old progress must not prove work after an interrupted execution period');
+    assert.equal(sample({dlss5Evaluations:121}),'active');
+  }
+});
 
 test('standalone telemetry requires the current process, progress and fresh samples; pending parameters are not effective', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-proxy-telemetry-'));

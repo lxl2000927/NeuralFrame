@@ -1,0 +1,1056 @@
+.library-intro {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 18px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.library-intro p,
+.library-intro h2 {
+  margin: 0;
+}
+.library-intro p {
+  font-size: 12px;
+}
+.library-intro h2 {
+  flex-basis: 100%;
+  font-size: 18px;
+}
+.component-catalog {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 8px;
+  min-width: 0;
+}
+.component-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  backdrop-filter: blur(16px) saturate(110%);
+}
+.component-toolbar .component-search {
+  flex: 1;
+  min-width: 160px;
+}
+.library-actions {
+  flex-shrink: 0;
+}
+.library-actions button {
+  min-height: 32px;
+  font-size: 12px;
+  padding: 5px 10px;
+}
+.component-navigation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.component-filter-toggle {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 11px;
+  box-shadow: none;
+}
+.component-filter-toggle[aria-expanded="true"] {
+  background: var(--hover);
+}
+.component-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.component-filter-chips > button:not(.component-text-button) {
+  min-height: 25px;
+  max-width: 300px;
+  font-size: 11px;
+  padding: 3px 7px;
+  background: var(--header);
+  box-shadow: none;
+}
+.component-filter-chips span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.component-filter-chips svg {
+  flex-shrink: 0;
+}
+.component-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--muted);
+  transition:
+    border-color 120ms,
+    box-shadow 120ms;
+}
+.component-search input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  font-size: 13px;
+}
+.component-search:hover,
+.component-search:focus-within {
+  border-color: var(--control-border);
+}
+.component-search:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--muted) 14%, transparent);
+}
+/* The field has one focus surface; the inner input must not add the global ring. */
+.component-catalog .component-search input:is(:focus, :focus-visible, :hover) {
+  outline: none;
+  border: 0;
+  box-shadow: none;
+}
+.component-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.component-tabs button {
+  min-height: 30px;
+  height: auto;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  padding: 4px 11px;
+  gap: 7px;
+  font-size: 12px;
+}
+.component-tabs button[aria-pressed="true"] {
+  background: var(--selected);
+  border-color: color-mix(in srgb, var(--accent-text) 24%, transparent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.component-tabs small {
+  font-size: 10px;
+  opacity: 0.85;
+  font-weight: 400;
+}
+.component-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.component-filters[hidden] {
+  display: none;
+}
+.component-filters {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.component-filters label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.component-filters select {
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 2px 6px;
+  min-width: 90px;
+  max-width: 225px;
+  font: inherit;
+}
+.component-filters select:is(:focus, :focus-visible) {
+  outline: none;
+  border-color: var(--control-border);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--muted) 14%, transparent);
+}
+.component-result-count {
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 11px;
+}
+.component-list {
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.component-list table {
+  table-layout: fixed;
+  width: 100%;
+}
+.component-list th {
+  background: var(--header);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 10px 14px;
+  font-weight: 500;
+}
+.component-list th:first-child {
+  width: 30%;
+}
+.component-list th:nth-child(2) {
+  width: 23%;
+}
+.component-list th:nth-child(3) {
+  width: 10%;
+}
+.component-list th:nth-child(4) {
+  width: 24%;
+}
+.component-list th:last-child {
+  width: 13%;
+  text-align: right;
+}
+.component-list td {
+  padding: 8px 12px;
+  height: 60px;
+  vertical-align: middle;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.component-list tbody:last-of-type tr:last-child td {
+  border-bottom: 0;
+}
+.component-list tbody tr {
+  transition: background-color 120ms;
+}
+.component-list tbody tr:hover,
+.component-list tbody tr:has(:focus-visible) {
+  background: color-mix(in srgb, var(--hover) 65%, var(--surface));
+}
+.component-list tr[data-history] td:first-child {
+  padding-left: 25px;
+}
+.component-list tr[data-history] {
+  background: color-mix(in srgb, var(--header) 50%, transparent);
+}
+.component-list tr[data-history] td {
+  height: 48px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.component-catalog .component-text-button,
+.component-drawer .component-text-button {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 3px;
+  min-height: 24px;
+  height: auto;
+  color: inherit;
+  font-size: inherit;
+  text-align: left;
+  white-space: normal;
+  line-height: 1.5;
+}
+.component-catalog .component-text-button:hover:enabled,
+.component-drawer .component-text-button:hover:enabled {
+  color: var(--accent-text);
+  background: transparent;
+  box-shadow: none;
+}
+.component-catalog .component-text-button:active:enabled,
+.component-drawer .component-text-button:active:enabled {
+  transform: none;
+  box-shadow: none;
+}
+.component-catalog .component-text-button:focus-visible,
+.component-drawer .component-text-button:focus-visible {
+  outline: 2px solid var(--muted);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+.component-catalog .component-name {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-start;
+  font-weight: 600;
+  font-size: 13px;
+  max-width: 100%;
+}
+.component-heading {
+  display: flex;
+  align-items: center;
+  gap: 4px 9px;
+  flex-wrap: wrap;
+}
+.component-catalog .component-history-name {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.component-name svg,
+.component-status svg {
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition:
+    transform 160ms ease,
+    opacity 160ms;
+}
+.component-name:hover svg,
+.component-status:hover svg {
+  opacity: 1;
+  transform: translateX(2px);
+}
+.component-description {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+}
+.component-description > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+.component-catalog .component-internal-toggle {
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.component-catalog
+  :is(.component-history-toggle, .component-internal-toggle):hover:enabled {
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  color: var(--text);
+}
+.component-catalog
+  :is(.component-history-toggle, .component-internal-toggle):active:enabled {
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+}
+.component-history-toggle svg,
+.component-internal-toggle svg {
+  transition: transform 160ms ease;
+}
+.component-history-toggle[aria-expanded="true"] svg,
+.component-internal-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.component-version-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.component-version-label strong {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.component-paired {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--selected);
+  color: var(--accent-text);
+  white-space: nowrap;
+}
+.component-source,
+.component-condition {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.component-local-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.component-local-state::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+.component-local-state[data-state="cached"] {
+  color: var(--muted);
+}
+.component-local-state[data-state="cached"]::before {
+  background: currentColor;
+}
+.component-local-state[data-state="damaged"] {
+  color: var(--warning-text);
+}
+.component-catalog .component-status {
+  display: inline-flex;
+  justify-content: flex-start;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.component-status[data-state="selectable"] {
+  color: var(--accent-text);
+}
+.component-status:is(
+  [data-state="unsupported"],
+  [data-state="incompatible"],
+  [data-state="repair"]
+) {
+  color: var(--warning-text);
+}
+.component-status[data-state="route"] {
+  color: var(--accent-text);
+}
+.component-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  font-size: 11px;
+}
+.component-list .component-action > button {
+  min-height: 26px;
+  height: auto;
+  padding: 3px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.component-action > small {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.component-action .download-active {
+  width: 100%;
+  max-width: 140px;
+}
+.component-action .download-active span {
+  font-size: 10px;
+}
+.component-catalog .component-internal-toggle {
+  justify-self: start;
+  color: var(--muted);
+  font-size: 12px;
+}
+.component-empty {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--muted);
+}
+.component-empty h3 {
+  font-size: 15px;
+  color: var(--text);
+}
+.component-empty p {
+  font-size: 12px;
+}
+.library-update-status {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+}
+.component-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  min-width: 0;
+}
+.component-workspace.has-details {
+  grid-template-columns: minmax(260px, 1fr) minmax(400px, 560px);
+}
+.component-list-area {
+  container: component-list / inline-size;
+  min-width: 0;
+}
+.component-list {
+  overflow-anchor: none;
+}
+.component-list th:first-child {
+  width: 24%;
+}
+.component-list th:nth-child(2) {
+  width: 20%;
+}
+.component-list th:nth-child(3) {
+  width: 10%;
+}
+.component-list th:nth-child(4) {
+  width: 27%;
+}
+.component-list th:last-child {
+  width: 19%;
+}
+.component-list tbody tr[data-selected="true"] {
+  background: var(--selected);
+}
+.component-project-summary,
+.component-software-summary {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
+  gap: 6px;
+  align-items: baseline;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.component-project-summary > span:first-child,
+.component-software-summary > span:first-child {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.component-project-summary > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.component-software-summary .component-status {
+  min-height: 20px;
+}
+.component-row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+.component-catalog .component-history-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 5px;
+  width: 154px;
+  max-width: 100%;
+  min-height: 31px;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-text) 28%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--selected) 65%, var(--surface));
+  color: var(--accent-text);
+  font-size: 11px;
+  box-shadow: none;
+  white-space: normal;
+  line-height: 1.35;
+  text-align: left;
+}
+.component-catalog .component-history-toggle:hover:enabled {
+  color: var(--text);
+  background: var(--selected);
+  border-color: var(--accent-text);
+}
+.component-catalog .component-history-toggle:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+.component-history-count {
+  min-width: 19px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent-text) 12%, transparent);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.component-drawer {
+  position: sticky;
+  top: calc(var(--appbar-height) + 8px);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: var(
+    --component-drawer-height,
+    calc(100dvh - var(--appbar-height) - 40px)
+  );
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 5px 20px rgb(0 0 0 / 8%);
+}
+.component-drawer.is-closing {
+  pointer-events: none;
+}
+.component-drawer > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--header) 80%, var(--surface));
+}
+.component-drawer > header small {
+  font-size: 11px;
+}
+.component-drawer > header h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.component-drawer > header .icon-button {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 6px;
+  border-color: transparent;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+}
+.component-drawer > header .icon-button:hover:enabled {
+  background: var(--hover);
+  color: var(--text);
+}
+.component-drawer > header .icon-button:focus-visible {
+  outline: 2px solid var(--muted);
+  outline-offset: 0;
+  box-shadow: none;
+}
+.component-drawer-body {
+  padding: 15px 18px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  flex: 1;
+  scrollbar-gutter: stable;
+}
+.component-drawer > footer {
+  padding: 11px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--header);
+  flex-shrink: 0;
+}
+.component-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.component-detail-actions > button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.component-detail-actions .component-action {
+  margin-left: auto;
+}
+.component-detail-actions .component-action > button {
+  min-height: 31px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.component-drawer .component-download-note {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.component-drawer .component-download-note.error {
+  color: var(--warning-text);
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.component-drawer p {
+  margin: 7px 0;
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.component-drawer small {
+  font-size: 11px;
+  line-height: 1.55;
+}
+.component-drawer .component-detail-purpose {
+  margin: 0 0 14px;
+  color: var(--muted);
+}
+.component-detail-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px 16px;
+  margin: 0 0 15px;
+}
+.component-detail-meta dt {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+.component-detail-meta dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.component-detail-meta strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.component-source-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  min-width: 0;
+}
+.component-drawer .source-link {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  color: var(--accent-text);
+  gap: 5px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.component-drawer .source-link svg {
+  flex-shrink: 0;
+  align-self: center;
+}
+.component-drawer section {
+  border-bottom: 1px solid var(--border);
+}
+.component-drawer .component-detail-section {
+  padding: 15px 0;
+  font-size: 12px;
+}
+.component-drawer h3 {
+  margin: 0 0 9px;
+  font-size: 13px;
+}
+.component-drawer .component-verdict {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 12px;
+  background: var(--header);
+}
+.component-verdict-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 10px;
+}
+.component-verdict-heading h3 {
+  margin: 0;
+  color: var(--text);
+}
+.component-support-badge {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 9%, transparent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+.component-support-badge:is([data-state="selectable"], [data-state="route"]) {
+  color: var(--accent-text);
+  background: var(--selected);
+}
+.component-support-badge:is(
+  [data-state="unsupported"],
+  [data-state="incompatible"],
+  [data-state="repair"]
+) {
+  color: var(--warning-text);
+  background: color-mix(in srgb, var(--warning-text) 8%, transparent);
+}
+.component-verdict-facts {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+.component-verdict-facts > div {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px;
+}
+.component-verdict-facts dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+.component-verdict-facts dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.component-verdict small {
+  color: var(--muted);
+  display: block;
+  overflow-wrap: anywhere;
+}
+.component-evidence-note {
+  margin-top: 10px;
+}
+.component-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.component-section-heading h3 {
+  margin-bottom: 4px;
+}
+.component-section-heading > span {
+  font-size: 11px;
+}
+.component-project-records {
+  display: grid;
+  gap: 10px;
+  margin: 13px 0;
+}
+.component-project-records > div {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.85fr) minmax(0, 1.4fr);
+  gap: 12px;
+}
+.component-project-records dt {
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.component-project-records dd {
+  margin: 0;
+  font-size: 12px;
+}
+.component-project-records dd small {
+  display: block;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.component-project-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 13px;
+  margin: 10px 0 6px;
+}
+.component-detail-facts {
+  margin: 10px 0;
+  font-size: 12px;
+}
+.component-detail-facts > div {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 8px;
+  padding: 4px 0;
+}
+.component-detail-facts dt {
+  color: var(--muted);
+}
+.component-detail-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.component-file-details {
+  padding: 13px 0;
+  font-size: 12px;
+}
+.component-file-details summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.component-file-details summary:hover {
+  color: var(--text);
+}
+.component-drawer .path,
+.component-file code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  user-select: text;
+}
+.component-file {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 4px;
+}
+.component-file code:last-child {
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes component-drawer-enter {
+    from {
+      opacity: 0.4;
+      transform: translateX(30px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+  @keyframes component-drawer-exit {
+    to {
+      opacity: 0;
+      transform: translateX(30px);
+    }
+  }
+  :root:not([data-safe-graphics="true"]) .component-drawer {
+    animation: component-drawer-enter 220ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  }
+  :root:not([data-safe-graphics="true"]) .component-drawer.is-closing {
+    animation: component-drawer-exit 180ms ease-in both;
+  }
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .component-toolbar {
+    background: var(--surface);
+    backdrop-filter: none;
+  }
+}
+:root[data-safe-graphics="true"] .component-toolbar {
+  background: var(--surface);
+  backdrop-filter: none;
+}
+@media (forced-colors: active) {
+  .component-search:focus-within,
+  .component-filters select:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+  .component-catalog .component-history-toggle {
+    border-color: ButtonText;
+  }
+}
+@container library-page (max-width:900px) {
+  .component-workspace.has-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .component-drawer {
+    position: fixed;
+    z-index: 45;
+    top: var(--component-drawer-inset, calc(var(--appbar-height) + 38px));
+    right: 8px;
+    bottom: 8px;
+    width: min(560px, calc(100vw - 16px));
+    max-height: none;
+    border-radius: 13px;
+    box-shadow: -5px 0 28px rgb(0 0 0 / 20%);
+  }
+}
+@container library-page (max-width:650px) {
+  .component-toolbar {
+    flex-wrap: wrap;
+  }
+  .component-toolbar .component-search {
+    flex-basis: 100%;
+  }
+  .component-result-count {
+    margin-left: 0;
+  }
+  .component-filters {
+    gap: 8px;
+  }
+  .component-filters select {
+    max-width: 180px;
+  }
+}
+@container component-list (max-width:760px) {
+  .component-list table,
+  .component-list tbody {
+    display: block;
+  }
+  .component-list thead {
+    display: none;
+  }
+  .component-list tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 110px;
+    gap: 6px 10px;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .component-list tbody:last-of-type tr:last-child {
+    border-bottom: 0;
+  }
+  .component-list td,
+  .component-list tr[data-history] td {
+    border: 0;
+    padding: 0;
+    height: auto;
+    min-width: 0;
+  }
+  .component-list tr[data-history] td:first-child {
+    padding-left: 0;
+  }
+  .component-list td:first-child {
+    grid-column: 1 / -1;
+  }
+  .component-list td:nth-child(2) {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .component-list td:nth-child(3) {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+  }
+  .component-list td:nth-child(4) {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+  .component-list td:last-child {
+    grid-column: 1 / -1;
+    grid-row: 4;
+  }
+  .component-row-actions {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .component-row-actions .component-action {
+    align-items: flex-start;
+  }
+  .component-history-toggle {
+    margin-left: auto;
+  }
+}
+@media (max-width: 420px) {
+  .component-detail-meta {
+    grid-template-columns: 1fr;
+  }
+  .component-drawer-body,
+  .component-drawer > header,
+  .component-drawer > footer {
+    padding-left: 13px;
+    padding-right: 13px;
+  }
+}

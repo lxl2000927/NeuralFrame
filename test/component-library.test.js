@@ -15,6 +15,14 @@ function fixture(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'unified-lib
   const add=file=>library.importPackage({component:'dlss-sr',files:{'nvngx_dlss.dll':file}});
   return{root,game,exe,source,userData,library,review,a,b,add};
 }
+test('overlapping imports retain both package records and recover after a failed import', async t => {
+  const f = fixture(t);
+  const [first, second] = await Promise.all([f.add(f.a), f.add(f.b)]);
+  assert.deepEqual(new Set(f.library.catalog().packages.map(p => p.id)), new Set([first.id, second.id]));
+  await assert.rejects(f.add(path.join(f.source, 'missing.dll')));
+  assert.equal((await f.add(f.a)).id, first.id);
+  assert.equal(f.library.catalog().packages.length, 2);
+});
 test('damaged 2.3.0 model index does not hide existing components or modify the source index', async t => {
   const f = fixture(t);
   const pack = await f.add(f.a);
@@ -29,6 +37,47 @@ test('damaged 2.3.0 model index does not hide existing components or modify the 
     assert.ok(view.warnings.length);
     assert.equal(fs.readFileSync(index, 'utf8'), data);
   }
+});
+
+test('damaged release cache preserves installed packages and can be rebuilt by checking updates', async t => {
+  const f = fixture(t), pack = await f.add(f.a);
+  await f.library.select(f.game, {'dlss-sr':pack.id});
+  const catalog = f.library.catalog(), profile = f.library.profile(f.game);
+  let requests = 0;
+  const updater = new ComponentUpdates(f.library, {fetcher:async () => {
+    requests++;
+    return Response.json([]);
+  }});
+  for (const damaged of ['{', 'null', '{"sourcesVersion":2}',
+    '{"sourcesVersion":2,"candidates":[null],"errors":[]}',
+    '{"candidates":[],"errors":[null]}',
+    '{"candidates":[],"errors":[],"etags":[]}']) {
+    fs.writeFileSync(updater.cache, damaged);
+    const before = requests, status = updater.status();
+    assert.deepEqual(status.candidates, []);
+    assert.ok(status.errors.some(error => /缓存损坏/.test(error.message)));
+    assert.equal(requests, before, 'viewing the library does not trigger network recovery');
+    assert.equal(fs.readFileSync(updater.cache, 'utf8'), damaged, 'viewing does not overwrite the damaged evidence');
+    const recovered = await updater.check();
+    assert.equal(recovered.ok, true);
+    assert.deepEqual(recovered.errors, []);
+    assert.ok(requests > before, 'damaged metadata never keeps a stale check throttle');
+    assert.equal(JSON.parse(fs.readFileSync(updater.cache, 'utf8')).sourcesVersion, 3);
+    assert.deepEqual(f.library.catalog(), catalog);
+    assert.deepEqual(f.library.profile(f.game), profile);
+    assert.deepEqual(fs.readFileSync(path.join(f.game, 'nvngx_dlss.dll')), fs.readFileSync(f.a));
+  }
+});
+
+test('an unreadable release cache is not silently treated as recoverable content damage', async t => {
+  const f = fixture(t);
+  fs.mkdirSync(f.library.root, {recursive:true});
+  const updater = new ComponentUpdates(f.library, {fetcher:() => assert.fail('unexpected network request')});
+  assert.deepEqual(updater.status().errors, [], 'a missing cache is a normal initial state');
+  fs.mkdirSync(updater.cache);
+  assert.throws(() => updater.status(), /组件.*缓存|组件记录损坏/);
+  await assert.rejects(updater.check(), /组件.*缓存|组件记录损坏/);
+  assert.equal(fs.statSync(updater.cache).isDirectory(), true);
 });
 test('rollback retains a default version choice made after the preceding file update', async t => {
   const f = fixture(t);
@@ -115,6 +164,38 @@ test('seeding reconciles a previously imported MFG package by content and preser
   assert.deepEqual(await fresh.importPackage(manual), record);
   assert.equal((await fresh.list()).packages.length, 2);
   await fresh.select(f.game, { [component]: record.id });
+});
+
+test('preparing a paired cache again repairs missing, truncated and same-size damaged library files', async t => {
+  const f = fixture(t), component = 'mfg-renodx', name = 'renodx-mfgunlock.addon64';
+  const payloadDir = path.join(f.root, 'payload');
+  const source = path.join(payloadDir, 'enhanced', 'mfg', name);
+  fs.mkdirSync(path.dirname(source), { recursive: true });
+  fs.copyFileSync(f.b, source);
+  const library = new ComponentLibrary(f.userData, { payloadDir });
+  await library.init();
+  const record = library.catalog().packages[0];
+  const target = path.join(library.directory(record), name);
+  await library.select(f.game, { [component]: record.id });
+  const profile = fs.readFileSync(library.profileFile(f.game));
+  for (const damage of [
+    () => fs.unlinkSync(target),
+    () => fs.writeFileSync(target, 'truncated'),
+    () => { const bytes = fs.readFileSync(target); bytes[bytes.length - 1] ^= 1; fs.writeFileSync(target, bytes); },
+  ]) {
+    damage();
+    await assert.rejects(library.verify(record), /组件文件已变化或缺失/);
+    // component-prepare resets this flag after verifying the intact runtime payload.
+    library.initialized = false;
+    const listed = await library.list();
+    assert.equal(listed.packages.length, 1);
+    assert.equal(listed.packages[0].present, true);
+    await library.verify(record);
+    assert.deepEqual(fs.readFileSync(library.profileFile(f.game)), profile);
+  }
+  const reopened = new ComponentLibrary(f.userData, { payloadDir });
+  t.mock.method(reopened, 'importPackage', () => { throw Error('unchanged cache must not be rehashed'); });
+  await reopened.init();
 });
 test('preview is read-only, confirmed updates can roll back exactly and original restore survives',async t=>{const f=fixture(t),p=await f.add(f.b),selection={'dlss-sr':p.id},work=()=>f.library.apply(f.game,selection,{strict:true}),request={kind:'component-update',selection};
   const before=fs.readFileSync(path.join(f.game,'nvngx_dlss.dll'));const plan=(await f.review.run(f.game,request,work)).preview;

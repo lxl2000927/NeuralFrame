@@ -4,7 +4,7 @@ import type { Draft, Status } from "../types";
 import type { applyPatch } from "../domain";
 import { t } from "../i18n";
 
-function ActionMenu({ children }: { children: ReactNode }) {
+export function ActionMenu({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -34,9 +34,10 @@ function ActionMenu({ children }: { children: ReactNode }) {
 }
 
 type Scope = NonNullable<Parameters<typeof applyPatch>[2]>;
-export function GraphicsActions({ draft, status, changed, busy, canRestore, undo, apply, restore, setupAction }: {
+export function GraphicsActions({ draft, status, changed, busy, canRestore, undo, apply, restore, rescan, setupAction }: {
   draft?: Draft | null; status?: Status; changed: boolean; busy: boolean; canRestore: boolean;
   undo: () => void; apply: (scope: Scope) => void; restore: () => void;
+  rescan: () => void;
   setupAction?: () => void;
 }) {
   const disabled = busy || !draft || !status?.ok;
@@ -48,6 +49,7 @@ export function GraphicsActions({ draft, status, changed, busy, canRestore, undo
       {t(setupAction ? "预览并应用安装方式" : enableBoth ? "一键启用神经渲染与补帧" : "预览并应用")}
     </button>
     <ActionMenu>
+      <button disabled={busy} onClick={rescan}>{t("重新检测文件")}</button>
       {status?.launcherProtected && !enableBoth && <button disabled={disabled}
         onClick={() => apply("enableBoth")}>{t("一键启用神经渲染与补帧")}</button>}
       <button disabled={disabled} onClick={() => apply("both")}>{t("重新应用当前配置")}</button>

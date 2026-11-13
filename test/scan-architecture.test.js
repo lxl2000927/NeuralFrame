@@ -28,6 +28,29 @@ function minimalPe32(file, marker = null) {
   minimalPe(file, { bitness: 32, marker });
 }
 
+test('same-name executables keep distinct architectures and renderers even at the same file size', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-renderer-variants-'));
+  t.after(() => fs.rmSync(dir, {recursive:true, force:true}));
+  const variants = [
+    ['DX9-32', 32, 'Direct3DCreate9', 'DirectX 9'],
+    ['DX9-64', 64, 'Direct3DCreate9', 'DirectX 9'],
+    ['DX11', 64, 'D3D11CreateDevice', 'DirectX 11'],
+    ['Vulkan', 64, 'vkCreateInstance', 'Vulkan']
+  ];
+  for (const [folder, bitness, marker] of variants)
+    minimalPe(path.join(dir, folder, 'Game.exe'), {bitness, marker});
+  // Identical backup copies still collapse within a renderer/architecture.
+  minimalPe(path.join(dir, 'Copies', 'Vulkan', 'Game.exe'), {bitness:64, marker:'vkCreateInstance'});
+  const scan = await scanGame(dir);
+  assert.equal(scan.exeCandidates.length, variants.length);
+  for (const [folder, bitness, , apiLabel] of variants) {
+    const candidate = scan.exeCandidates.find(exe => exe.path === path.join(dir, folder, 'Game.exe'));
+    assert.ok(candidate, `${folder} must remain selectable`);
+    assert.equal(candidate.bitness, bitness);
+    assert.equal(candidate.apiLabel, apiLabel);
+  }
+});
+
 test('the saved executable survives same-name deduplication after an update', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-saved-copy-'));
   t.after(() => fs.rmSync(dir, {recursive:true, force:true}));

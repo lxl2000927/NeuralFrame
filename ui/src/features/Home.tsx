@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, FolderOpen } from "lucide-react";
 import { Artwork } from "../components";
 import { getBridge } from "../bridge";
+import { useWindowReturn } from "../useWindowReturn";
 import { errorText } from "../domain";
 import { dateTime, t } from "../i18n";
 import { useJobLog } from "../useJobLog";
@@ -60,6 +61,7 @@ export function HomeIntake({
   message: Message;
 }) {
   const [recent, setRecent] = useState<{ dir: string; at: number }[]>([]);
+  const returnRevision = useWindowReturn(active, disabled);
   const [over, setOver] = useState(false);
   useEffect(() => {
     if (!active) return;
@@ -75,7 +77,7 @@ export function HomeIntake({
     return () => {
       current = false;
     };
-  }, [active, refreshToken, message]);
+  }, [active, refreshToken, message, returnRevision]);
   const byDir = new Map(games.map((game) => [game.dir.toLowerCase(), game]));
   const matches = recent
     .flatMap((entry) => {

@@ -97,6 +97,60 @@ test('a damaged custom entry stays removable even with an unavailable built-in p
   assert.deepEqual(lib.list().overlays.map(x=>x.id), ['builtin']);
 });
 
+test('reimport repairs damaged custom metadata without changing installed overlays', t => {
+  const {lib,builtin,root} = library(t,true);
+  const source = path.join(root,'custom.addon64');
+  fs.copyFileSync(builtin,source);
+  const entry = lib.add(source), metadata = path.join(root,'library','entries',entry.id+'.json');
+  const exe = path.join(root,'game','Game.exe');
+  writePe(exe,{text:'game'});
+  const installed = lib.install(entry.id,exe), installedBytes = fs.readFileSync(installed.file);
+  for (const damaged of ['{"id":', JSON.stringify({...entry,architecture:32})]) {
+    fs.writeFileSync(metadata,damaged);
+    assert.equal(lib.add(source).id,entry.id);
+    assert.equal(lib.resolve(entry.id).ready,true);
+    assert.equal(lib.list().overlays.find(x=>x.id===entry.id).architecture,64);
+    assert.deepEqual(lib.list().installations.map(x=>x.id),[installed.id]);
+    assert.deepEqual(fs.readFileSync(installed.file),installedBytes);
+  }
+});
+
+test('a failed custom metadata repair is reported and leaves no temporary record', t => {
+  const {lib,builtin,root} = library(t,true);
+  const source = path.join(root,'custom.addon64');
+  fs.copyFileSync(builtin,source);
+  const entry = lib.add(source), entries = path.join(root,'library','entries');
+  const metadata = path.join(entries,entry.id+'.json');
+  fs.writeFileSync(metadata,'{"id":');
+  const original = fs.readFileSync(metadata), rename = fs.renameSync;
+  t.mock.method(fs,'renameSync',(from,to) => {
+    if (to === metadata) throw Object.assign(Error('metadata is locked'),{code:'EACCES'});
+    return rename(from,to);
+  });
+  assert.throws(()=>lib.add(source),{code:'EACCES'});
+  assert.deepEqual(fs.readFileSync(metadata),original);
+  assert.equal(fs.readdirSync(entries).filter(name=>name.endsWith('.tmp')).length,0);
+});
+
+test('reimport repairs parseable custom metadata before exposing invalid presentation or readiness fields', t => {
+  const {lib,builtin,root} = library(t,true);
+  const source = path.join(root,'custom.addon64');
+  fs.copyFileSync(builtin,source);
+  const entry = lib.add(source), metadata = path.join(root,'library','entries',entry.id+'.json');
+  for (const damaged of [
+    {...entry,ready:false}, {...entry,ready:undefined}, {...entry,name:{unexpected:true}},
+    {...entry,description:[]}, {...entry,sha256:undefined}, {...entry,builtin:true}
+  ]) {
+    fs.writeFileSync(metadata,JSON.stringify(damaged));
+    const listed = lib.list();
+    assert.ok(listed.errors.length,'Malformed records should be reported instead of passed to the UI');
+    assert.equal(listed.overlays.some(value=>value.id===entry.id),false);
+    assert.equal(lib.add(source).id,entry.id);
+    assert.equal(lib.resolve(entry.id).ready,true);
+    assert.deepEqual(JSON.parse(fs.readFileSync(metadata,'utf8')),entry);
+  }
+});
+
 test('installing without the add-on says where the file went' , (t) => {
   const { lib, root, builtin } = library(t, false);
   const exe = path.join(root, 'Game.exe');

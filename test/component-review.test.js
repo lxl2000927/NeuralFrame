@@ -40,6 +40,22 @@ test('enhanced deployment preview includes detected anti-cheat and rechecks it o
   assert.equal((await review.run(game, request, work, next.token)).ok, true);
   assert.equal((await review.run(game, request, work)).preview.antiCheat, undefined);
 });
+test('enhanced preview follows the explicitly selected executable rather than the old inventory target', async t => {
+  const {game,review}=fixture(t),selected=path.join(game,'Other','OtherGame.exe');
+  writePe(selected,{bitness:64,text:'D3D12CreateDevice'});
+  const work=async()=>{await preview.fs.promises.writeFile(path.join(game,'Other','settings.ini'),'selected');return{ok:true};};
+  const request={kind:'enhanced',config:{exePath:selected,route:'encore'}};
+  assert.notEqual((await review.inventory(game)).exePath,selected,'the old scan still selects a different executable');
+  const before=(await review.run(game,request,work)).preview;assert.equal(before.antiCheat,undefined);
+  fs.mkdirSync(path.join(game,'Other','EasyAntiCheat'));
+  await assert.rejects(review.run(game,request,work,before.token),{code:'errPreviewChanged'});
+  assert.equal(fs.existsSync(path.join(game,'Other','settings.ini')),false);
+  const after=(await review.run(game,request,work)).preview;
+  assert.deepEqual(after.antiCheat.components,['Easy Anti-Cheat']);
+  assert.equal((await review.run(game,request,work,after.token)).ok,true);
+  const outsideWork=async()=>{await preview.fs.promises.writeFile(path.join(game,'Other','another.ini'),'changed');return{ok:true};};
+  await assert.rejects(review.run(game,{kind:'enhanced',config:{exePath:path.join(game,'..','outside.exe')}},outsideWork),{code:'errUnsafeTarget'});
+});
 
 test('preview uses real installer, never writes game/profile; confirm matches, inventory and original restore', async t => {
   const f = fixture(t), old = fs.readFileSync(path.join(f.game, 'nvngx_dlss.dll'));

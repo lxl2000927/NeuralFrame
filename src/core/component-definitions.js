@@ -2,6 +2,7 @@
 // Component identities are independent of app versions and file version resources.
 // Native panel adapters remain pinned until their ABI has been checked.
 const DEFINITIONS = Object.freeze({
+  encore: {name:'RTX Encore', files:['rtx-encore.dll'], optionalFiles:['THIRD-PARTY-NOTICES.md'], online:'encore', managedRoute:true},
   'dlss-sr': {name:'DLSS 超分辨率', files:['nvngx_dlss.dll'], online:'rhi-sr'},
   'dlss-fg': {name:'DLSS 帧生成运行库', files:['nvngx_dlssg.dll'], online:'rhi-fg'},
   'streamline': {name:'Streamline 配套运行库',files:[],managedRoute:true},
@@ -9,8 +10,8 @@ const DEFINITIONS = Object.freeze({
   'dlss-nr': {name:'DLSS 神经渲染模型', files:['nvngx_dlssnr.dll'], online:'rhi-nr', additionalOnline:['smartergamers-nr']},
   'renodx-nr': {name:'RenoDX 神经渲染插件', files:['renodx-dlss5.addon64'], online:'renodx'},
   'renodx-multipass': {name:'RenoDX 多通道插件', files:['renodx-dlss.addon64'], online:'multipass'},
-  'mfg-renodx': {name:'MFG 解锁插件 · RenoDX', files:['renodx-mfgunlock.addon64'], online:'mfg'},
-  'mfg-universal': {name:'MFG 解锁插件 · Universal', files:['MFGUnlocker.dll'], online:'universal'},
+  'mfg-renodx': {name:'MFG 多帧生成插件 · RenoDX', files:['renodx-mfgunlock.addon64'], online:'mfg'},
+  'mfg-universal': {name:'MFG 多帧生成插件 · Universal', files:['MFGUnlocker.dll'], online:'universal', managedRoute:true},
   feeder: {name:'Feeder 配套组件', files:['dlss5-feed.addon32','dlss5-feed.addon64','dlss5-feed-host64.exe','DLSS5_Feed.fx'], online:'feeder'},
   reshade: {name:'ReShade 加载器', files:['ReShade32.dll','ReShade64.dll','ReShade32.json','ReShade64.json']},
   preloader: {name:'32 位老游戏预加载器', files:['winmm.dll'], internal:true},
@@ -22,6 +23,7 @@ const PROVIDERS = Object.freeze({
   mfg:{repo:'mavismmg/MFGAdaUnlock-RenoDx',asset:/^renodx-mfgunlock\.addon64$/i},
   'smartergamers-nr':{repo:'SmarterGamers/SmarterGamers-DLSS5-Swapper',asset:/^nvngx_dlssnr(?:\.dll|(?:_[\w.-]+)?\.zip)$/i},
   universal:{repo:'dashdogy/MFG-Unlocker',asset:/^(?:MFGUnlocker|RTXMFG)-.+\.zip$/i},
+  encore:{repo:'SilyNoMeta/rtx-encore',asset:/^RTX-Encore-v\d+\.\d+\.\d+\.zip$/i},
   renodx:{repo:'RankFTW/rhi-repo',asset:/^renodx-dlss5_[\w.-]+\.zip$/i},
   multipass:{repo:'RankFTW/rhi-repo',asset:/^renodx-dlss_SF_[\w.-]+\.zip$/i},
   'rhi-nr':{repo:'RankFTW/rhi-repo',asset:/^nvngx_dlssnr_[\w.-]+\.zip$/i},
@@ -51,14 +53,34 @@ const RANKFTW_NR_310916 = rankFtwModel('310.9.16', {
   sha256:'dbeb1f2790b5c621887db99b1a56ac8bd5cb35207e8c074cbb806710f7460cab',
   modelSha256:'cdfa6c1ec784867182164c7836f324f087b5c9f374d0c9fe46f54999feabf3ed'
 });
+const engineVersionCache = new Map();
 function builtins(payload, overlayDir) {
   const path=require('path'),fs=require('fs'),result=[];
   const add=(component,version,files)=>{if(Object.values(files).every(f=>fs.existsSync(f)))result.push({component,version,files,source:'已适配组件缓存',trustedAdapter:true});};
+  const engineVersion = (component,file) => {
+    if (!fs.existsSync(file)) return 'local';
+    const stat=fs.statSync(file), stamp=`${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+    const old=engineVersionCache.get(file);
+    if(old?.stamp===stamp)return old.version;
+    const sha256 = require('crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    const version=require('./engine-packages').identify(component,sha256).version || 'local';
+    if(engineVersionCache.size>32)engineVersionCache.clear();
+    engineVersionCache.set(file,{stamp,version});
+    return version;
+  };
+  const encoreFile=path.join(payload,'enhanced/encore/rtx-encore.dll');
+  const encoreFiles={'rtx-encore.dll':encoreFile}, encoreNotice=path.join(payload,'enhanced/encore/THIRD-PARTY-NOTICES.md');
+  if(fs.existsSync(encoreNotice))encoreFiles['THIRD-PARTY-NOTICES.md']=encoreNotice;
+  add('encore',engineVersion('encore',encoreFile),encoreFiles);
   for(const [folder,label] of [['streamline','310.9.1'],['enhanced/streamline-2.14.16','310.9.16']])for(const [id,name] of [['dlss-sr','nvngx_dlss.dll'],['dlss-fg','nvngx_dlssg.dll']])add(id,label,{[name]:path.join(payload,folder,name)});
   add('dlss-nr','310.8.SF-v2',{'nvngx_dlssnr.dll':path.join(payload,'streamline/nvngx_dlssnr.dll')});
   add('renodx-nr','8.5.0-rc10',{'renodx-dlss5.addon64':path.join(payload,'renodx-dlss5.addon64')});
   add('renodx-multipass','SF 26.1003.2350',{'renodx-dlss.addon64':path.join(payload,'feeder/host64/renodx-dlss.addon64')});
-  for(const [id,version,name] of [['mfg-renodx','1.5.5','renodx-mfgunlock.addon64'],['mfg-universal','1.7.0','MFGUnlocker.dll']])add(id,version,{[name]:path.join(payload,'enhanced/mfg',name)});
+  add('mfg-renodx','1.5.5',{'renodx-mfgunlock.addon64':path.join(payload,'enhanced/mfg/renodx-mfgunlock.addon64')});
+  const mfgFile=path.join(payload,'enhanced/mfg/MFGUnlocker.dll');
+  add('mfg-universal',engineVersion('mfg-universal',mfgFile),{'MFGUnlocker.dll':mfgFile});
+  const mfgOptiscalerFile=path.join(payload,'enhanced/mfg-optiscaler-170/MFGUnlocker.dll');
+  add('mfg-universal',engineVersion('mfg-universal',mfgOptiscalerFile),{'MFGUnlocker.dll':mfgOptiscalerFile});
   for(const [folder,version] of [['feeder','1.17.0'],['enhanced/feeder-1.19.0','1.19.0']]) {
     const root=path.join(payload,folder);add('feeder',version,{
       'dlss5-feed.addon32':path.join(root,'dlss5-feed.addon32'),'dlss5-feed.addon64':path.join(root,'dlss5-feed.addon64'),
@@ -66,7 +88,13 @@ function builtins(payload, overlayDir) {
       'DLSS5_Feed.fx':path.join(root,'reshade-shaders/Shaders/DLSS5_Feed.fx')});
   }
   add('reshade','6.8.0',Object.fromEntries(DEFINITIONS.reshade.files.map(n=>[n,path.join(payload,'reshade-vulkan',n)])));
-  add('preloader','bb72b7c',{'winmm.dll':path.join(payload,'enhanced/zh-cn/winmm.dll')});
+  const preloaderPath = path.join(payload,'enhanced/zh-cn/winmm.dll');
+  if (fs.existsSync(preloaderPath)) {
+    const digest = require('crypto').createHash('sha256').update(fs.readFileSync(preloaderPath)).digest('hex');
+    const current = require('./runtime-catalog.json').packs.find(p=>p.id==='localization').files.find(f=>f.path.endsWith('/winmm.dll'));
+    const version = digest === current.sha256 ? '2.3.1-nf.1' : digest === 'd46783325e8c834bad740e1dc4b0296caabb9d193a9203905b2f52308c5660fa' ? 'bb72b7c' : 'local';
+    add('preloader',version,{'winmm.dll':preloaderPath});
+  }
   add('localization','zh1.10',Object.fromEntries(DEFINITIONS.localization.files.map(n=>[n,path.join(payload,'enhanced/zh-cn',n)])));
   if(overlayDir)add('overlay','zh1.10',{'dlss5-lab-overlay.addon64':path.join(overlayDir,'dlss5-lab-overlay.addon64')});
   return result;

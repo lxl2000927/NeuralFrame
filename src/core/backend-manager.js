@@ -21,7 +21,7 @@ function profileFile(gameDir, exePath, api, route) {
   // The profile file is named after the route, so this list is what decides
   // whether a route can keep its own settings at all - and a route missing
   // from it fails the install with nothing but "Invalid route".
-  if (!['native', 'feeder', 'optiscaler', 'renodx'].includes(route)) throw new Error('Invalid route');
+  if (!['native', 'feeder', 'optiscaler', 'renodx', 'encore'].includes(route)) throw new Error('Invalid route');
   const id = crypto.createHash('sha256').update(`${path.relative(gameDir, exePath).toLowerCase()}|${api}`).digest('hex').slice(0, 24);
   return journal.safePath(gameDir, `_DLSS5_Backup/.profiles/${id}-${route}.json`);
 }
@@ -29,14 +29,19 @@ function profileFile(gameDir, exePath, api, route) {
 // and mod packs routinely ship one as .txt - the writer stored those and the
 // reader then refused them, which left the game unable to be installed at all
 // until someone deleted the profile by hand. One list, used by both.
-const CONFIG_FILE = /\.(ini|cfg|txt)$/i;
+const CONFIG_FILE = /\.(ini|cfg|conf|txt|jsonc)$/i;
 
 function configPaths(gameDir, exePath, route) {
   const dir = path.dirname(exePath);
+  if (route === 'encore') return [path.join(dir, 'rtx-encore.jsonc')];
   if (route === 'optiscaler') return [path.join(dir, 'OptiScaler.ini')];
   const reshade = path.join(dir, 'ReShade.ini');
   const preset = ini.presetPath(dir, ini.readText(reshade));
   const files = [reshade, path.join(dir, 'dlss5-feed.cfg'), path.join(dir, 'host64', 'ReShade.ini')];
+  if (route === 'feeder') {
+    files.push(path.join(dir, 'NeuralFrame-Legacy.ini'), path.join(dir, 'dgVoodoo.conf'));
+    for (const sub of ['e2driver', 'drivers', 'driver', 'renderers']) files.push(path.join(dir, sub, 'dgVoodoo.conf'));
+  }
   const rel = path.relative(gameDir, preset);
   if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) files.push(preset);
   return files.filter(file => CONFIG_FILE.test(file));
@@ -112,7 +117,7 @@ async function install(config, log = () => {}) {
       }
       return core.applySwap(config, log);
     }
-    if (!old && config.route !== 'optiscaler') {
+    if (!old && !['optiscaler','encore'].includes(config.route)) {
       // Native ReShade may already have an untouched custom preset. Capture
       // its original bytes before the first managed session, while saving
       // subsequent user tuning separately for round-trip backend switches.
@@ -125,18 +130,19 @@ async function install(config, log = () => {}) {
     if (changed) {
       log({ code: 'backendSwitching', params: { from: old.route, to: config.route } });
       await saveProfile(config.gameDir, old);
-      await core.restoreFiles(config.gameDir, old, log);
+      await core.restoreFiles(config.gameDir, old, log, { registryRunner: config.registryRunner });
     }
-    if (config.route !== 'optiscaler') compatibility.assertLoaderCompatible(config, changed ? null : old);
+    if (!['optiscaler','encore'].includes(config.route)) compatibility.assertLoaderCompatible(config, changed ? null : old);
     const profile = changed || !old ? loadProfile(config) : {};
-    if (config.route !== 'optiscaler' && Object.keys(profile).length) {
+    if (!['optiscaler','encore'].includes(config.route) && Object.keys(profile).length) {
       const manifest = core.beginManifest(config.gameDir, config.exePath, config.api);
       for (const [rel, text] of Object.entries(profile)) {
         await core.writeTracked(manifest, config.gameDir, journal.safePath(config.gameDir, rel), text, { kind: 'config' });
       }
     }
     let manifest;
-    if (config.route === 'optiscaler') manifest = await optiscaler.install({ ...config, profile }, log);
+    if (config.route === 'encore') manifest = await require('./encore').install({ ...config, profile }, log);
+    else if (config.route === 'optiscaler') manifest = await optiscaler.install({ ...config, profile }, log);
     else manifest = await core.applySwap(config, log);
     for (const companion of config.route === 'native' ? (config.companions || []) : []) {
       const dest = path.join(path.dirname(config.exePath), path.basename(companion));

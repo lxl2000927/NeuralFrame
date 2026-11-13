@@ -7,17 +7,22 @@ import {
   ChevronRight,
   LockKeyhole,
   Copy,
+  RefreshCw,
 } from "lucide-react";
 import { getBridge } from "../bridge";
+import { useWindowReturn } from "../useWindowReturn";
 import { useJobLog } from "../useJobLog";
 import { SessionLog } from "./SessionLog";
 import { Artwork, Empty, Loading, Row, Select } from "../components";
 import { GameBrowser } from "./GameBrowser";
 import type { GameMenuHandler } from "../GameCard";
 import { GameSetup, resolveSetup, type SetupSelection } from "./GameSetup";
-import { GraphicsActions } from "./GraphicsActions";
+import { ActionMenu, GraphicsActions } from "./GraphicsActions";
 import { DiagnosticsPanel, ModelTable } from "./GameReports";
 import { GraphicsPanels } from "./GraphicsPanels";
+import { EncorePanel, defaultEncore, encoreSettingsIssue } from "./EncorePanel";
+import { EngineVersion, selectedEngine, useEngineLibrary } from "./EngineVersion";
+import { StandaloneTuning } from "./StandaloneTuning";
 import { HardwareProfileChoices, hardwareProfileNotes } from "./HardwareProfileChoices";
 import "./GameGraphics.css";
 import { StandaloneRuntimeFacts } from "./StandaloneStatus";
@@ -40,15 +45,14 @@ import type {
   Runtime,
   RuntimeItem,
   Status,
+  EncoreSettings,
+  MfgAdvanced,
 } from "../types";
 export type Run = (
   operation: (token?: string) => Promise<Result>,
 ) => Promise<boolean>;
 type Props = {
   onImportModel: (id: string) => void;
-  componentRevision: number;
-  runtimeRevision: number;
-  onTabChange: (tab: string) => void;
   onBrowseModels: () => void;
   onDownloadModel: (id: string) => void;
   games: Game[];
@@ -65,13 +69,23 @@ type Props = {
   active?: boolean;
   refreshToken?: number;
 };
+type EditorDraft = { setup: SetupSelection | null; components: Record<string, string>; encore?:Record<string,EncoreSettings | undefined>;
+  encoreEngines?:Record<string,string|undefined>; mfgPackageId?:string; mfgAdvanced?:MfgAdvanced; resetNeuralTuning?:boolean };
+const emptyEditorDraft: EditorDraft = { setup: null, components: {} };
 export function Games(props: Props) {
+  // Keep unapplied route/component choices when an editor or tab unmounts.
+  // Component values are only user overrides; "" explicitly means paired default.
+  const [editorDrafts, setEditorDrafts] = useState<Record<string, EditorDraft>>({});
   const selected = props.games.find((g) => g.dir === props.selected);
   return (
     <div className="games-workspace">
       <GameBrowser games={props.games} selected={props.selected} onSelect={props.onSelect} grouped={props.grouped} openMenu={props.openMenu} />
       {selected ? (
-        <GameEditor key={selected.dir} {...props} game={selected} />
+        <GameEditor key={selected.dir} {...props} game={selected}
+          editorDraft={editorDrafts[selected.dir] || emptyEditorDraft}
+          onEdit={patch => setEditorDrafts(previous => ({ ...previous,
+            [selected.dir]: { ...(previous[selected.dir] || emptyEditorDraft), ...patch },
+          }))} />
       ) : (
         <Empty>{t("选择一款游戏，查看配置和组件。")}</Empty>
       )}
@@ -79,11 +93,12 @@ export function Games(props: Props) {
   );
 }
 function GameEditor({
-  componentRevision, runtimeRevision, onTabChange,
   onImportModel,
   onBrowseModels,
   onDownloadModel,
   game,
+  editorDraft,
+  onEdit,
   drafts,
   setDraft,
   run,
@@ -92,13 +107,16 @@ function GameEditor({
   ask,
   active = true,
   refreshToken = 0,
-}: Props & { game: Game }) {
+}: Props & { game: Game; editorDraft: EditorDraft; onEdit: (patch: Partial<EditorDraft>) => void }) {
+  const setupSelection = editorDraft.setup;
+  const setSetupSelection = (setup: SetupSelection | null) => onEdit({ setup });
   const [tab, setTab] = useState("graphics"),
-    [setupSelection, setSetupSelection] = useState<SetupSelection | null>(null),
     [showAntiCheatNote, setShowAntiCheatNote] = useState(false),
     [revision, setRevision] = useState(0),
     [runtime, setRuntime] = useState<Runtime | null>(null);
-  useEffect(() => { if (active) onTabChange(tab); }, [tab, active, onTabChange]);
+  // Window return reads lists/telemetry only. Re-inspecting a game's files is
+  // explicit, so focus changes never replace the configuration being edited.
+  const returnRevision = useWindowReturn(active && (tab === "components" || tab === "runtime"), busy);
   const { rows: logRows, lines: activity, clear: clearActivity } = useJobLog(game.dir);
   const panelId = useId();
   const recovery = useRestoreStatus(game.dir, active, revision, refreshToken);
@@ -112,11 +130,30 @@ function GameEditor({
   const base = status?.ok ? readDraft(status) : null,
     draft = drafts[game.dir] || base,
     changes = base && draft ? changedFields(base, draft) : [];
-  const profileOverride = base && draft && draft.hardwareProfile !== base.hardwareProfile
+  const selectedSetup = details ? resolveSetup(details,setupSelection) : null;
+  const encoreSelected = !status?.launcherProtected && selectedSetup?.route === "encore";
+  const profileOverride = !encoreSelected && base && draft && draft.hardwareProfile !== base.hardwareProfile
     ? draft.hardwareProfile : "";
   const projected = useProfileTarget(game.dir, profileOverride, active && !!profileOverride, revision, refreshToken);
   const displayedStatus = profileOverride ? projected?.status : status;
   const setupPending = !!setupSelection && !details?.launcherProtected && !status?.launcherProtected;
+  const encoreKey = (selectedSetup?.exe?.path || setupSelection?.exePath || '').replace(/\\/g,'/').toLowerCase();
+  const statusExe = (status?.encore?.exePath || status?.exePath || details?.exePath || '').replace(/\\/g,'/').toLowerCase();
+  const currentEncore = encoreKey === statusExe ? status?.encore : undefined;
+  const encoreStatus = status ? {...status,encore:currentEncore} : undefined;
+  const encoreBase = currentEncore?.installed ? currentEncore.settings : defaultEncore;
+  const encoreDraft = editorDraft.encore?.[encoreKey] || encoreBase;
+  const setEncoreDraft = (encore?:EncoreSettings) => onEdit({encore:{...editorDraft.encore,[encoreKey]:encore}});
+  const encorePackageId = editorDraft.encoreEngines?.[encoreKey];
+  const installedEncoreEngine = currentEncore?.installed ? currentEncore.engine : undefined;
+  const engineLibrary = useEngineLibrary(active && tab === 'graphics' && (!!status?.launcherProtected || encoreSelected),refreshToken + revision);
+  const encoreEngine = selectedEngine(engineLibrary.data,'encore',encorePackageId,installedEncoreEngine);
+  const mfgEngine = selectedEngine(engineLibrary.data,'mfg-universal',editorDraft.mfgPackageId,status?.mfg?.engine);
+  const encoreChanged = JSON.stringify(encoreBase) !== JSON.stringify(encoreDraft) || encorePackageId !== undefined;
+  const advancedChanges = Object.keys(editorDraft.mfgAdvanced || {}).length;
+  const extraChanges = advancedChanges + Number(editorDraft.mfgPackageId !== undefined) + Number(!!editorDraft.resetNeuralTuning);
+  const encoreIssue = selectedSetup?.encoreIssue || currentEncore?.error || (!status?.ok ? t("读取游戏配置…")
+    : encoreSettingsIssue(encoreDraft,status,selectedSetup?.exe?.hasNativeDlss,encoreEngine,encoreBase));
   const targets = details ? [details, ...(details.exes || [])] : [];
   const antiCheatWarning = targets.some(target => target.antiCheatWarning);
   const antiCheatNames = [...new Set(targets.flatMap(target => target.antiCheatComponents || []))];
@@ -128,14 +165,37 @@ function GameEditor({
     invalidateGameInspection(game.dir);
     setRevision((v) => v + 1);
   };
+  const executeEncore = async () => {
+    const exe = selectedSetup?.exe;
+    if (!exe || !status?.ok || encoreIssue) return;
+    const {neuralMode,neuralModelId,mfgMode,...encore} = encoreDraft;
+    if (await run(token=>getBridge().enhancedApply(game.dir,{
+      route:"encore",exePath:exe.path,apiOverride:exe.apiOverride || "auto",neuralMode,neuralModelId,mfgMode,encore,encorePackageId,
+    },token))) {
+      onEdit({setup:null,encore:{...editorDraft.encore,[encoreKey]:undefined},encoreEngines:{...editorDraft.encoreEngines,[encoreKey]:undefined}}); refresh(); setRuntime(null);
+    }
+  };
   const execute = async (scope: "changed" | "neural" | "mfg" | "both" | "enableBoth" = "changed") => {
+    if (encoreSelected) { await executeEncore(); return; }
+    if (setupPending) {
+      message(t("请先预览并应用安装方式，再应用该路线的参数。"));
+      return;
+    }
     if (!base || !displayedStatus?.ok) return;
     try {
-      const config = applyPatch(base, draft || base, scope, status?.launcherProtected);
+      const config = {
+        ...(scope === 'changed' && !changes.length && extraChanges ? {hardwareProfile:(draft || base).hardwareProfile}
+          : applyPatch(base, draft || base, scope, status?.launcherProtected)),
+        exePath: status?.exePath || details?.exePath || undefined,
+        ...(status?.launcherProtected && editorDraft.mfgPackageId !== undefined ? {mfgPackageId:editorDraft.mfgPackageId} : {}),
+        ...(status?.launcherProtected && scope !== 'mfg' && advancedChanges ? {mfgAdvanced:editorDraft.mfgAdvanced} : {}),
+        ...(scope !== 'mfg' && editorDraft.resetNeuralTuning ? {resetNeuralTuning:true,neuralMode:(draft || base).neuralMode} : {}),
+      };
       if (
         await run((token) => getBridge().enhancedApply(game.dir, config, token))
       ) {
         if (scope === "both" || scope === "enableBoth" || scope === "changed") setDraft(game.dir, undefined);
+        onEdit({mfgPackageId:undefined,...(scope !== 'mfg' ? {mfgAdvanced:undefined,resetNeuralTuning:undefined} : {})});
         refresh();
         setRuntime(null);
       }
@@ -144,6 +204,7 @@ function GameEditor({
     }
   };
   const installSetup = async () => {
+    if (encoreSelected) { await executeEncore(); return; }
     if (!details || !setupPending) return;
     const { exe, route } = resolveSetup(details, setupSelection);
     if (!exe || !route) return;
@@ -158,7 +219,7 @@ function GameEditor({
       t("将删除本次部署的文件，并从 _DLSS5_Backup 还原原始文件。游戏需要处于关闭状态。"), t("恢复"))))) return;
     if (await run(token => getBridge().restoreGame(game.dir, token))) {
       setDraft(game.dir, undefined);
-      setSetupSelection(null);
+      onEdit({ setup: null, components: {}, encore:undefined,encoreEngines:undefined,mfgPackageId:undefined,mfgAdvanced:undefined,resetNeuralTuning:undefined });
       setRuntime(null);
       refresh();
     }
@@ -247,15 +308,7 @@ function GameEditor({
             {t(antiCheatNames.length ? "检测到反作弊" : "反作弊提醒")}
             <ChevronRight size={12} aria-hidden="true" />
           </button>}
-          <span className="runtime-summary" data-running={runtime?.processState === "running" || undefined}>
-            <i />
-            {runtime
-              ? runtime.processState === "running"
-                ? t("游戏运行中")
-                : t(runtime.nr.label)
-              : t("运行状态未检测")}
-
-          </span>
+          <RuntimeSummary runtime={runtime} />
         </div>
         {antiCheatWarning && <div className="game-anti-cheat-note" id={`${panelId}-anti-cheat`} hidden={!showAntiCheatNote}>
           <strong>{t("关于此游戏")}</strong>
@@ -314,6 +367,11 @@ function GameEditor({
             <p className="error" role="alert">{t(recovery.error)} <button onClick={refresh}>{t("重试")}</button></p>}
           {status?.ok && tab === "graphics" && draft && (
             <fieldset disabled={busy}>
+              {encoreSelected ? <EncorePanel value={encoreDraft} status={encoreStatus || status} engine={encoreEngine} hasNativeDlss={selectedSetup?.exe?.hasNativeDlss} issue={encoreIssue}
+                engineControl={<EngineVersion component="encore" library={engineLibrary.data} current={installedEncoreEngine} value={encorePackageId}
+                  onChange={value=>onEdit({encoreEngines:{...editorDraft.encoreEngines,[encoreKey]:value}})} onBrowse={onBrowseModels}
+                  error={engineLibrary.error} onRetry={engineLibrary.retry}/>}
+                onChange={setEncoreDraft} onModels={()=>setTab("models")} onApply={()=>void executeEncore()}/> : <>
               <section className="profile-picker game-profile-picker" aria-label={t("硬件专属优化档位")}>
                 <h2>{t("硬件专属优化档位")}</h2>
                 <HardwareProfileChoices game standalone={status.launcherProtected} catalog={status.hardwareProfiles} profileId={draft.hardwareProfile}
@@ -323,9 +381,16 @@ function GameEditor({
               {displayedStatus && <GraphicsPanels active={active} onRuntime={setRuntime} showGameDetails gameDir={game.dir} status={displayedStatus}
                 profileNotes={hardwareProfileNotes(displayedStatus.hardwareProfileInfo)}
                 exePath={details?.exePath || displayedStatus.exePath} draft={draft} onChange={patchDraft}
+                engineControl={status.launcherProtected && <EngineVersion component="mfg-universal" library={engineLibrary.data} current={status.mfg?.engine}
+                  value={editorDraft.mfgPackageId} onChange={mfgPackageId=>onEdit({mfgPackageId})} onBrowse={onBrowseModels} error={engineLibrary.error} onRetry={engineLibrary.retry}/>}
+                neuralAdvanced={status.launcherProtected && <StandaloneTuning value={{...status.mfg?.advanced,...editorDraft.mfgAdvanced}} engine={mfgEngine}
+                  onChange={patch=>onEdit({mfgAdvanced:{...editorDraft.mfgAdvanced,...patch}})} enabled={draft.neuralMode!=='off'}
+                  onReset={()=>onEdit({resetNeuralTuning:true,mfgAdvanced:undefined})} resetPending={!!editorDraft.resetNeuralTuning}/>}
+                onResetTuning={()=>onEdit({resetNeuralTuning:true})} resetPending={!!editorDraft.resetNeuralTuning}
                 onApply={scope => void execute(scope)}
                 onBrowseModels={() => setTab("models")} />}
               {profileOverride && !projected && <Loading text={t("读取游戏配置…")}/>}
+              </>}
             </fieldset>
           )}
           {tab === "graphics" && draft && <p className="footnote">{t("这些是磁盘配置与待应用参数。实际渲染效果和补帧倍率请查看运行诊断。")}</p>}
@@ -335,16 +400,19 @@ function GameEditor({
           {tab === "models" && status?.ok && (profileOverride && !projected
             ? <Loading text={t("读取游戏配置…")}/>
             : <ModelTable models={profileOverride ? projected?.models || [] : status.neural?.availableModels || []} profileSm={displayedStatus?.hardwareProfileInfo?.sm} gpuSm={displayedStatus?.hardware?.gpu?.architecture?.sm} message={message} onImport={onImportModel} onChoose={id => {
-              patchDraft({ neuralModelId: id, neuralMode: id === "310.8.0-RTX40" ? "legacy" : "latest_compatible" });
+              if (encoreSelected) setEncoreDraft({...encoreDraft,neuralModelId:id,neuralMode:"latest_compatible"});
+              else patchDraft({ neuralModelId: id, neuralMode: id === "310.8.0-RTX40" ? "legacy" : "latest_compatible" });
               setTab("graphics");
             }} onBrowseModels={onBrowseModels} onDownload={onDownloadModel} busy={busy} />)}
           {tab === "components" && (
             <GameComponents
-              refreshToken={Math.max(refreshToken, componentRevision)}
+              refreshToken={refreshToken + returnRevision}
               active={active}
               hasBackup={!!recovery?.canRestore}
               onRefresh={refresh}
-              onRestore={() => { setDraft(game.dir, undefined); setRuntime(null); refresh(); }}
+              onRestore={() => { setDraft(game.dir, undefined); onEdit({ setup: null, components: {}, encore:undefined,encoreEngines:undefined,mfgPackageId:undefined,mfgAdvanced:undefined,resetNeuralTuning:undefined }); setRuntime(null); refresh(); }}
+              pending={editorDraft.components}
+              onChange={components => onEdit({ components })}
               dir={game.dir}
               run={run}
               busy={busy}
@@ -352,7 +420,7 @@ function GameEditor({
             />
           )}
           {tab === "runtime" && (
-            <RuntimePanel refreshToken={Math.max(refreshToken, runtimeRevision)}
+            <RuntimePanel refreshToken={refreshToken + returnRevision}
               active={active}
               dir={game.dir}
               status={status}
@@ -366,8 +434,8 @@ function GameEditor({
       <div className="apply-bar">
         <span>
           {tab === "graphics"
-            ? setupPending ? t("安装方式待应用 · 画质与补帧修改 {0} 项", [changes.length]) : changes.length
-              ? t("{0} 项待应用修改", [changes.length])
+            ? encoreSelected ? t(encoreChanged || setupPending ? "Encore 配置待应用" : "Encore 配置已读取") : setupPending ? t("安装方式待应用 · 画质与补帧修改 {0} 项", [changes.length + extraChanges]) : changes.length + extraChanges
+              ? t("{0} 项待应用修改", [changes.length + extraChanges])
               : t(status?.ok ? "配置已读取" : error ? "操作未完成" : "读取游戏配置…")
             : tab === "models"
               ? t("模型身份由文件 SHA-256 确定，架构匹配不代表已在游戏中生效")
@@ -376,11 +444,17 @@ function GameEditor({
                 : t("仅显示当前进程和有效时间内的证据")}
         </span>
         <div>
-          {tab === "graphics" ? (
-            <GraphicsActions draft={draft} status={displayedStatus} changed={!!changes.length || setupPending} busy={busy}
+          {tab === "graphics" && encoreSelected ? <>
+            <button disabled={busy || (!encoreChanged && !setupPending)} onClick={()=>onEdit({setup:null,encore:{...editorDraft.encore,[encoreKey]:undefined},encoreEngines:{...editorDraft.encoreEngines,[encoreKey]:undefined}})}>{t("撤销")}</button>
+            <button className="primary" disabled={busy || !!encoreIssue || (!encoreChanged && !setupPending)} onClick={()=>void executeEncore()}>{t("预览并应用")}</button>
+            <ActionMenu><button disabled={busy} onClick={refresh}>{t("重新检测文件")}</button>
+              <button disabled={busy || !!encoreIssue} onClick={()=>void executeEncore()}>{t("重新应用当前配置")}</button>
+              <button className="danger" disabled={busy || !recovery?.canRestore} onClick={()=>void restore()}>{t("一键卸载并恢复")}</button></ActionMenu>
+          </> : tab === "graphics" ? (
+            <GraphicsActions draft={draft} status={displayedStatus} changed={!!changes.length || !!extraChanges || setupPending} busy={busy}
               setupAction={setupPending ? () => void installSetup() : undefined}
-              canRestore={!!recovery?.canRestore} undo={() => { setDraft(game.dir, undefined); setSetupSelection(null); }}
-              apply={execute} restore={restore} />
+              canRestore={!!recovery?.canRestore} undo={() => { setDraft(game.dir, undefined); onEdit({setup:null,mfgPackageId:undefined,mfgAdvanced:undefined,resetNeuralTuning:undefined}); }}
+              apply={execute} restore={restore} rescan={refresh} />
           ) : (
             <button
               disabled={busy}
@@ -402,6 +476,32 @@ function GameEditor({
     </section>
   );
 }
+function RuntimeSummary({ runtime }: { runtime: Runtime | null }) {
+  const [now, setNow] = useState(Date.now);
+  const checkedAt = runtime?.checkedAt;
+  useEffect(() => {
+    if (checkedAt == null) return;
+    const update = () => setNow(Date.now());
+    update();
+    const remaining = checkedAt + 30001 - Date.now();
+    const timer = Number.isFinite(remaining) && remaining > 0 ? setTimeout(update, remaining) : undefined;
+    // Diagnostics stop when their tab is left. Expire the retained header
+    // snapshot without adding background IPC reads, including after suspension.
+    window.addEventListener("focus", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, [checkedAt]);
+  const stale = !!runtime && (!checkedAt || !Number.isFinite(checkedAt) || now - checkedAt > 30000);
+  const running = !stale && runtime?.processState === "running";
+  return <span className="runtime-summary" data-running={running || undefined}>
+    <i />
+    {t(!runtime ? "运行状态未检测" : stale ? "运行记录已过期" : running ? "游戏运行中" : runtime.nr.label)}
+  </span>;
+}
 function GameComponents({
   refreshToken,
   active,
@@ -412,6 +512,8 @@ function GameComponents({
   run,
   busy,
   message,
+  pending,
+  onChange,
 }: {
   active: boolean;
   refreshToken: number;
@@ -422,12 +524,12 @@ function GameComponents({
   run: Run;
   busy: boolean;
   message: (s: string) => void;
+  pending: Record<string, string>;
+  onChange: (pending: Record<string, string>) => void;
 }) {
-  const previousSelection = useRef<Record<string, string>>({});
   const [library, setLibrary] = useState<Library | null>(null),
     [error, setError] = useState(""),
-    [rev, setRev] = useState(0),
-    [selection, setSelection] = useState<Record<string, string>>({});
+    [rev, setRev] = useState(0);
   useEffect(() => {
     if (!active) return;
     let alive = true;
@@ -437,18 +539,6 @@ function GameComponents({
           if (!l.ok || !l.inventory?.ok)
             throw Error(l.message || l.inventory?.message || t("组件读取失败"));
           setLibrary(l);
-          const saved = l.profile?.selected || {};
-          const previous = previousSelection.current;
-          previousSelection.current = saved;
-          setSelection(draft => {
-            const next = { ...saved };
-            for (const key of Object.keys({ ...draft, ...previous })) {
-              if (draft[key] === previous[key]) continue;
-              if (draft[key]) next[key] = draft[key];
-              else delete next[key];
-            }
-            return next;
-          });
           setError("");
         }
       })
@@ -460,6 +550,8 @@ function GameComponents({
     };
   }, [dir, rev, active, refreshToken]);
   const inventory = library?.inventory;
+  const saved = library?.profile?.selected || {};
+  const selection = Object.fromEntries(Object.entries({ ...saved, ...pending }).filter(([, value]) => value));
   const refresh = () => setRev((v) => v + 1);
   const refreshAll = () => {
     onRefresh();
@@ -497,6 +589,7 @@ function GameComponents({
     <>
       <div className="section-toolbar">
         <h2>{t("已安装组件与文件")}</h2>
+        <ActionMenu><button disabled={busy} onClick={refreshAll}>{t("重新检测文件")}</button></ActionMenu>
 
       </div>
       <div className="settings-table">
@@ -576,11 +669,11 @@ function GameComponents({
                 label={t(d.name)}
                 value={selection[id] || ""}
                 disabled={busy}
-                onChange={(v) => setSelection((s) => {
-                  const next = { ...s };
-                  if (v) next[id] = v; else delete next[id];
-                  return next;
-                })}
+                onChange={value => {
+                  const next = { ...pending };
+                  if (value === (saved[id] || "")) delete next[id]; else next[id] = value;
+                  onChange(next);
+                }}
                 options={[
                   ["", t("使用配套默认版本")],
                   ...library.packages
@@ -600,7 +693,7 @@ function GameComponents({
             disabled={busy || (!Object.keys(selection).length && !Object.keys(library.profile?.selected || {}).length)}
             onClick={() => {
               void run(token => getBridge().libraryApply(dir, token, selection)).then(ok => {
-                if (ok) refresh();
+                if (ok) { onChange({}); refresh(); }
               });
             }}
           >
@@ -613,7 +706,7 @@ function GameComponents({
                 void run((token) =>
                   getBridge().libraryRollback(dir, library.rollback!.id, token),
                 ).then((ok) => {
-                  if (ok) refresh();
+                  if (ok) { onChange({}); refresh(); }
                 });
               }}
             >
@@ -715,11 +808,9 @@ function RuntimePanel({
     };
     probeRef.current = probe;
     void probe();
-    document.addEventListener("visibilitychange", probe);
     return () => {
       alive = false;
       probeRef.current = () => {};
-      document.removeEventListener("visibilitychange", probe);
     };
   }, [dir, active, message, onRuntime, refreshToken]);
   useEffect(() => {
@@ -779,6 +870,10 @@ function RuntimePanel({
       <div className="section-toolbar">
         <h2>{t("运行时检测")}</h2>
         <div className="inline-actions">
+          <button disabled={busy} onClick={() => probeRef.current()}>
+            <RefreshCw size={16} className={busy ? "refresh-spinning" : undefined} />
+            {t(busy ? "检测中…" : "立即检测")}
+          </button>
           <label className="check-label">
             <input
               type="checkbox"
@@ -860,7 +955,7 @@ function RuntimePanel({
         <Empty>
           {busy
             ? t("正在检查游戏进程和运行日志…")
-            : <>{t("暂无本次检测结果，请刷新。")} <button onClick={() => probeRef.current()}>{t("重试")}</button></>}
+            : <>{t("暂无本次检测结果，请重试。")} <button onClick={() => probeRef.current()}>{t("重试")}</button></>}
         </Empty>
       )}
       {status?.diagnostics && (

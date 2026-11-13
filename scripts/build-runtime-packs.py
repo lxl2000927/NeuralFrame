@@ -15,11 +15,22 @@ bootstrap = source / 'dist/runtime-bootstrap'
 bootstrap.mkdir(parents=True, exist_ok=True)
 release = 'runtime-components-2026.11.06'
 repo = json.loads((source / 'package.json').read_text(encoding='utf-8'))['distribution']['releaseRepository']
+# Engine releases remain the authors' immutable original archives. Rebuilding
+# unrelated runtime packs must not downgrade them or replace their source URLs.
+current_catalog = json.loads((source / 'src/core/runtime-catalog.json').read_text(encoding='utf-8'))
+upstream_engines = [p for p in current_catalog['packs'] if p['id'] in ['mfg-universal', 'mfg-optiscaler-170', 'encore']]
+if len(upstream_engines) != 3:
+    raise ValueError('Missing verified original engine release records')
 groups = {}
 
 def add(key, name, component, version, paths, bundled=False):
     groups[key] = dict(id=key, name=name, component=component, version=version, bundled=bundled,
                        paths=sorted(set(p.replace('\\', '/') for p in paths)))
+    # Display provenance is independent of the archive host. Keep it when
+    # rebuilding existing packs; never attribute third-party files to our repo.
+    upstreams = next((p.get('upstreams') for p in current_catalog['packs'] if p['id'] == key), None)
+    if upstreams:
+        groups[key]['upstreams'] = upstreams
 
 def under(folder):
     return [p.relative_to(payload).as_posix() for p in (payload/folder).rglob('*') if p.is_file()]
@@ -36,8 +47,9 @@ add('renodx-multipass','RenoDX 多通道插件','renodx-multipass','SF 26.1003.2
 add('feeder','Feeder 加载链与着色器','feeder','1.17 + 1.19',
     [p for p in under('feeder') if not p.startswith('feeder/host64/')] + under('enhanced/feeder-1.19.0'))
 add('reshade','ReShade 加载器','reshade','6.8.0',under('reshade-vulkan')+['ReShade_Setup_6.8.0_Addon.exe'])
-for key, component, file, license, version in [('mfg-renodx','mfg-renodx','renodx-mfgunlock.addon64','MFGAdaUnlock-RenoDx-LICENSE.txt','1.5.5'),('mfg-universal','mfg-universal','MFGUnlocker.dll','MFG-Unlocker-LICENSE.txt','1.7.0')]:
+for key, component, file, license, version in [('mfg-renodx','mfg-renodx','renodx-mfgunlock.addon64','MFGAdaUnlock-RenoDx-LICENSE.txt','1.5.5')]:
     add(key,'MFG 解锁 '+version,component,version,['enhanced/mfg/'+file,'enhanced/mfg/licenses/'+license])
+add('mfg-license','MFG Unlocker 开源许可','mfg-universal','1.7.1',['enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt'],True)
 add('localization','中文适配与预加载桥接','localization','zh1.10',
     ['enhanced/zh-cn/dlss5-zh-cn.addon32','enhanced/zh-cn/dlss5-zh-cn.addon64','enhanced/zh-cn/winmm.dll'],True)
 
@@ -45,7 +57,9 @@ def sha(data): return hashlib.sha256(data).hexdigest()
 
 packs=[]
 for key, group in groups.items():
-    data={p:(payload/p).read_bytes() for p in group.pop('paths')}
+    data={p:((source/'assets/licenses/MFG-Unlocker-LICENSE.txt') if key=='mfg-license' else (payload/p)).read_bytes() for p in group.pop('paths')}
+    if key=='mfg-license' and any(sha(blob)!='433da96087fd9b91afd44c6350ca92da53167c9636a0a71e428f71036d8c372f' for blob in data.values()):
+        raise ValueError('MFG Unlocker licence fingerprint mismatch')
     if not group['bundled']:
         data['licenses/'+key+'/THIRD_PARTY_NOTICES.md']=(source/'THIRD_PARTY_NOTICES.md').read_bytes()
         for p in (payload/'streamline').glob('*.license.txt'):
@@ -69,6 +83,7 @@ for key, group in groups.items():
         raw=archive.read_bytes()
         group.update(archive=name,size=len(raw),sha256=sha(raw),url=f'https://github.com/{repo}/releases/download/{release}/{name}')
     packs.append(group)
+packs.extend(upstream_engines)
 catalog=dict(schema=1,release=release,repository=repo,packs=packs)
 raw=json.dumps(catalog,ensure_ascii=False,indent=2)+'\n'
 (source/'src/core/runtime-catalog.json').write_text(raw,encoding='utf-8')

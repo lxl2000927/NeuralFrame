@@ -7,6 +7,7 @@ const path = require('node:path');
 const { scanGame } = require('./scan');
 const { inspectCombinedStatus } = require('./combined-manager');
 const { getFileVersion } = require('./pe');
+const scanCache = require('./scan-cache');
 
 // Details needs only the SR version. A full payload scan also hashes the
 // Feeder distribution, which belongs to installation and integrity checks.
@@ -24,6 +25,7 @@ function bundledDlssVersion(payloadDir) {
 
 // The parent dispatches one read at a time so queued selections can be replaced.
 parentPort.on('message', async ({ id, task, dir, options }) => {
+  if (options.userDataDir) scanCache.configure(path.join(options.userDataDir, 'inspection-symbols-v1.json'));
   try {
     if (task === 'discover') {
       const { discover } = require('../library');
@@ -57,5 +59,7 @@ parentPort.on('message', async ({ id, task, dir, options }) => {
     parentPort.postMessage({ id, result: { status } });
   } catch (error) {
     parentPort.postMessage({ id, error: error.message, code: error.code });
+  } finally {
+    await scanCache.flush();
   }
 });

@@ -16,16 +16,145 @@ test('route planner includes feeder bootstrap and supports custom model and Opti
  const ids=requiredPacks({kind:'enhanced',route:'feeder',config:{neuralMode:'latest_compatible',runtimeStack:'oct2026-310.9.16'},customModel:true});
  for(const id of ['sr-modern','sl-modern','feeder','sr-baseline','sl-baseline','fg-baseline','renodx-nr','reshade'])assert.ok(ids.includes(id),id);
  assert.ok(!ids.includes('nr-3108'));
- assert.ok(requiredPacks({kind:'enhanced',route:'optiscaler',config:{mfgMode:'x3'}}).includes('mfg-universal'));
+ const opti=requiredPacks({kind:'enhanced',route:'optiscaler',config:{mfgMode:'x3'}});
+ assert.ok(opti.includes('mfg-optiscaler-170')&&opti.includes('mfg-license'));
+ assert.ok(!opti.includes('mfg-universal'),'OptiScaler keeps its separately adapted ASI engine');
  const mixed=requiredPacks({kind:'enhanced',route:'native',mfgRoute:'optiscaler',config:{mfgMode:'x3',neuralMode:'latest_compatible'}});
- assert.ok(mixed.includes('mfg-universal')&&mixed.includes('mfg-renodx')&&mixed.includes('renodx-nr'));
+ assert.ok(mixed.includes('mfg-optiscaler-170')&&mixed.includes('mfg-license')&&mixed.includes('mfg-renodx')&&mixed.includes('renodx-nr'));
  assert.deepEqual(requiredPacks({kind:'install',route:'optiscaler'}),['localization','nr-3108']);
+});
+
+test('preserving or choosing a local engine does not prepare the new recommendation',()=>{
+ const id='a'.repeat(64);
+ assert.deepEqual(requiredPacks({route:'wuwa-proxy',config:{neuralMode:'off'}}),['mfg-universal','mfg-license']);
+ assert.deepEqual(requiredPacks({route:'wuwa-proxy',reuseProxy:true,config:{neuralMode:'off'}}),[]);
+ assert.deepEqual(requiredPacks({route:'wuwa-proxy',config:{neuralMode:'off',mfgPackageId:id}}),['mfg-license']);
+ assert.deepEqual(requiredPacks({route:'wuwa-proxy',config:{neuralMode:'off',mfgPackageId:''}}),['mfg-universal','mfg-license']);
+ const base={route:'encore',config:{neuralMode:'off'}};
+ assert.deepEqual(requiredPacks(base),['encore','sl-modern','fg-modern']);
+ assert.deepEqual(requiredPacks({...base,reuseProxy:true}),['sl-modern','fg-modern']);
+ assert.deepEqual(requiredPacks({...base,config:{...base.config,encorePackageId:id}}),['sl-modern','fg-modern']);
+ assert.deepEqual(requiredPacks({...base,config:{...base.config,encorePackageId:''}}),['encore','sl-modern','fg-modern']);
 });
 test('status and missing-dependency inspection never create cache or fetch',async t=>{const f=fixture(t);let fetches=0;const r=new RuntimePayload(path.join(f.root,'profile'),{manifest:f.manifest,bundledRoot:f.src,fetcher:()=>{fetches++;throw Error('unexpected');}});r.list();await assert.rejects(r.require(['test']),e=>e.dependencies[0]==='runtime:test');assert.equal(fetches,0);assert.equal(fs.existsSync(r.root),false);});
 test('prepare is explicit, cache survives application restart and uses no network',async t=>{const f=fixture(t),options={manifest:f.manifest,bundledRoot:f.src,fetcher:()=>{throw Error('no network');}},r=new RuntimePayload(path.join(f.root,'profile'),options);await r.prepare(['test']);await r.require(['test']);fs.unlinkSync(path.join(f.src,f.p.files[0].path));const next=new RuntimePayload(r.userData,options);await next.prepare(['test']);await next.require(['test']);assert.equal(next.payloadDir,r.payloadDir);});
 test('hash verification detects same-sized corruption and repairs from immutable store',async t=>{const f=fixture(t),r=new RuntimePayload(path.join(f.root,'profile'),{manifest:f.manifest,bundledRoot:f.src});await r.prepare(['test']);const file=path.join(r.payloadDir,f.p.files[0].path);fs.unlinkSync(file);fs.writeFileSync(file,Buffer.alloc(f.bytes.length,1));await assert.rejects(r.require(['test']));await r.prepare(['test']);assert.deepEqual(fs.readFileSync(file),f.bytes);});
 test('legacy library is reused by hash with locally retained licenses',async t=>{const f=fixture(t),profile=path.join(f.root,'profile'),id=sha('old'),dir=path.join(profile,'component-library-v1/packages',id);fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'plugin.dll'),f.bytes);fs.unlinkSync(path.join(f.src,f.p.files[0].path));fs.writeFileSync(path.join(profile,'component-library-v1/catalog.json'),JSON.stringify({packages:[{id,files:[{rel:'plugin.dll',sha256:sha(f.bytes)}]}]}));const r=new RuntimePayload(profile,{manifest:f.manifest,bundledRoot:f.src,fetcher:()=>{throw Error('must reuse');}});await r.prepare(['test']);await r.require(['test']);});
+test('a stale duplicate record cannot hide a verified local source and force another download', async t => {
+  const f = fixture(t), profile = path.join(f.root,'profile'), id = sha('valid package');
+  const dir = path.join(profile,'component-library-v1/packages',id);
+  fs.mkdirSync(dir,{recursive:true});
+  fs.writeFileSync(path.join(dir,'plugin.dll'),f.bytes);
+  fs.writeFileSync(path.join(profile,'component-library-v1/catalog.json'),JSON.stringify({packages:[
+    {id,files:[{rel:'plugin.dll',sha256:sha(f.bytes)}]},
+    {id:sha('missing package'),files:[{rel:'plugin.dll',sha256:sha(f.bytes)}]}
+  ]}));
+  const legacy = path.join(profile,'neural-models');
+  fs.mkdirSync(legacy);
+  const corrupt = path.join(legacy,'old.dll');
+  fs.writeFileSync(corrupt,Buffer.alloc(f.bytes.length,1));
+  fs.writeFileSync(path.join(legacy,'index.json'),JSON.stringify([{filePath:corrupt,sha256:sha(f.bytes)}]));
+  let fetches = 0;
+  const pack = {...f.p,bundled:false,url:'https://github.com/owner/repo/releases/download/1/a.zip',size:4,sha256:sha('good')};
+  const runtime = new RuntimePayload(profile,{manifest:{...f.manifest,packs:[pack]},fetcher:async()=>{
+    fetches++; throw Error('verified local files should be reused');
+  }});
+  await runtime.prepare(['test']);
+  await runtime.require(['test']);
+  assert.equal(fetches,0);
+  assert.deepEqual(fs.readFileSync(path.join(runtime.payloadDir,f.p.files[0].path)),f.bytes);
+});
 test('manifest rejects traversal and untrusted download URLs',t=>{const f=fixture(t);assert.throws(()=>new RuntimePayload(f.root,{manifest:{...f.manifest,packs:[{...f.p,files:[{...f.p.files[0],path:'../escape'}]}]}}));assert.throws(()=>new RuntimePayload(f.root,{manifest:{...f.manifest,packs:[{...f.p,bundled:false,url:'https://evil.example/file',size:10,sha256:sha('file')} ]}}));});
 test('download mismatch and cancellation never activate files; staging is removed',async t=>{const f=fixture(t);const p={...f.p,bundled:false,url:'https://github.com/owner/repo/releases/download/1/a.zip',size:4,sha256:sha('good')},manifest={...f.manifest,packs:[p]};let r=new RuntimePayload(path.join(f.root,'bad'),{manifest,fetcher:async()=>new Response('bad!')});await assert.rejects(r.prepare(['test']),/SHA-256/);assert.equal(fs.existsSync(r.payloadDir),false);assert.deepEqual(stagingLeftovers(r),[]);
  r=new RuntimePayload(path.join(f.root,'cancel'),{manifest,fetcher:async(_url,{signal})=>new Promise((_resolve,reject)=>{signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true});setTimeout(()=>r.cancel(),10);})});const stopped=await r.prepare(['test']);assert.equal(stopped.cancelled,true);assert.equal(r.controller,null);assert.equal(fs.existsSync(r.payloadDir),false);assert.deepEqual(stagingLeftovers(r),[]);
+});
+
+test('cancelling cache verification does not activate the runtime and a retry still succeeds', async t => {
+  for (const stage of ['staging', 'stored', 'view']) await t.test(stage, async t => {
+    const f = fixture(t);
+    const r = new RuntimePayload(path.join(f.root, 'profile'), {
+      manifest: f.manifest, bundledRoot: f.src, fetcher: () => assert.fail('unexpected download')
+    });
+    const stored = r.directory(f.p);
+    if (stage !== 'staging') {
+      const file = path.join(stored, f.p.files[0].path);
+      fs.mkdirSync(path.dirname(file), {recursive: true});
+      fs.writeFileSync(file, f.bytes);
+    }
+    const entered = Promise.withResolvers(), resume = Promise.withResolvers();
+    const complete = r.complete.bind(r);
+    const valid = r.valid.bind(r);
+    let viewChecks = 0;
+    const viewProbe = t.mock.method(r, 'valid', async (file, expected) => {
+      const ready = await valid(file, expected);
+      if (stage === 'view' && file === path.join(r.payloadDir, f.p.files[0].path) && ++viewChecks === 2) {
+        entered.resolve();
+        await resume.promise;
+      }
+      return ready;
+    });
+    const probe = t.mock.method(r, 'complete', async (base, pack) => {
+      const ready = await complete(base, pack);
+      if ((stage === 'stored' && base === stored) ||
+          (stage === 'staging' && base.startsWith(path.join(r.root, 'staging') + path.sep))) {
+        entered.resolve();
+        await resume.promise;
+      }
+      return ready;
+    });
+    const preparing = r.prepare(['test']);
+    await entered.promise;
+    r.cancel();
+    resume.resolve();
+    const result = await preparing;
+    assert.equal(result.cancelled, true);
+    assert.equal(r.controller, null);
+    assert.equal(fs.existsSync(r.payloadDir), false);
+    assert.deepEqual(stagingLeftovers(r), []);
+    if (stage === 'staging') assert.equal(fs.existsSync(stored), false);
+    probe.mock.restore();
+    viewProbe.mock.restore();
+    assert.equal((await r.prepare(['test'])).ok, true);
+    await r.require(['test']);
+  });
+});
+
+test('a late cancellation reports the stopped operation while retaining already published cache bytes', async t => {
+  for (const stage of ['publication', 'empty request']) await t.test(stage, async t => {
+    const f = fixture(t), events = [];
+    const r = new RuntimePayload(path.join(f.root, 'profile'), {
+      manifest: f.manifest, bundledRoot: f.src, onProgress: event => events.push(event),
+      fetcher: () => assert.fail('unexpected download')
+    });
+    const entered = Promise.withResolvers(), resume = Promise.withResolvers();
+    const target = path.join(r.payloadDir, f.p.files[0].path);
+    const rename = fs.promises.rename;
+    const candidates = r.localCandidates.bind(r);
+    const probe = stage === 'publication'
+      ? t.mock.method(fs.promises, 'rename', async (source, destination) => {
+        const result = await rename(source, destination);
+        if (destination === target) { entered.resolve(); await resume.promise; }
+        return result;
+      })
+      : t.mock.method(r, 'localCandidates', async () => {
+        const result = await candidates();
+        entered.resolve(); await resume.promise;
+        return result;
+      });
+    const ids = stage === 'publication' ? ['test'] : [];
+    const preparing = r.prepare(ids);
+    await entered.promise;
+    r.cancel();
+    resume.resolve();
+    assert.equal((await preparing).cancelled, true);
+    assert.equal(events.some(event => event.stage === 'ready'), false);
+    assert.equal(r.controller, null);
+    assert.deepEqual(stagingLeftovers(r), []);
+    if (stage === 'publication') {
+      assert.deepEqual(fs.readFileSync(target), f.bytes);
+      await r.require(ids);
+    } else assert.equal(fs.existsSync(r.payloadDir), false);
+    probe.mock.restore();
+    assert.equal((await r.prepare(ids)).ok, true);
+  });
 });

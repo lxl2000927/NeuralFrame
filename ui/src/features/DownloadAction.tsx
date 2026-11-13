@@ -28,7 +28,7 @@ export function DownloadAction({ id, kind = "library", cached = false, label = "
       : row.stage === "ready" ? t("已就绪") : row.stage === "download" ? t("下载中") : t("准备中");
     return <div className="download-active">
       <span>{percent != null ? `${percent.toFixed(0)}%${row.speed ? " · " + size(row.speed) + "/s" : ""}` : status}</span>
-      <button type="button" className={className} disabled={row.cancelling || ["queued", "checking", "ready"].includes(row.stage)}
+      <button type="button" className={className} disabled={row.cancelling || (row.stage === "queued" && row.kind !== "library") || ["checking", "ready"].includes(row.stage)}
         onClick={row.cancel}>{t(row.cancelling ? "正在取消…" : "取消")}</button>
       <progress max={100} value={percent} aria-label={t("下载进度")} />
     </div>;

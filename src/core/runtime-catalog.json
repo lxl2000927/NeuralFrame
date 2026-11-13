@@ -45,7 +45,14 @@
       "archive": "nr-3108-69e628a6601a3259.zip",
       "size": 117682177,
       "sha256": "84d7de1e20120d51e5ddf22f232feebf4381c8d2930e3872b56c01c446cc4597",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/nr-3108-69e628a6601a3259.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/nr-3108-69e628a6601a3259.zip",
+      "upstreams": [
+        {
+          "name": "SmarterGamers/SmarterGamers-DLSS5-Swapper",
+          "url": "https://github.com/SmarterGamers/SmarterGamers-DLSS5-Swapper",
+          "kind": "release"
+        }
+      ]
     },
     {
       "id": "sr-baseline",
@@ -89,7 +96,14 @@
       "archive": "sr-baseline-28584006a3298a7a.zip",
       "size": 31130094,
       "sha256": "21029b8c9567d6f5dbf44b1fb0e2be357de37c239b4418ffc562bb129b36a9f3",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sr-baseline-28584006a3298a7a.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sr-baseline-28584006a3298a7a.zip",
+      "upstreams": [
+        {
+          "name": "NVIDIA/DLSS",
+          "url": "https://github.com/NVIDIA/DLSS",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "fg-baseline",
@@ -133,7 +147,14 @@
       "archive": "fg-baseline-3d1ae994a63a9664.zip",
       "size": 3738710,
       "sha256": "8c786ef91c8b151e1ea997c54340b52ccf31097dcbfaba1b51e5398b21f6e4b3",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/fg-baseline-3d1ae994a63a9664.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/fg-baseline-3d1ae994a63a9664.zip",
+      "upstreams": [
+        {
+          "name": "NVIDIA/DLSS",
+          "url": "https://github.com/NVIDIA/DLSS",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "sl-baseline",
@@ -227,7 +248,14 @@
       "archive": "sl-baseline-14d68ef83e6f5f60.zip",
       "size": 2067149,
       "sha256": "493cd93236b98ac63205c839dbcac8f50d554b342cffd6fedba30496a699cf4f",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sl-baseline-14d68ef83e6f5f60.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sl-baseline-14d68ef83e6f5f60.zip",
+      "upstreams": [
+        {
+          "name": "NVIDIA-RTX/Streamline",
+          "url": "https://github.com/NVIDIA-RTX/Streamline",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "sr-modern",
@@ -271,7 +299,14 @@
       "archive": "sr-modern-bd946ff2791187d2.zip",
       "size": 45339665,
       "sha256": "21c08700ee6992774fa12cc5824c51a9211599498478dabd7579bfc346a3184e",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sr-modern-bd946ff2791187d2.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sr-modern-bd946ff2791187d2.zip",
+      "upstreams": [
+        {
+          "name": "NVIDIA/DLSS",
+          "url": "https://github.com/NVIDIA/DLSS",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "fg-modern",
@@ -315,7 +350,14 @@
       "archive": "fg-modern-110edc44fa18cdf6.zip",
       "size": 3760776,
       "sha256": "48fb29919d8f63cfda72c114270a557a8c8ebc75ac87a61df3833626e780da9f",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/fg-modern-110edc44fa18cdf6.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/fg-modern-110edc44fa18cdf6.zip",
+      "upstreams": [
+        {
+          "name": "NVIDIA/DLSS",
+          "url": "https://github.com/NVIDIA/DLSS",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "sl-modern",
@@ -419,7 +461,14 @@
       "archive": "sl-modern-ba04234f2d6476ba.zip",
       "size": 4350749,
       "sha256": "21088e43fa3f209715f26047959712197ce28a0fd1724b5ea48cbc9e5ad8c657",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sl-modern-ba04234f2d6476ba.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/sl-modern-ba04234f2d6476ba.zip",
+      "upstreams": [
+        {
+          "name": "NVIDIA-RTX/Streamline",
+          "url": "https://github.com/NVIDIA-RTX/Streamline",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "rr-baseline",
@@ -463,7 +512,14 @@
       "archive": "rr-baseline-4bb19a0ca398f6aa.zip",
       "size": 21587466,
       "sha256": "6f8df4ceae93255849bf62e495295c5bcce8cfdc835142583805b29dee501cf4",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/rr-baseline-4bb19a0ca398f6aa.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/rr-baseline-4bb19a0ca398f6aa.zip",
+      "upstreams": [
+        {
+          "name": "NVIDIA/DLSS",
+          "url": "https://github.com/NVIDIA/DLSS",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "renodx-nr",
@@ -512,7 +568,19 @@
       "archive": "renodx-nr-06ea89ac69768601.zip",
       "size": 2416067,
       "sha256": "93e721b0c288934f2c888eaf08272075e9e350c4dea0e4ea125c76db0349f44d",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/renodx-nr-06ea89ac69768601.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/renodx-nr-06ea89ac69768601.zip",
+      "upstreams": [
+        {
+          "name": "clshortfuse/renodx",
+          "url": "https://github.com/clshortfuse/renodx",
+          "kind": "project"
+        },
+        {
+          "name": "RankFTW/rhi-repo",
+          "url": "https://github.com/RankFTW/rhi-repo",
+          "kind": "release"
+        }
+      ]
     },
     {
       "id": "renodx-multipass",
@@ -556,7 +624,19 @@
       "archive": "renodx-multipass-d474c0fb39a03a47.zip",
       "size": 1245269,
       "sha256": "e03ad535fe96f42bb917d276c2c7ddbd36085b7eeaa3b10b38dd27f825001e87",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/renodx-multipass-d474c0fb39a03a47.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/renodx-multipass-d474c0fb39a03a47.zip",
+      "upstreams": [
+        {
+          "name": "clshortfuse/renodx",
+          "url": "https://github.com/clshortfuse/renodx",
+          "kind": "project"
+        },
+        {
+          "name": "RankFTW/rhi-repo",
+          "url": "https://github.com/RankFTW/rhi-repo",
+          "kind": "release"
+        }
+      ]
     },
     {
       "id": "feeder",
@@ -855,7 +935,14 @@
       "archive": "feeder-c1ce58a1cc43a08a.zip",
       "size": 5155163,
       "sha256": "601651bb1098d539be5c11aab3291c9bbbb7b6655be05ff9e4ebd7094a0a32e3",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/feeder-c1ce58a1cc43a08a.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/feeder-c1ce58a1cc43a08a.zip",
+      "upstreams": [
+        {
+          "name": "jlrouzies-fr/DLSS5-Feeder",
+          "url": "https://github.com/jlrouzies-fr/DLSS5-Feeder",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "reshade",
@@ -919,7 +1006,14 @@
       "archive": "reshade-cb61305a2f90baa2.zip",
       "size": 8718277,
       "sha256": "2fa30eb8a02d5bfdfa2856d4ebdf2d61bd5d1f655aa5db1036d9b4277abf6dc8",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/reshade-cb61305a2f90baa2.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/reshade-cb61305a2f90baa2.zip",
+      "upstreams": [
+        {
+          "name": "crosire/reshade",
+          "url": "https://github.com/crosire/reshade",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "mfg-renodx",
@@ -968,56 +1062,42 @@
       "archive": "mfg-renodx-d34a562ee21c5e5f.zip",
       "size": 1838415,
       "sha256": "66354e61928059cfd7753c06eeddee2cf24fd05e1affc009fc2e5a8a4160d108",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/mfg-renodx-d34a562ee21c5e5f.zip"
+      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/mfg-renodx-d34a562ee21c5e5f.zip",
+      "upstreams": [
+        {
+          "name": "mavismmg/MFGAdaUnlock-RenoDx",
+          "url": "https://github.com/mavismmg/MFGAdaUnlock-RenoDx",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "mfg-universal",
-      "name": "MFG 解锁 1.7.0",
+      "name": "MFG 解锁 1.7.1",
       "component": "mfg-universal",
-      "version": "1.7.0",
+      "version": "1.7.1",
       "bundled": false,
       "files": [
         {
           "path": "enhanced/mfg/MFGUnlocker.dll",
-          "size": 14445568,
-          "sha256": "e6b6e6b70a6ed3af839c9647a32fc22660ae6b2d655062c5c072246c91fc10c7"
-        },
-        {
-          "path": "enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt",
-          "size": 1071,
-          "sha256": "433da96087fd9b91afd44c6350ca92da53167c9636a0a71e428f71036d8c372f"
-        },
-        {
-          "path": "licenses/mfg-universal/MANAGER-LICENSE.txt",
-          "size": 2819,
-          "sha256": "0dfc2b3ba01631aa302dff5bb51dcc11e127da64fe248fadccd1a6106a35239a"
-        },
-        {
-          "path": "licenses/mfg-universal/THIRD_PARTY_NOTICES.md",
-          "size": 9039,
-          "sha256": "3333c2a929a8e5b975e9b462d5725ced247468a0c09630dae90f38251a78900b"
-        },
-        {
-          "path": "licenses/mfg-universal/nis.license.txt",
-          "size": 1199,
-          "sha256": "f80ecfbce8a84a5b4c1c59dc5a9f0ee9cf5a989c9fba3a9486ee874f7595a454"
-        },
-        {
-          "path": "licenses/mfg-universal/nvngx_dlss.license.txt",
-          "size": 27316,
-          "sha256": "b6f4b4b6f582c9523ed4dfe89a4fae4cfc9c61f9c57e335e00ccee5f9b2b2e4b"
-        },
-        {
-          "path": "licenses/mfg-universal/reflex.license.txt",
-          "size": 20504,
-          "sha256": "ebf83c07fb3b2939908c3795d887afde3161c89a28ba391724efc784ce1bdabe"
+          "archivePath": "MFGUnlocker.dll",
+          "size": 7389696,
+          "sha256": "5a389e6cad23b2b607e1dc224e9e86ee32d6ef46f0557b6c6f8137feadf0aa74"
         }
       ],
-      "contentId": "dd271afbb56e834f49d02cb96239b0271f28d7174b33062f50d203927080e106",
-      "archive": "mfg-universal-dd271afbb56e834f.zip",
-      "size": 4980335,
-      "sha256": "ce5c7a5021338d212919d058605472b52afe4c6920404e269a0a6636230c905a",
-      "url": "https://github.com/lxl2000927/NeuralFrame/releases/download/runtime-components-2026.11.06/mfg-universal-dd271afbb56e834f.zip"
+      "contentId": "ae6b7645f55d359aa7a36518a27fae6f0ce16140ab6868c314d74f7b5947d860",
+      "archive": "MFGUnlocker-v1.7.1.zip",
+      "size": 3487244,
+      "sha256": "c85cb2a9e74f39be744fada4a1a75d72c606f73315114f334ad7755a3a13005d",
+      "url": "https://github.com/dashdogy/MFG-Unlocker/releases/download/v1.7.1/MFGUnlocker-v1.7.1.zip",
+      "repository": "dashdogy/MFG-Unlocker",
+      "upstreams": [
+        {
+          "name": "dashdogy/MFG-Unlocker",
+          "url": "https://github.com/dashdogy/MFG-Unlocker",
+          "kind": "project"
+        }
+      ]
     },
     {
       "id": "localization",
@@ -1038,11 +1118,88 @@
         },
         {
           "path": "enhanced/zh-cn/winmm.dll",
-          "size": 228352,
-          "sha256": "d46783325e8c834bad740e1dc4b0296caabb9d193a9203905b2f52308c5660fa"
+          "size": 38912,
+          "sha256": "6bb30decb5a91b28ced9234350897f43748dbe9e0863243a4856d899692730fc"
         }
       ],
-      "contentId": "627f2e854c7bed8623f1ea378a9afe9469af8dc645e10455825f5d4169ea32af"
+      "contentId": "65ec79643f4c3cd5c2ac97fc2de1a7bc159e1d3c5e5a0b5c99b8394f099e4f7a"
+    },
+    {
+      "id": "encore",
+      "name": "RTX Encore 2.4.1",
+      "component": "encore",
+      "version": "2.4.1",
+      "bundled": false,
+      "repository": "SilyNoMeta/rtx-encore",
+      "files": [
+        {
+          "path": "enhanced/encore/rtx-encore.dll",
+          "archivePath": "rtx-encore.dll",
+          "size": 46694400,
+          "sha256": "9a6dcc15058919618959edfa4510f5ffb913f4facf265c99ca3c49bc49c170c2"
+        },
+        {
+          "path": "enhanced/encore/THIRD-PARTY-NOTICES.md",
+          "archivePath": "THIRD-PARTY-NOTICES.md",
+          "size": 27855,
+          "sha256": "6263f24f369203089e617aad6be05f0c1103891e4f928d0da66da51ba1dc3939"
+        }
+      ],
+      "contentId": "ba422c2e665ab0058991dee08dc184ac61ea388137fe4c91a0e61873074b0c5c",
+      "archive": "RTX-Encore-v2.4.1.zip",
+      "size": 192104923,
+      "sha256": "e5383604a9289c70c8a47e73e4c22503c9e5834d9ed0058dc4754b3d79409202",
+      "url": "https://github.com/SilyNoMeta/rtx-encore/releases/download/v2.4.1/RTX-Encore-v2.4.1.zip",
+      "upstreams": [
+        {
+          "name": "SilyNoMeta/rtx-encore",
+          "url": "https://github.com/SilyNoMeta/rtx-encore",
+          "kind": "project"
+        }
+      ]
+    },
+    {
+      "id": "mfg-license",
+      "name": "MFG Unlocker 开源许可",
+      "component": "mfg-universal",
+      "version": "1.7.1",
+      "bundled": true,
+      "files": [
+        {
+          "path": "enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt",
+          "size": 1071,
+          "sha256": "433da96087fd9b91afd44c6350ca92da53167c9636a0a71e428f71036d8c372f"
+        }
+      ],
+      "contentId": "cb11e69e8c4a2a9fba55d63c3400f9f2ec807d1cd7ee5efa3746ef310a78d620"
+    },
+    {
+      "id": "mfg-optiscaler-170",
+      "name": "MFG Unlocker 1.7.0 · OptiScaler 配套基线",
+      "component": "mfg-universal",
+      "version": "1.7.0",
+      "bundled": false,
+      "repository": "dashdogy/MFG-Unlocker",
+      "files": [
+        {
+          "path": "enhanced/mfg-optiscaler-170/MFGUnlocker.dll",
+          "archivePath": "MFGUnlocker.dll",
+          "size": 14445568,
+          "sha256": "e6b6e6b70a6ed3af839c9647a32fc22660ae6b2d655062c5c072246c91fc10c7"
+        }
+      ],
+      "archive": "MFGUnlocker-v1.7.0.zip",
+      "size": 4842619,
+      "sha256": "5bd19d03288e1ece1d0bb2030ac072b36758045028da192044dcaad73fd901dd",
+      "url": "https://github.com/dashdogy/MFG-Unlocker/releases/download/v1.7.0/MFGUnlocker-v1.7.0.zip",
+      "contentId": "2c1966b7829b1804d47d9927db4025c7ba990e95426bfe3875ecf87ebd28be85",
+      "upstreams": [
+        {
+          "name": "dashdogy/MFG-Unlocker",
+          "url": "https://github.com/dashdogy/MFG-Unlocker",
+          "kind": "project"
+        }
+      ]
     }
   ]
 }

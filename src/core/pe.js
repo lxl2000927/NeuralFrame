@@ -3,6 +3,7 @@
 // Used to tell a game executable apart from a launcher, to pick the right
 // ReShade API, and to show which DLSS version a file actually is.
 const fs = require('./preview-fs').fs;
+const scanCache = require('./scan-cache');
 
 function readAt(fd, size, pos) {
   const buf = Buffer.alloc(size);
@@ -24,6 +25,7 @@ function readHeaders(fd) {
   const opt = readAt(fd, optSize, optOff);
   if (opt.length < 2) return null;
   const magic = opt.readUInt16LE(0);
+  if (magic !== 0x10b && magic !== 0x20b) return null;
   const is64 = magic === 0x20b;
   const ddOff = is64 ? 112 : 96;
 
@@ -118,10 +120,17 @@ function getBitness(file) {
 // loads Direct3D with LoadLibrary has no import entry for it, but the DLL name
 // and the entry point it asks for are still sitting there as plain strings.
 function findMarkers(file, markers) {
-  const needles = markers.map((m) => ({ text: m, buf: Buffer.from(m, 'latin1') }));
-  const longest = Math.max(...needles.map((n) => n.buf.length));
+  const cached = scanCache.probe(file, markers);
+  if (cached?.found) return cached.found;
+  const needles = [...new Set(markers)].map(text => ({ text, bytes: Buffer.from(text, 'latin1').toString('latin1') }));
+  if (!needles.length) return new Set();
+  const longest = Math.max(...needles.map(n => n.bytes.length));
+  // Search the chunk once instead of scanning it again for each absent symbol.
+  // Lookahead plus the explicit prefix check preserves overlapping markers.
+  const pattern = new RegExp('(?=(' + needles.map(n => n.bytes.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + '))', 'g');
   const found = new Set();
   let fd;
+  let complete = false;
   try {
     fd = fs.openSync(file, 'r');
     const size = fs.fstatSync(fd).size;
@@ -134,19 +143,26 @@ function findMarkers(file, markers) {
       const read = fs.readSync(fd, buf, carry, chunkSize, pos);
       if (read <= 0) break;
       const view = buf.subarray(0, carry + read);
-      for (const n of needles) {
-        if (!found.has(n.text) && view.includes(n.buf)) found.add(n.text);
+      const text = view.toString('latin1');
+      pattern.lastIndex = 0;
+      for (let match; (match = pattern.exec(text)); pattern.lastIndex = match.index + 1) {
+        for (const n of needles) {
+          if (!found.has(n.text) && text.startsWith(n.bytes, match.index)) found.add(n.text);
+        }
+        if (found.size === needles.length) break;
       }
       if (found.size === needles.length) break;
       carry = Math.min(overlap, view.length);
       view.subarray(view.length - carry).copy(buf, 0);
       pos += read;
     }
+    complete = pos >= size || found.size === needles.length;
   } catch {
     /* unreadable file: report nothing rather than guessing */
   } finally {
     if (fd !== undefined) try { fs.closeSync(fd); } catch {}
   }
+  if (complete) scanCache.remember(file, cached, found);
   return found;
 }
 
