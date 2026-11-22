@@ -2,6 +2,10 @@
 
 验证平台为 Windows x64，Node.js 26.13.0、Electron 33.4.11、electron-builder 26.15.3。依赖以 package-lock.json 为准。
 
+[运行桌面应用](#运行桌面应用) · [原生资源](#原生小组件与按需组件) · [测试](#桌面与组件测试) · [制作发行包](#制作发行包) · [工作区清理](#工作区清理)
+
+## 运行桌面应用
+
 ~~~powershell
 git clone https://github.com/lxl2000927/NeuralFrame.git
 cd NeuralFrame
@@ -17,11 +21,13 @@ npm start
 
 发布页的 `NeuralFrame-0.1.3-Source.zip` 另带 `dist/runtime-bootstrap/` 和 `dist/overlay/`，用于中文适配、预加载器、F8 桥接及许可证。GitHub 自动生成的 Source code 归档只含仓库文件。使用 Git 克隆时，也可以从本版已安装程序的 `resources/payload/` 和 `resources/overlay/` 复制到上述两个目录。
 
-开发版的 Home 单遍面板和 F7 监控需要新版 32/64 位插件。运行 `npm run overlay:prepare`，再运行 `powershell -ExecutionPolicy Bypass -File scripts/build-zh-cn-addon.ps1 -Stage` 编译并放入 bootstrap。打包前运行 node scripts/verify-runtime-bootstrap.js 校验文件。不要把完整开发用 payload/ 放进发行程序。大型运行库和插件按 src/core/runtime-catalog.json 在使用时下载，并校验 SHA-256。
+从源码重建 Home 单遍面板和 F7 监控时，先运行 `npm run overlay:prepare`，再运行 `powershell -ExecutionPolicy Bypass -File scripts/build-zh-cn-addon.ps1 -Stage` 编译 32 / 64 位插件并放入 bootstrap。打包前运行 `node scripts/verify-runtime-bootstrap.js` 校验文件。发行程序内置启动资源，大型运行库和插件按清单在使用时下载并校验 SHA-256。[组件来源与分发方式](COMPONENTS.md)
 
 原生构建步骤保留在 [Enhanced 构建记录](BUILDING-ENHANCED-ARCHIVE.md)，其中旧版本名称、旧下载地址和离线打包方式仅供历史参考，不能直接用来制作当前轻量发行包。
 
 ## 检查与打包
+
+### 32 位兼容桥
 
 32 位兼容桥已同步 Enhanced 2.3.1 并作 NeuralFrame 适配。修改原生源码后，使用 Zig 0.14.1 编译并更新本机启动资源及固定指纹：
 
@@ -35,6 +41,8 @@ node --test test/preloader-native.test.js
 这只编译 `winmm.dll`，不打包或发布桌面程序。脚本直接编译仓库里的 C/DEF 文件，不再用旧的内嵌模板覆盖源码。默认输出在 `build-output/preloader32/`；`--stage` 将 DLL 放入 `dist/runtime-bootstrap/` 并更新 `runtime-catalog.json`，此前组件缓存及游戏内 DLL 不会被覆盖。更新指纹后重新运行下方测试资源准备脚本，使用其输出的新视图路径。设置 `NEURALFRAME_ZIG` 后，核心测试还会编译临时 32/64 位探针，验证真实 API 回读与子进程亲和性；没有编译器的环境会明确跳过此项。
 
 老游戏的 `NeuralFrame-Legacy.ini` 在用户确认安装后生成并纳入备份：`CpuLimit=8` 默认仅匹配 Prototype，`LegacyMemory=1` 仅匹配已识别的 Delta Force 老引擎，`GoldSrc=1` 对应 `hl.exe`；显式设置保留。Steam 安装脚本只解析游戏目录内的注册表数据，不执行安装命令。兼容数据写入 `HKCU\Software\NeuralFrame\Legacy\<游戏指纹>` 独立命名空间，应用前预览，安装记录负责清理；不会改写原来的游戏厂商注册表键。清理失败保留记录供恢复重试。
+
+### 桌面与组件测试
 
 ~~~powershell
 npm run check:ui
@@ -67,7 +75,15 @@ npm test
 
 可设置 NEURALFRAME_USER_DATA 为独立测试目录。开发模式默认使用与发行版相同的按需组件路径，仅 `DLSS5_LIGHTWEIGHT=0` 显式切回完整本地载荷。普通应用继续沿用原配置目录，保留已有缓存和锁定记录。
 
-Windows 安装版和便携版使用 `npm run build -- --publish never`，产物写入 `dist/`。仅制作便携版使用 `npm run build:portable -- --publish never`。Linux 的 AppImage 和 deb 使用 `npm run build:linux -- --publish never`。三个入口都先运行 `npm run build:prepare`，准备许可、构建桌面界面、核对原生启动文件的 SHA-256，并检查 F8 插件使用的应用配置目录。
+### 制作发行包
+
+| 目标 | 在仓库根目录运行 |
+| --- | --- |
+| Windows x64 安装版和便携版 | `npm run build -- --publish never` |
+| Windows x64 便携版 | `npm run build:portable -- --publish never` |
+| Linux AppImage 和 deb | `npm run build:linux -- --publish never` |
+
+产物写入 `dist/`。三个入口都先运行 `npm run build:prepare`，准备许可、构建桌面界面、核对原生启动文件的 SHA-256，并检查 F8 插件使用的应用配置目录。
 
 完整测试资源使用 Encore 2.5.0、ANR FG B20、鸣潮 MFG 1.7.1，以及位于 `enhanced/mfg-optiscaler-170/` 的 OptiScaler MFG 1.7.0。更新清单后，重新运行测试载荷准备脚本，可传入之前的缓存目录复用已校验的文件。Encore 的依赖、选版及配置保护见 [ENCORE.md](ENCORE.md)。
 

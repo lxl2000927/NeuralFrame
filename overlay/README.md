@@ -1,11 +1,17 @@
-# In-game overlay - experimental, unofficial
+# NeuralFrame 游戏内面板
+
+0.1.3 的 F7 性能监控由 32 / 64 位中文插件提供。F8 紧凑面板使用独立的 64 位桥接，读取游戏实际加载的 RenoDX 和 Feeder 控件。本版 F8 适配 RenoDX 4.7、6.5.3 和 8.5.0-rc10，以及 Feeder 1.17.0 的实时配置接口。[面板安装与使用](https://github.com/lxl2000927/NeuralFrame/blob/main/docs/FEATURES.md#游戏内面板) · [F7、F8 与 Feeder 参数](https://github.com/lxl2000927/NeuralFrame/blob/main/docs/PARAMETERS.md#f7-监控与-f8-实时控制)
+
+## 早期 F8 桥接开发记录
+
+以下英文原始记录描述早期实验版本。文中的 Feeder 0.12.0、RenoDX 4.7、构建步骤和测试结果对应当时的组合。[当前构建指南](https://github.com/lxl2000927/NeuralFrame/blob/main/docs/BUILDING.md)
 
 The app preview and in-game panel now use the **same HTML/CSS and Chromium
 renderer**, including fonts, sliders, spacing and buttons. The native add-on
 displays that interactive surface at 534 CSS pixels wide, without inheriting
 ReShade's font or widget theme. **Not NVIDIA's official overlay or SDK.**
 
-## What works
+### What works
 
 - **Overlay gallery:** Emerald (green), Azure (blue), Amethyst (purple).
   Cards are inert renderings of the same panel. **Preview** opens an interactive,
@@ -51,7 +57,7 @@ ReShade's font or widget theme. **Not NVIDIA's official overlay or SDK.**
   Preview edits only change a local sample state; they never call game-control
   IPC. Object-specific masks are not provided by this adapter.
 
-## Feeder support (this app only)
+### Feeder support (this app only)
 
 - Games → select a **64-bit DX11/DX12 executable** → **Feeder + Overlay** → Install.
   Restore originals before changing routes. Remove an older standalone
@@ -82,7 +88,7 @@ ReShade's font or widget theme. **Not NVIDIA's official overlay or SDK.**
 Pinned Feeder binary: `066eec8c797df2d656f2ab2324278921b1dd6e9116c9945294f4a00f7fec608a`.
 [Upstream v0.12.0 configuration implementation](https://github.com/jlrouzies-fr/DLSS5-Feeder/blob/v0.12.0/src/dlss5-feed.cpp).
 
-## RenoDX bridge details
+### RenoDX bridge details
 
 This is **not a supported public RenoDX API**. It is an experimental, version-specific
 adapter for the pinned `renodx-dlss5.addon64` v4.7, SHA-256:
@@ -105,7 +111,7 @@ stops UI control, without turning NR off or undoing chosen settings.
 No NVIDIA SDK download, game-file replacement or automatic binary loading is
 performed by the adapter. Use only in an offline test game; **keep backups**.
 
-## Run and build
+### Run and build
 
 From the `app` folder, using its own Electron installation:
 
@@ -155,7 +161,7 @@ object (`imgui-abi.cpp`) for ImVec2 return values. The SDK version is pinned and
 checked at compile time. Always rerun the native smoke test after changing
 the add-on. The smoke variant is never installed by the app UI.
 
-## Verified locally
+### Verified locally
 
 - Unit tests cover bounded frame/input/status/command protocols plus file validation, repeat installs, protected main-app paths,
   architecture mismatches, changed files, duplicate builds, linked storage,
@@ -187,7 +193,7 @@ the add-on. The smoke variant is never installed by the app UI.
 supplied native add-on and are intentionally separate from the normal test suite.
 The probe build is never offered by the app installer.
 
-## Sources and licenses
+### Sources and licenses
 
 - [Official ReShade SDK](https://github.com/crosire/reshade/tree/v6.8.0/include):
   revision `18deaa52de0c425a78b329e9cb3c497281cd00ec`, BSD-3-Clause OR MIT.

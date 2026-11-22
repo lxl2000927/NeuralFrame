@@ -1,4 +1,12 @@
-# 开发版游戏路线与 F7 监控
+# 游戏适配与补帧路线
+
+在 NeuralFrame 0.1.3 的「游戏 → 画质与补帧 → 安装与运行环境」选择游戏 EXE 和图形 API。先确认游戏在这张显卡上能开启的输入，再选引擎。超分（SR）提供重建画面所需的数据；帧生成（FG）插入中间帧。游戏可能只提供其中一项。
+
+| 本机情况 | 首先查看 |
+| --- | --- |
+| Radeon，游戏没有原生补帧 | 按 DX12、Vulkan 和是否已有 OptiScaler 宿主选择。[Radeon 输入与路线表](#radeon-与没有原生补帧的游戏) |
+| RTX，游戏没有原生 DLSS 超分 | 游戏页列出 Feeder、RenoDX DLSS Tool 等适配方式。无原生帧生成的 64 位离线游戏还可查看 [RTX Encore](ENCORE.md)。 |
+| 游戏能启用原生 DLSS-G | 查看显卡适用的 NVIDIA MFG、ANR 或 sm86 插件，再比较引擎的倍率设置。[组件与发布者](COMPONENTS.md#插件与帧生成) · [倍率表](PARAMETERS.md#帧生成) |
 
 ## 游戏内面板与可选帧生成
 
