@@ -1,5 +1,5 @@
 import { t, locale } from "../i18n";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import {
   Play,
   FolderOpen,
@@ -10,20 +10,26 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { getBridge } from "../bridge";
+import { coverTint } from "../coverTint";
 import { useWindowReturn } from "../useWindowReturn";
 import { useJobLog } from "../useJobLog";
 import { SessionLog } from "./SessionLog";
 import { Artwork, Empty, Loading, Row, Select } from "../components";
+import { InstalledFiles } from "./InstalledFiles";
 import { GameBrowser } from "./GameBrowser";
 import type { GameMenuHandler } from "../GameCard";
 import { GameSetup, resolveSetup, type SetupSelection } from "./GameSetup";
+import { anrGpuReason, anrNeuralReason, componentRoutes, supportsMfg, type ComponentRoute } from "../../../src/shared/install-routes.js";
+import type { GraphicsRouteSettings } from "../types";
 import { ActionMenu, GraphicsActions } from "./GraphicsActions";
-import { DiagnosticsPanel, ModelTable } from "./GameReports";
-import { GraphicsPanels } from "./GraphicsPanels";
+import { DiagnosticsPanel } from "./GameReports";
+import { GraphicsPanels, Modes } from "./GraphicsPanels";
 import { EncorePanel, defaultEncore, encoreSettingsIssue } from "./EncorePanel";
+import { FrameGenerationPanel, FrameSettingsReadout } from "./FrameGenerationPanel";
 import { EngineVersion, selectedEngine, useEngineLibrary } from "./EngineVersion";
 import { StandaloneTuning } from "./StandaloneTuning";
 import { HardwareProfileChoices, hardwareProfileNotes } from "./HardwareProfileChoices";
+import {PresetManager} from "./PresetManager";
 import "./GameGraphics.css";
 import { StandaloneRuntimeFacts } from "./StandaloneStatus";
 import { invalidateGameInspection, useGameDetails, useGameStatus } from "./useGameInspection";
@@ -34,7 +40,13 @@ import {
   changedFields,
   defaultStack,
   errorText,
+  launcherLabel,
+  frameRouteLabels,
+  mfgGpuReason,
+  neuralGpuReason,
   readDraft,
+  sameExecutable,
+  usesFramePanel,
 } from "../domain";
 import type {
   Draft,
@@ -52,9 +64,8 @@ export type Run = (
   operation: (token?: string) => Promise<Result>,
 ) => Promise<boolean>;
 type Props = {
-  onImportModel: (id: string) => void;
   onBrowseModels: () => void;
-  onDownloadModel: (id: string) => void;
+  onBrowseEngines: () => void;
   games: Game[];
   grouped: boolean;
   openMenu: GameMenuHandler;
@@ -70,6 +81,7 @@ type Props = {
   refreshToken?: number;
 };
 type EditorDraft = { setup: SetupSelection | null; components: Record<string, string>; encore?:Record<string,EncoreSettings | undefined>;
+  graphics?:Record<string,GraphicsRouteSettings | undefined>;
   encoreEngines?:Record<string,string|undefined>; mfgPackageId?:string; mfgAdvanced?:MfgAdvanced; resetNeuralTuning?:boolean };
 const emptyEditorDraft: EditorDraft = { setup: null, components: {} };
 export function Games(props: Props) {
@@ -93,9 +105,8 @@ export function Games(props: Props) {
   );
 }
 function GameEditor({
-  onImportModel,
   onBrowseModels,
-  onDownloadModel,
+  onBrowseEngines,
   game,
   editorDraft,
   onEdit,
@@ -109,9 +120,12 @@ function GameEditor({
   refreshToken = 0,
 }: Props & { game: Game; editorDraft: EditorDraft; onEdit: (patch: Partial<EditorDraft>) => void }) {
   const setupSelection = editorDraft.setup;
+  const [tint, setTint] = useState<string>();
+  const updateTint = useCallback((image: HTMLImageElement | null) => setTint(image ? coverTint(image) : undefined), []);
   const setSetupSelection = (setup: SetupSelection | null) => onEdit({ setup });
   const [tab, setTab] = useState("graphics"),
     [showAntiCheatNote, setShowAntiCheatNote] = useState(false),
+    [presetOpen, setPresetOpen] = useState(false),
     [revision, setRevision] = useState(0),
     [runtime, setRuntime] = useState<Runtime | null>(null);
   // Window return reads lists/telemetry only. Re-inspecting a game's files is
@@ -119,24 +133,50 @@ function GameEditor({
   const returnRevision = useWindowReturn(active && (tab === "components" || tab === "runtime"), busy);
   const { rows: logRows, lines: activity, clear: clearActivity } = useJobLog(game.dir);
   const panelId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const focusFrameEngine = useRef(false);
   const recovery = useRestoreStatus(game.dir, active, revision, refreshToken);
   const detailRead = useGameDetails(game.dir, active, revision, refreshToken);
   const statusRead = useGameStatus(game.dir, "", active, revision, refreshToken);
   const details = detailRead?.value;
   const status = statusRead?.value;
+  const gpu = status?.hardware?.gpu;
+  const noNvidia = gpu?.nvidiaPresent === false;
   const statusError = statusRead?.error || (status && !status.ok && (status.message || t("未识别到可配置的游戏程序，请核对游戏目录。")));
-  const error = (tab === "graphics" || tab === "models") ? statusError : undefined;
-  const loadingPanel = (tab === "graphics" || tab === "models") && !status;
-  const base = status?.ok ? readDraft(status) : null,
-    draft = drafts[game.dir] || base,
-    changes = base && draft ? changedFields(base, draft) : [];
+  const error = tab === "graphics" ? statusError : undefined;
+  const loadingPanel = tab === "graphics" && !status;
   const selectedSetup = details ? resolveSetup(details,setupSelection) : null;
-  const encoreSelected = !status?.launcherProtected && selectedSetup?.route === "encore";
-  const profileOverride = !encoreSelected && base && draft && draft.hardwareProfile !== base.hardwareProfile
+  const hostStack = selectedSetup?.route === 'optiscaler';
+  const base = status?.ok ? readDraft(status) : null;
+  const savedDraft = drafts[game.dir] || base;
+  const draft = hostStack && base && savedDraft
+    ? {...savedDraft, runtimeStack:base.runtimeStack, hdrCompatibility:base.hdrCompatibility} : savedDraft;
+  const changes = base && draft ? changedFields(base, draft) : [];
+  const selectedProtected = selectedSetup?.protectedGame ?? status?.launcherProtected;
+  const protectedSubtarget = status?.ok && selectedProtected && !status.launcherProtected && !sameExecutable(selectedSetup?.exe?.path, status.exePath);
+  const encoreSelected = !selectedProtected && selectedSetup?.route === "encore";
+  const graphicsRoute = !selectedProtected && componentRoutes.includes(selectedSetup?.route || "")
+    ? selectedSetup!.route as ComponentRoute : null;
+  const frameRoute = usesFramePanel(graphicsRoute) ? graphicsRoute : null;
+  useEffect(()=>{
+    if (!focusFrameEngine.current || !graphicsRoute || !status?.ok) return;
+    const engine = panelRef.current?.querySelector<HTMLButtonElement>('[data-module="mfg"] [role="radio"][aria-checked="true"]');
+    if (engine) { focusFrameEngine.current = false; engine.focus(); }
+  }, [graphicsRoute, status?.ok]);
+  const graphicsKey = JSON.stringify([selectedSetup?.exe?.path,graphicsRoute]);
+  const graphicsDraft = editorDraft.graphics?.[graphicsKey];
+  const currentGraphics = status?.graphicsRoute?.route === graphicsRoute && sameExecutable(status?.graphicsRoute?.exePath,selectedSetup?.exe?.path) ? status?.graphicsRoute : undefined;
+  const graphicsValues = {...currentGraphics,...graphicsDraft};
+  const graphicsIssue = selectedSetup?.graphicsIssue || (graphicsRoute?.startsWith("anr") ? anrGpuReason(gpu?.name)
+    : graphicsRoute?.startsWith("sm86") && noNvidia ? "Dlssg_for_sm86 需要 NVIDIA GeForce RTX 20–50 系列显卡。" : null);
+  const anrNeuralIssue = graphicsRoute === 'anr' && status?.ok
+    ? anrNeuralReason(selectedSetup?.exe, status.hardware?.gpu?.architecture?.sm) : null;
+  const patchGraphics = (patch:GraphicsRouteSettings) => onEdit({graphics:{...editorDraft.graphics,[graphicsKey]:{...graphicsDraft,...patch}}});
+  const profileOverride = !graphicsRoute && !encoreSelected && base && draft && draft.hardwareProfile !== base.hardwareProfile
     ? draft.hardwareProfile : "";
-  const projected = useProfileTarget(game.dir, profileOverride, active && !!profileOverride, revision, refreshToken);
+  const projected = useProfileTarget(game.dir, profileOverride, active && tab === "graphics" && !!profileOverride, revision, refreshToken);
   const displayedStatus = profileOverride ? projected?.status : status;
-  const setupPending = !!setupSelection && !details?.launcherProtected && !status?.launcherProtected;
+  const setupPending = !!setupSelection && !selectedProtected;
   const encoreKey = (selectedSetup?.exe?.path || setupSelection?.exePath || '').replace(/\\/g,'/').toLowerCase();
   const statusExe = (status?.encore?.exePath || status?.exePath || details?.exePath || '').replace(/\\/g,'/').toLowerCase();
   const currentEncore = encoreKey === statusExe ? status?.encore : undefined;
@@ -149,17 +189,70 @@ function GameEditor({
   const engineLibrary = useEngineLibrary(active && tab === 'graphics' && (!!status?.launcherProtected || encoreSelected),refreshToken + revision);
   const encoreEngine = selectedEngine(engineLibrary.data,'encore',encorePackageId,installedEncoreEngine);
   const mfgEngine = selectedEngine(engineLibrary.data,'mfg-universal',editorDraft.mfgPackageId,status?.mfg?.engine);
+  const changeMfgEngine = (mfgPackageId?:string) => {
+    const next = selectedEngine(engineLibrary.data,'mfg-universal',mfgPackageId,status?.mfg?.engine);
+    const mfgAdvanced = {...editorDraft.mfgAdvanced};
+    if (next?.capabilities?.diagnosticLogging === false) delete mfgAdvanced.diagnosticLogging;
+    onEdit({mfgPackageId,mfgAdvanced});
+  };
   const encoreChanged = JSON.stringify(encoreBase) !== JSON.stringify(encoreDraft) || encorePackageId !== undefined;
   const advancedChanges = Object.keys(editorDraft.mfgAdvanced || {}).length;
-  const extraChanges = advancedChanges + Number(editorDraft.mfgPackageId !== undefined) + Number(!!editorDraft.resetNeuralTuning);
-  const encoreIssue = selectedSetup?.encoreIssue || currentEncore?.error || (!status?.ok ? t("读取游戏配置…")
-    : encoreSettingsIssue(encoreDraft,status,selectedSetup?.exe?.hasNativeDlss,encoreEngine,encoreBase));
+  const singlePassTuning = !["renodx","optiscaler"].includes(selectedSetup?.route || "");
+  const resetTuning = singlePassTuning && !!editorDraft.resetNeuralTuning;
+  const extraChanges = advancedChanges + Number(editorDraft.mfgPackageId !== undefined) + Number(resetTuning);
+  const encoreIssue = selectedSetup?.encoreIssue || currentEncore?.error || (noNvidia && "Encore 首批适配需要识别到 NVIDIA RTX 20 / 30 / 40 / 50 显卡。") || (!status?.ok ? t("读取游戏配置…")
+    : encoreSettingsIssue(encoreDraft,encoreStatus || status,selectedSetup?.exe?.hasNativeDlss,encoreEngine,encoreBase));
   const targets = details ? [details, ...(details.exes || [])] : [];
   const antiCheatWarning = targets.some(target => target.antiCheatWarning);
   const antiCheatNames = [...new Set(targets.flatMap(target => target.antiCheatComponents || []))];
 
   const patchDraft = (patch: Partial<Draft>) => {
     if (draft) setDraft(game.dir, { ...draft, ...patch });
+  };
+  const presetRoute = selectedProtected ? "wuwa-proxy" : selectedSetup?.route || "";
+  const hostManaged = graphicsRoute === "optifg" || graphicsRoute === "xemfg-optiscaler";
+  const gameManagedXeMfg = graphicsRoute === "xemfg" && graphicsDraft?.multiplier == null && !!currentGraphics &&
+    (currentGraphics.enabled !== true || currentGraphics.dynamic !== false);
+  const presetSettings:Record<string,unknown> = {components:editorDraft.components};
+  if (encoreSelected) {
+    presetSettings.encore=encoreDraft;
+    presetSettings.encorePackageId=encorePackageId ?? installedEncoreEngine?.packageId ?? (installedEncoreEngine?.recommended ? "" : undefined);
+  } else if (graphicsRoute) {
+    if (!hostManaged && !gameManagedXeMfg) {
+      const saved = currentGraphics?.filesPresent && !currentGraphics.error ? currentGraphics : undefined;
+      const fallback = graphicsRoute.startsWith("anr") ? 6 : graphicsRoute.startsWith("sm86") ? 4 : 2;
+      presetSettings.graphics = {
+        multiplier:graphicsDraft?.multiplier ?? saved?.multiplier ?? (currentGraphics ? undefined : fallback),
+        engine:graphicsDraft?.engine ?? saved?.engine ?? (!currentGraphics && graphicsRoute.startsWith("sm86") ? "DLSS" : undefined),
+        sceneCut:graphicsDraft?.sceneCut ?? saved?.sceneCut ?? (!currentGraphics && graphicsRoute.startsWith("anr") ? true : undefined),
+        neural:graphicsDraft?.neural ?? saved?.neural ?? (!currentGraphics && graphicsRoute==="anr" ? false : undefined),
+      };
+    }
+  } else if (draft) {
+    presetSettings.draft=draft;
+    presetSettings.resetNeuralTuning=editorDraft.resetNeuralTuning;
+    if (selectedProtected) {
+      presetSettings.mfgPackageId=editorDraft.mfgPackageId ?? status?.mfg?.engine?.packageId ?? (status?.mfg?.engine?.recommended ? "" : undefined);
+      presetSettings.mfgAdvanced=resetTuning ? editorDraft.mfgAdvanced : {...status?.mfg?.advanced,...editorDraft.mfgAdvanced};
+    }
+  }
+  const applyPreset = (settings:Record<string,unknown>) => {
+    const patch:Partial<EditorDraft>={};
+    if (encoreSelected) {
+      if (settings.encore) patch.encore={...editorDraft.encore,[encoreKey]:{...encoreDraft,...settings.encore as Partial<EncoreSettings>}};
+      if (typeof settings.encorePackageId==="string") patch.encoreEngines={...editorDraft.encoreEngines,[encoreKey]:settings.encorePackageId};
+    } else if (graphicsRoute) {
+      if (!hostManaged && settings.graphics) patch.graphics={...editorDraft.graphics,[graphicsKey]:{...graphicsDraft,...settings.graphics as GraphicsRouteSettings}};
+    } else {
+      if (draft && settings.draft) patchDraft(settings.draft as Partial<Draft>);
+      if (typeof settings.resetNeuralTuning==="boolean") patch.resetNeuralTuning=settings.resetNeuralTuning;
+      if (selectedProtected) {
+        if (typeof settings.mfgPackageId==="string") patch.mfgPackageId=settings.mfgPackageId;
+        if (settings.mfgAdvanced) patch.mfgAdvanced={...editorDraft.mfgAdvanced,...settings.mfgAdvanced as MfgAdvanced};
+      }
+    }
+    if (settings.components) patch.components={...(!settings.componentsComplete && editorDraft.components),...settings.components as Record<string,string>};
+    onEdit(patch);
   };
   const refresh = () => {
     invalidateGameInspection(game.dir);
@@ -175,7 +268,39 @@ function GameEditor({
       onEdit({setup:null,encore:{...editorDraft.encore,[encoreKey]:undefined},encoreEngines:{...editorDraft.encoreEngines,[encoreKey]:undefined}}); refresh(); setRuntime(null);
     }
   };
-  const execute = async (scope: "changed" | "neural" | "mfg" | "both" | "enableBoth" = "changed") => {
+  const executeGraphics = async () => {
+    const exe = selectedSetup?.exe;
+    if (!graphicsRoute || !exe || !status?.ok || graphicsIssue || (anrNeuralIssue && graphicsValues.neural)) return;
+    let graphics = graphicsDraft;
+    if (graphicsRoute === "xemfg-optiscaler" || graphicsRoute === "optifg") graphics = undefined;
+    if (graphicsRoute === "xemfg") graphics = graphicsDraft?.multiplier != null || !currentGraphics
+      ? {multiplier:graphicsDraft?.multiplier ?? 2} : undefined;
+    if (await run(token => getBridge().enhancedApply(game.dir,{route:graphicsRoute,exePath:exe.path,
+      apiOverride:exe.apiOverride || "auto",graphics},token))) {
+      onEdit({setup:null,graphics:{...editorDraft.graphics,[graphicsKey]:undefined}});
+      refresh(); setRuntime(null);
+    }
+  };
+  type ApplyScope = NonNullable<Parameters<typeof applyPatch>[2]>;
+  const requestedModes = (scope:ApplyScope) => {
+    if (!base || !draft) return {};
+    const config = scope === "changed" && !changes.length && extraChanges ? {hardwareProfile:draft.hardwareProfile}
+      : applyPatch(base,draft,scope,status?.launcherProtected);
+    if (scope !== "mfg" && resetTuning) config.neuralMode = draft.neuralMode;
+    return config;
+  };
+  const classicIssue = selectedSetup?.target && !selectedSetup.protectedGame
+    ? selectedSetup.target.classicMfgIssue : null;
+  const invalidNvidiaMode = (config:Partial<Draft>) => {
+    if (noNvidia && config.neuralMode && config.neuralMode !== "off") return neuralGpuReason;
+    if (config.mfgMode && config.mfgMode !== "off") return noNvidia ? mfgGpuReason : classicIssue;
+    return null;
+  };
+  const blocksApply = (scope:ApplyScope) => {
+    if (!noNvidia && !classicIssue) return false;
+    try { return !!invalidNvidiaMode(requestedModes(scope)); } catch { return true; }
+  };
+  const execute = async (scope: ApplyScope = "changed") => {
     if (encoreSelected) { await executeEncore(); return; }
     if (setupPending) {
       message(t("请先预览并应用安装方式，再应用该路线的参数。"));
@@ -184,13 +309,21 @@ function GameEditor({
     if (!base || !displayedStatus?.ok) return;
     try {
       const config = {
-        ...(scope === 'changed' && !changes.length && extraChanges ? {hardwareProfile:(draft || base).hardwareProfile}
-          : applyPatch(base, draft || base, scope, status?.launcherProtected)),
+        ...requestedModes(scope),
         exePath: status?.exePath || details?.exePath || undefined,
         ...(status?.launcherProtected && editorDraft.mfgPackageId !== undefined ? {mfgPackageId:editorDraft.mfgPackageId} : {}),
         ...(status?.launcherProtected && scope !== 'mfg' && advancedChanges ? {mfgAdvanced:editorDraft.mfgAdvanced} : {}),
-        ...(scope !== 'mfg' && editorDraft.resetNeuralTuning ? {resetNeuralTuning:true,neuralMode:(draft || base).neuralMode} : {}),
+        ...(scope !== 'mfg' && resetTuning ? {resetNeuralTuning:true} : {}),
       };
+      if (hostStack) {
+        delete config.runtimeStack;
+        delete config.hdrCompatibility;
+      }
+      const issue = invalidNvidiaMode(config);
+      if (issue) {
+        message(t(issue));
+        return;
+      }
       if (
         await run((token) => getBridge().enhancedApply(game.dir, config, token))
       ) {
@@ -205,7 +338,7 @@ function GameEditor({
   };
   const installSetup = async () => {
     if (encoreSelected) { await executeEncore(); return; }
-    if (!details || !setupPending) return;
+    if (!details || !setupPending || noNvidia) return;
     const { exe, route } = resolveSetup(details, setupSelection);
     if (!exe || !route) return;
     if (await run(token => getBridge().install(game.dir, exe.path, route, exe.apiOverride || "auto", token))) {
@@ -214,26 +347,83 @@ function GameEditor({
       setRuntime(null);
     }
   };
+  const clearAfterRestore = () => {
+    setDraft(game.dir, undefined);
+    onEdit({...emptyEditorDraft, graphics:undefined, encore:undefined, encoreEngines:undefined,
+      mfgPackageId:undefined, mfgAdvanced:undefined, resetNeuralTuning:undefined});
+    setRuntime(null);
+    refresh();
+  };
   const restore = async () => {
     if (!recovery?.canRestore || (ask && !(await ask(t("卸载并恢复游戏原始状态"),
       t("将删除本次部署的文件，并从 _DLSS5_Backup 还原原始文件。游戏需要处于关闭状态。"), t("恢复"))))) return;
-    if (await run(token => getBridge().restoreGame(game.dir, token))) {
-      setDraft(game.dir, undefined);
-      onEdit({ setup: null, components: {}, encore:undefined,encoreEngines:undefined,mfgPackageId:undefined,mfgAdvanced:undefined,resetNeuralTuning:undefined });
-      setRuntime(null);
-      refresh();
-    }
+    if (await run(token => getBridge().restoreGame(game.dir, token))) clearAfterRestore();
   };
+  const engineNames:Record<string,string> = {
+    nvidia:t("NVIDIA DLSS 帧生成"), anr:"ANR FG B20", "anr-addon":"ANR FG B20 · OptiScaler Add-on",
+    ...frameRouteLabels,
+    sm86:"Dlssg_for_sm86 0.4.2", "sm86-delta":t("Dlssg_for_sm86 · 三角洲 DX12 / Vulkan"),
+  };
+  const engineName = status?.launcherProtected ? t("鸣潮独立加载器") : t(engineNames[graphicsRoute || "nvidia"]);
+  const nativeRoute = [selectedSetup?.route, sameExecutable(selectedSetup?.exe?.rel,details?.installedExe) && details?.installedRoute, selectedSetup?.recommended, ...(selectedSetup?.available || [])]
+    .find(route=>route && ["native","feeder","renodx","optiscaler"].includes(route) && selectedSetup?.available.includes(route));
+  const engineChoices:[string,string,string][] = [
+    ...(nativeRoute ? [["nvidia",engineNames.nvidia,t(noNvidia ? "需要 NVIDIA 显卡" : "游戏 DLSS-G 运行库")] as [string,string,string]] : []),
+    ...(selectedSetup?.available || []).filter(route=>route === "anr" || usesFramePanel(route) || route === graphicsRoute ||
+      route === "anr-addon" && selectedSetup?.route === "optiscaler").map((route):[string,string,string] =>
+      [route,t(engineNames[route]),t(route === "anr-addon" || route === "xemfg-optiscaler" || route === "optifg" ? "复用 OptiScaler" : route === "anr" || route === "xemfg" ? "实验性 · 2×–6×" : "社区帧生成")]),
+  ];
+  const engineChoice = !status?.launcherProtected && engineChoices.length > 1 && <div className="module-field">
+    <span>{t("补帧引擎")}</span><Modes label="补帧引擎" value={graphicsRoute || "nvidia"} options={engineChoices}
+      onChange={id=>{
+        const route = id === "nvidia" ? nativeRoute : id;
+        if (!details || !route || !selectedSetup?.exe || route === selectedSetup.route) return;
+        const initial = resolveSetup(details,null);
+        setSetupSelection(route === initial.route && sameExecutable(selectedSetup.exe.path,initial.exe?.path)
+          ? null : {exePath:selectedSetup.exe.path,route});
+      }}/>
+  </div>;
+  const graphicsBlocked = !!graphicsIssue || !selectedSetup?.exe || !status?.ok || !!(anrNeuralIssue && graphicsValues.neural);
+  const alternative = graphicsRoute && !frameRoute ? {
+    supportedModes: graphicsRoute.startsWith("anr") ? t("2×–6× · 实验性") :
+      graphicsValues.engine === "XeSS" ? "XeSS · 2×–4×" : "DLSS · 2×–6×",
+    blocked: graphicsBlocked,
+    neuralControl: graphicsRoute === 'anr' && (selectedSetup?.exe?.hasNativeDlss || graphicsValues.neural) && <label className="setup-field">
+      <span>{t("同时启用 DLSS 神经渲染")}</span>
+      <Select label={t("同时启用 DLSS 神经渲染")} value={String(graphicsValues.neural ?? false)} disabled={!status?.ok || !!(anrNeuralIssue && !graphicsValues.neural)}
+        options={[["true",t("开启")],["false",t("关闭")]]} onChange={value=>patchGraphics({neural:value === "true"})}/>
+    </label>,
+    fields: <>
+      {currentGraphics && (!currentGraphics.filesPresent || currentGraphics.error) && <p role="alert">{t(currentGraphics.error || "配套文件尚不完整")}</p>}
+      {graphicsIssue && <p role="alert">{t(graphicsIssue)}</p>}
+      {anrNeuralIssue && <p>{t(anrNeuralIssue)}</p>}
+      <p>{graphicsRoute.startsWith('anr') ? t("在游戏中启用 DLSS 帧生成。Insert 可打开 OptiScaler 菜单。")
+        : t("在游戏中启用 DLSS 帧生成，重启后读取配置。")}</p>
+      <p>{t(graphicsRoute.startsWith('anr') ? "显卡范围：RTX 20 及更新、GTX 16、Radeon RX 5000 及更新、Steam Deck、Intel Arc A/B。" : "显卡范围：GeForce RTX 20、30、40、50 系列。")}</p>
+      <div className="setup-fields">
+        {graphicsRoute.startsWith('sm86') && <label className="setup-field"><span>{t("补帧引擎")}</span>
+          <Select label={t("补帧引擎")} value={graphicsValues.engine || "DLSS"} options={[["DLSS","DLSS"],["XeSS","XeSS"]]}
+            onChange={value=>patchGraphics({engine:value as "DLSS"|"XeSS",...(value === 'XeSS' && (graphicsValues.multiplier || 4) > 4 ? {multiplier:4} : {})})}/></label>}
+        <label className="setup-field"><span>{t("倍率上限")}</span>
+          <Select label={t("倍率上限")} value={String(graphicsValues.multiplier || (graphicsRoute.startsWith('anr') ? 6 : 4))}
+            options={[2,3,4,...(graphicsRoute.startsWith('anr') || graphicsRoute.startsWith('sm86') && graphicsValues.engine !== 'XeSS' ? [5,6] : [])].map(n=>[String(n),n+"×"])}
+            onChange={value=>patchGraphics({multiplier:Number(value)})}/></label>
+        {graphicsRoute.startsWith('anr') && <label className="setup-field"><span>{t("切镜保护")}</span>
+          <Select label={t("切镜保护")} value={String(graphicsValues.sceneCut ?? true)}
+            options={[["true",t("开启")],["false",t("关闭")]]} onChange={value=>patchGraphics({sceneCut:value === "true"})}/></label>}
+      </div>
+    </>,
+  } : undefined;
   return (
-    <section className="game-detail">
+    <section className="game-detail" style={tint ? { "--cover-tint": tint } as CSSProperties : undefined}>
       <div className="game-overview">
         <div className="game-detail-top">
           <div className="game-identity">
-            <Artwork game={game} layout="banner" large />
+            <Artwork game={game} layout="banner" large onImageReady={updateTint} />
             <div>
               <div className="game-title-line">
                 <h1 title={game.name}>{game.name}</h1>
-                <span>{game.launcher === "Added by hand" ? t("手动添加") : game.launcher}</span>
+                <span>{t(launcherLabel(game.launcher))}</span>
               </div>
               <p className="path">
                 <span title={game.dir}>{game.dir}</span>
@@ -330,7 +520,6 @@ function GameEditor({
       }}>
         {[
           ["graphics", t("画质与补帧")],
-          ["models", t("模型库")],
           ["components", t("组件与版本")],
           ["runtime", t("运行诊断")],
         ].map(([id, label]) => (
@@ -347,11 +536,13 @@ function GameEditor({
           </button>
         ))}
       </div>
-      <div className="detail-scroll" data-tab={tab} role="tabpanel" id={panelId} aria-labelledby={`${panelId}-${tab}`} tabIndex={0}>
+      <div ref={panelRef} className="detail-scroll" data-tab={tab} role="tabpanel" id={panelId} aria-labelledby={`${panelId}-${tab}`} tabIndex={0}>
         <div className="game-tab-content">
           {details && <div hidden={tab !== "graphics"}>
-            <GameSetup dir={game.dir} details={details} status={displayedStatus} busy={busy}
-              selection={setupSelection} onChange={setSetupSelection} message={message} onUpdated={refresh} />
+            <GameSetup dir={game.dir} details={details} status={status} busy={busy}
+              selection={setupSelection} onChange={setSetupSelection} onViewFrameRoute={selection=>{
+                focusFrameEngine.current = true; setSetupSelection(selection);
+              }} message={message} onUpdated={refresh} />
           </div>}
           {tab === "graphics" && detailRead?.error && <p className="error" role="alert">
             {t(detailRead.error)} <button onClick={refresh}>{t("重试")}</button>
@@ -365,52 +556,56 @@ function GameEditor({
           {loadingPanel && !error && <Loading text={t("读取游戏配置…")} skeleton="table" />}
           {recovery?.error && (tab === "graphics" || tab === "components") &&
             <p className="error" role="alert">{t(recovery.error)} <button onClick={refresh}>{t("重试")}</button></p>}
-          {status?.ok && tab === "graphics" && draft && (
+          {protectedSubtarget && tab === "graphics" && <p role="alert">{t("请从鸣潮游戏目录打开独立加载器配置。")}</p>}
+          {status?.ok && !protectedSubtarget && tab === "graphics" && draft && (
             <fieldset disabled={busy}>
               {encoreSelected ? <EncorePanel value={encoreDraft} status={encoreStatus || status} engine={encoreEngine} hasNativeDlss={selectedSetup?.exe?.hasNativeDlss} issue={encoreIssue}
                 engineControl={<EngineVersion component="encore" library={engineLibrary.data} current={installedEncoreEngine} value={encorePackageId}
-                  onChange={value=>onEdit({encoreEngines:{...editorDraft.encoreEngines,[encoreKey]:value}})} onBrowse={onBrowseModels}
+                  onChange={value=>onEdit({encoreEngines:{...editorDraft.encoreEngines,[encoreKey]:value}})} onBrowse={onBrowseEngines}
                   error={engineLibrary.error} onRetry={engineLibrary.retry}/>}
-                onChange={setEncoreDraft} onModels={()=>setTab("models")} onApply={()=>void executeEncore()}/> : <>
-              <section className="profile-picker game-profile-picker" aria-label={t("硬件专属优化档位")}>
+                onChange={setEncoreDraft} onModels={onBrowseModels} onApply={()=>void executeEncore()}/> : <>
+              {!graphicsRoute && <section className="profile-picker game-profile-picker" aria-label={t("硬件专属优化档位")}>
                 <h2>{t("硬件专属优化档位")}</h2>
+                {!hostStack && !selectedProtected && <p className="footnote">{t("切换档位会更新待应用的默认运行库组合。模型和补帧的可用性仍取决于显卡与游戏。")}</p>}
+                {!gpu?.architecture?.sm && <p className="footnote">{t("此处显示 RTX 档位的参考参数。实机兼容性取决于检测到的显卡和游戏路线。")}</p>}
                 <HardwareProfileChoices game standalone={status.launcherProtected} catalog={status.hardwareProfiles} profileId={draft.hardwareProfile}
                   source={profileOverride ? "selected" : status.hardwareProfileSource}
-                  onSelect={id => patchDraft({ hardwareProfile: id, runtimeStack: defaultStack(id) })} />
-              </section>
-              {displayedStatus && <GraphicsPanels active={active} onRuntime={setRuntime} showGameDetails gameDir={game.dir} status={displayedStatus}
+                  onSelect={id => { if (id !== draft.hardwareProfile) patchDraft({hardwareProfile:id, runtimeStack:defaultStack(id)}); }} />
+              </section>}
+              {frameRoute ? <FrameGenerationPanel installed={currentGraphics} route={frameRoute} engineChoice={engineChoice} optiFgInputs={selectedSetup?.target?.optiFgInputs}
+                draftMultiplier={graphicsDraft?.multiplier} issue={graphicsIssue} blocked={graphicsBlocked} vulkan={selectedSetup?.target?.api === "vulkan"}
+                change={multiplier=>patchGraphics({multiplier})} apply={()=>void executeGraphics()}/> :
+                displayedStatus && <GraphicsPanels active={active} onRuntime={setRuntime} gameDir={game.dir} status={displayedStatus}
                 profileNotes={hardwareProfileNotes(displayedStatus.hardwareProfileInfo)}
-                exePath={details?.exePath || displayedStatus.exePath} draft={draft} onChange={patchDraft}
+                exePath={selectedSetup?.exe?.path || displayedStatus.exePath} draft={graphicsRoute && base ? base : draft} onChange={patchDraft}
+                alternative={alternative} selectedEngineName={engineName} engineChoice={engineChoice}
+                noNativeDlss={selectedSetup?.exe?.hasNativeDlss === false && !selectedProtected}
+                nrRoute={selectedSetup?.route} setupPending={setupPending} hostStack={hostStack}
+                mfgSupported={status.launcherProtected || !selectedSetup?.target || (supportsMfg(selectedSetup.target) && !selectedSetup.target.classicMfgIssue)}
+                mfgIssue={selectedSetup?.target?.classicMfgIssue}
                 engineControl={status.launcherProtected && <EngineVersion component="mfg-universal" library={engineLibrary.data} current={status.mfg?.engine}
-                  value={editorDraft.mfgPackageId} onChange={mfgPackageId=>onEdit({mfgPackageId})} onBrowse={onBrowseModels} error={engineLibrary.error} onRetry={engineLibrary.retry}/>}
+                  value={editorDraft.mfgPackageId} onChange={changeMfgEngine} onBrowse={onBrowseEngines} error={engineLibrary.error} onRetry={engineLibrary.retry}/>}
                 neuralAdvanced={status.launcherProtected && <StandaloneTuning value={{...status.mfg?.advanced,...editorDraft.mfgAdvanced}} engine={mfgEngine}
                   onChange={patch=>onEdit({mfgAdvanced:{...editorDraft.mfgAdvanced,...patch}})} enabled={draft.neuralMode!=='off'}
                   onReset={()=>onEdit({resetNeuralTuning:true,mfgAdvanced:undefined})} resetPending={!!editorDraft.resetNeuralTuning}/>}
-                onResetTuning={()=>onEdit({resetNeuralTuning:true})} resetPending={!!editorDraft.resetNeuralTuning}
-                onApply={scope => void execute(scope)}
-                onBrowseModels={() => setTab("models")} />}
+                onResetTuning={singlePassTuning ? ()=>onEdit({resetNeuralTuning:true}) : undefined} resetPending={resetTuning}
+                onApply={scope => { if (graphicsRoute) void executeGraphics(); else void execute(scope); }}
+                onBrowseModels={onBrowseModels} />}
               {profileOverride && !projected && <Loading text={t("读取游戏配置…")}/>}
               </>}
             </fieldset>
           )}
-          {tab === "graphics" && draft && <p className="footnote">{t("这些是磁盘配置与待应用参数。实际渲染效果和补帧倍率请查看运行诊断。")}</p>}
-          {profileOverride && (tab === "graphics" || tab === "models") && projected?.errors.map(detail =>
+          {tab === "graphics" && draft && !frameRoute && <p className="footnote">{t("这些是磁盘配置与待应用参数。实际渲染效果和补帧倍率请查看运行诊断。")}</p>}
+          {profileOverride && tab === "graphics" && projected?.errors.map(detail =>
             <p key={detail} className="error" role="alert">{t(detail)} <button onClick={refresh}>{t("重试")}</button></p>
           )}
-          {tab === "models" && status?.ok && (profileOverride && !projected
-            ? <Loading text={t("读取游戏配置…")}/>
-            : <ModelTable models={profileOverride ? projected?.models || [] : status.neural?.availableModels || []} profileSm={displayedStatus?.hardwareProfileInfo?.sm} gpuSm={displayedStatus?.hardware?.gpu?.architecture?.sm} message={message} onImport={onImportModel} onChoose={id => {
-              if (encoreSelected) setEncoreDraft({...encoreDraft,neuralModelId:id,neuralMode:"latest_compatible"});
-              else patchDraft({ neuralModelId: id, neuralMode: id === "310.8.0-RTX40" ? "legacy" : "latest_compatible" });
-              setTab("graphics");
-            }} onBrowseModels={onBrowseModels} onDownload={onDownloadModel} busy={busy} />)}
           {tab === "components" && (
             <GameComponents
               refreshToken={refreshToken + returnRevision}
               active={active}
               hasBackup={!!recovery?.canRestore}
               onRefresh={refresh}
-              onRestore={() => { setDraft(game.dir, undefined); onEdit({ setup: null, components: {}, encore:undefined,encoreEngines:undefined,mfgPackageId:undefined,mfgAdvanced:undefined,resetNeuralTuning:undefined }); setRuntime(null); refresh(); }}
+              onRestore={clearAfterRestore}
               pending={editorDraft.components}
               onChange={components => onEdit({ components })}
               dir={game.dir}
@@ -434,17 +629,21 @@ function GameEditor({
       <div className="apply-bar">
         <span>
           {tab === "graphics"
-            ? encoreSelected ? t(encoreChanged || setupPending ? "Encore 配置待应用" : "Encore 配置已读取") : setupPending ? t("安装方式待应用 · 画质与补帧修改 {0} 项", [changes.length + extraChanges]) : changes.length + extraChanges
+            ? graphicsRoute ? t(setupPending || graphicsDraft ? "配置待应用" : "配置已读取") : encoreSelected ? t(encoreChanged || setupPending ? "Encore 配置待应用" : "Encore 配置已读取") : setupPending ? t("安装方式待应用 · 画质与补帧修改 {0} 项", [changes.length + extraChanges]) : changes.length + extraChanges
               ? t("{0} 项待应用修改", [changes.length + extraChanges])
               : t(status?.ok ? "配置已读取" : error ? "操作未完成" : "读取游戏配置…")
-            : tab === "models"
-              ? t("模型身份由文件 SHA-256 确定，架构匹配不代表已在游戏中生效")
-              : tab === "components"
+            : tab === "components"
                 ? t("版本锁定与恢复由组件记录管理")
                 : t("仅显示当前进程和有效时间内的证据")}
         </span>
         <div>
-          {tab === "graphics" && encoreSelected ? <>
+          {tab === "graphics" && <button disabled={busy || !status?.ok || !presetRoute || !!protectedSubtarget} onClick={()=>setPresetOpen(true)}>{t("配置预设")}</button>}
+          {tab === "graphics" && protectedSubtarget ? null : tab === "graphics" && graphicsRoute ? <>
+            <button disabled={busy || (!graphicsDraft && !setupPending)} onClick={()=>onEdit({setup:null,graphics:{...editorDraft.graphics,[graphicsKey]:undefined}})}>{t("撤销")}</button>
+            <button className="primary" disabled={busy || graphicsBlocked} onClick={()=>void executeGraphics()}>{t("预览并应用")}</button>
+            <ActionMenu><button disabled={busy} onClick={refresh}>{t("重新检测文件")}</button>
+              <button className="danger" disabled={busy || !recovery?.canRestore} onClick={()=>void restore()}>{t("一键卸载并恢复")}</button></ActionMenu>
+          </> : tab === "graphics" && encoreSelected ? <>
             <button disabled={busy || (!encoreChanged && !setupPending)} onClick={()=>onEdit({setup:null,encore:{...editorDraft.encore,[encoreKey]:undefined},encoreEngines:{...editorDraft.encoreEngines,[encoreKey]:undefined}})}>{t("撤销")}</button>
             <button className="primary" disabled={busy || !!encoreIssue || (!encoreChanged && !setupPending)} onClick={()=>void executeEncore()}>{t("预览并应用")}</button>
             <ActionMenu><button disabled={busy} onClick={refresh}>{t("重新检测文件")}</button>
@@ -452,7 +651,7 @@ function GameEditor({
               <button className="danger" disabled={busy || !recovery?.canRestore} onClick={()=>void restore()}>{t("一键卸载并恢复")}</button></ActionMenu>
           </> : tab === "graphics" ? (
             <GraphicsActions draft={draft} status={displayedStatus} changed={!!changes.length || !!extraChanges || setupPending} busy={busy}
-              setupAction={setupPending ? () => void installSetup() : undefined}
+              setupAction={setupPending ? () => void installSetup() : undefined} setupBlocked={noNvidia || !statusRead} blocksApply={blocksApply}
               canRestore={!!recovery?.canRestore} undo={() => { setDraft(game.dir, undefined); onEdit({setup:null,mfgPackageId:undefined,mfgAdvanced:undefined,resetNeuralTuning:undefined}); }}
               apply={execute} restore={restore} rescan={refresh} />
           ) : (
@@ -473,6 +672,8 @@ function GameEditor({
           )}
         </div>
       </div>
+      {presetOpen && <PresetManager dir={game.dir} gameName={game.name} route={presetRoute} current={presetSettings} gameManaged={hostManaged || gameManagedXeMfg}
+        onApply={applyPreset} onClose={()=>setPresetOpen(false)} message={message}/>}
     </section>
   );
 }
@@ -615,40 +816,7 @@ function GameComponents({
         </Row>
       </div>
       {inventory.rows.length ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("组件 / 文件")}</th>
-                <th>{t("磁盘版本")}</th>
-                <th>{t("状态")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {inventory.rows.map((r, i) => (
-                <tr key={i}>
-                  <td>
-                    <strong>{t(r.name)}</strong>
-                    <details>
-                      <summary>{t("路径与来源")}</summary>
-                      <p className="path">{r.rel}</p>
-                      <p>{t(r.source)}</p>
-                      <code className="path">{r.sha256}</code>
-                    </details>
-                  </td>
-                  <td>{r.version || t("无版本信息")}</td>
-                  <td>
-                    {!r.present
-                      ? t("文件缺失")
-                      : r.lockState === "drift"
-                        ? t("偏离锁定")
-                        : t("已安装")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <InstalledFiles key={dir} dir={dir} rows={inventory.rows} packages={library.packages} selection={selection} message={message} />
       ) : (
         <Empty>{t("尚未安装受管理的组件。")}</Empty>
       )}
@@ -740,6 +908,12 @@ const PIPELINE_GROUPS: [string, string[]][] = [
 ];
 const baseName = (row: { name?: string; rel?: string }) =>
   (row.rel || row.name || "").split(/[\\/]/).pop() || "";
+const frameDiskInfo:Record<keyof typeof frameRouteLabels, [string,string]> = {
+  optifg:["OptiFG 磁盘配置","这些值来自 OptiScaler 配置文件。实际补帧效果请在游戏内查看。"],
+  xemfg:["XeMFG 磁盘配置","这些值来自 XeMFG 配置文件。当前没有 XeMFG 专用的实时帧率或倍率读数。"],
+  "xemfg-optiscaler":["XeMFG 磁盘配置","插件和宿主来自游戏目录。实际补帧倍率请在游戏内的 OptiScaler 菜单中查看。"],
+};
+
 function RuntimePanel({
   refreshToken,
   dir,
@@ -885,8 +1059,14 @@ function RuntimePanel({
 
         </div>
       </div>
+      {status?.graphicsRoute && usesFramePanel(status.graphicsRoute.route) && <section className="runtime-block" aria-label={t(frameDiskInfo[status.graphicsRoute.route][0])}>
+        <h2>{t(frameDiskInfo[status.graphicsRoute.route][0])}</h2>
+        <FrameSettingsReadout installed={status.graphicsRoute}/>
+        <p className="footnote">{t(frameDiskInfo[status.graphicsRoute.route][1])}</p>
+      </section>}
       {result ? (
         <>
+          {result.process?.exe && <p className="path">{t("运行中的程序")} · {result.process.exe}</p>}
           {inv?.rows?.length ? (
             <details className="advanced">
               <summary>{t("管线组件")}</summary>
@@ -930,7 +1110,7 @@ function RuntimePanel({
             </details>
           ) : null}
           {item(t("DLSS 神经渲染"), result.nr)}
-          {item(t("DLSS-G / 多帧生成"), result.mfg)}
+          {item(t(usesFramePanel(status?.graphicsRoute?.route) ? "DLSS-G 运行诊断" : "DLSS-G / 多帧生成"), result.mfg)}
           {result.standalone && <section className="runtime-block"><h2>{t("独立加载实际参数")}</h2><StandaloneRuntimeFacts runtime={result} /></section>}
           <p className="muted">
             {t("检测于")}

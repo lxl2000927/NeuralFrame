@@ -86,7 +86,7 @@ export function Addons({
       </div>
       <p className="muted">
         {t(
-          "附加组件是可切换的单文件构建（.addon / .addon64），与组件库中的运行库分开管理。同一时间只能启用一个同名文件。",
+          "下列组件使用 .addon 或 .addon64 文件。同名文件一次只能启用一个。",
         )}
       </p>
       <p className="muted">
@@ -178,7 +178,7 @@ export function Addons({
           </p>
         </div>
       ) : (
-        <Empty>{t("还没有附加组件。可添加 .addon 或 .addon64 文件。")}</Empty>
+        <Empty>{t("暂无可选组件文件。可添加 .addon 或 .addon64 文件。")}</Empty>
       )}
       {pending && (
         <Modal

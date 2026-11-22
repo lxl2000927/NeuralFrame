@@ -57,22 +57,32 @@ const kv = (text, key) => (text.match(new RegExp(`"${key}"\\s+"([^"]+)"`, 'i')) 
 
 // ---------- Steam ----------
 
-// Steam already downloaded artwork when the game was installed. The poster
-// and landscape artwork have distinct roles; a header must not become a tile.
-function steamPoster(steamRoot, appid) {
-  const cache = path.join(steamRoot, 'appcache', 'librarycache');
-  // Prefer a portrait across both layouts before considering either header.
-  // Steam upgrades can leave a flat portrait beside a newer nested header.
-  for (const name of ['library_600x900.jpg', 'header.jpg']) {
-    for (const file of [path.join(cache,String(appid),name),path.join(cache,`${appid}_${name}`)]) {
-      try { if (fs.statSync(file).isFile()) return {file,tall:name.startsWith('library_600x900')}; } catch {}
+function witcherCacheArt(dir, language) {
+  let hashes;
+  try {
+    hashes = fs.readdirSync(dir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && /^[a-f0-9]{40}$/i.test(entry.name))
+      .map(entry => entry.name).sort();
+  } catch { return {}; }
+  const suffixes = new Set();
+  if (/^[a-z0-9-]+$/i.test(language || '')) suffixes.add(`_${language.toLowerCase()}`);
+  suffixes.add('');
+  suffixes.add('_english');
+  const find = role => {
+    for (const suffix of suffixes) {
+      for (const hash of hashes) {
+        const file = path.join(dir, hash, `library_${role}${suffix}.jpg`);
+        try { if (fs.lstatSync(file).isFile()) return file; } catch {}
+      }
     }
-  }
-  return null;
+    return null;
+  };
+  return { cover: find('capsule'), hero: find('hero'), tile: find('header') };
 }
 
-function steamArtwork(steamRoot, appid) {
+function steamArtwork(steamRoot, appid, language) {
   const cache = path.join(steamRoot, 'appcache', 'librarycache');
+  const current = appid === '292030' ? witcherCacheArt(path.join(cache, appid), language) : {};
   const find = names => {
     // Check fixed filenames only; large Steam libraries need no artwork walk.
     for (const name of names) {
@@ -82,7 +92,12 @@ function steamArtwork(steamRoot, appid) {
     }
     return null;
   };
-  return { hero: find(['library_hero.jpg', 'header.jpg']), tile: find(['capsule_616x353.jpg']) };
+  const cover = current.cover || find(['library_600x900.jpg']);
+  const poster = cover || find(['header.jpg']);
+  return {
+    poster: poster ? { file: poster, tall: !!cover } : null,
+    artwork: { hero: current.hero || find(['library_hero.jpg', 'header.jpg']), tile: current.tile || find(['capsule_616x353.jpg']) }
+  };
 }
 
 function linuxSteamRoots(home = os.homedir(), env = process.env) {
@@ -97,6 +112,15 @@ function linuxSteamRoots(home = os.homedir(), env = process.env) {
   ])].filter((dir) => fs.existsSync(path.join(dir, 'steamapps')));
 }
 
+function steamLibraries(base) {
+  const libraries = new Set([base]);
+  try {
+    const vdf = fs.readFileSync(path.join(base, 'steamapps', 'libraryfolders.vdf'), 'utf8');
+    for (const m of vdf.matchAll(/"path"\s+"([^"]+)"/g)) libraries.add(m[1].replace(/\\\\/g, '\\'));
+  } catch {}
+  return libraries;
+}
+
 function steam(options = {}) {
   const platform = options.platform || process.platform;
   const roots = options.roots || (platform === 'linux'
@@ -108,13 +132,7 @@ function steam(options = {}) {
   for (const root of roots) {
     const base = platform === 'win32' ? root.replace(/\//g, '\\') : root;
 
-    const libraries = new Set([base]);
-    try {
-      const vdf = fs.readFileSync(path.join(base, 'steamapps', 'libraryfolders.vdf'), 'utf8');
-      for (const m of vdf.matchAll(/"path"\s+"([^"]+)"/g)) libraries.add(m[1].replace(/\\\\/g, '\\'));
-    } catch {}
-
-    for (const lib of libraries) {
+    for (const lib of steamLibraries(base)) {
       const appsDir = path.join(lib, 'steamapps');
       let files = [];
       try { files = fs.readdirSync(appsDir).filter((f) => /^appmanifest_\d+\.acf$/.test(f)); } catch { continue; }
@@ -128,9 +146,9 @@ function steam(options = {}) {
         if (!appid || !installdir || NOT_A_GAME.test(name)) continue;
         const dir = path.join(appsDir, 'common', installdir);
         if (!fs.existsSync(dir)) continue;
+        const language = appid === '292030' && (kv(text, 'language') || (platform === 'win32' && reg('HKCU\\Software\\Valve\\Steam', 'Language')));
         games.push({
-          launcher: 'Steam', id: appid, name, dir, poster: steamPoster(base, appid),
-          artwork: steamArtwork(base, appid),
+          launcher: 'Steam', id: appid, name, dir, ...steamArtwork(base, appid, language),
           steamRoot: base,
           stateFlags,
           // A prefix only exists for titles launched through Steam Play. This
@@ -274,12 +292,12 @@ const NOT_A_GAME_DIR = /^(steamapps|gamesave|gamesaves|workshop|downloading|shad
 // A game folder holds a runnable file somewhere near its top. Three levels
 // covers a repack that buries it - Golf.Gambit.v1.0.5-EA-OFME\Golf Gambit\ -
 // and Unreal's Game\Binaries\Win64\ layout.
-function holdsGame(dir, depth = 3) {
+function holdsGame(dir, depth = 3, acceptExe = () => true) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
-  if (entries.some((e) => e.isFile() && /\.exe$/i.test(e.name) && !NOT_A_GAME_EXE.test(e.name))) return true;
+  if (entries.some((e) => e.isFile() && /\.exe$/i.test(e.name) && !NOT_A_GAME_EXE.test(e.name) && acceptExe(e.name, dir))) return true;
   if (depth <= 0) return false;
-  return entries.some((e) => e.isDirectory() && !NOT_A_GAME_DIR.test(e.name) && holdsGame(path.join(dir, e.name), depth - 1));
+  return entries.some((e) => e.isDirectory() && !NOT_A_GAME_DIR.test(e.name) && holdsGame(path.join(dir, e.name), depth - 1, acceptExe));
 }
 
 function autoRoots() {
@@ -526,24 +544,46 @@ function filterExcluded(games, excludedRoots = []) {
   return games.filter((game) => !excluded.some((root) => isInside(game.dir, root)));
 }
 
+function neteaseClient(exe, parent) {
+  const helper = /launcher|uninstall|updater|crashreport|cefprocess|webview|qtwebengineprocess|cefsubprocess|loadingbay/i;
+  return !helper.test(exe) && !!require('./core/pe').getBitness(path.join(parent, exe), {exeOnly:true});
+}
+
 function standalone(options = {}) {
   if ((options.platform || process.platform) !== 'win32') return [];
   const roots = options.roots || (options.drives || drives()).flatMap(d =>
     ['Program Files','Program Files (x86)','Games'].map(name => path.join(d,name)));
   const candidates = [...roots];
-  for (const hive of ['HKCU','HKLM']) for (const view of ['','WOW6432Node\\']) {
-    const base = `${hive}\\SOFTWARE\\${view}Microsoft\\Windows\\CurrentVersion\\Uninstall`;
-    for (const key of regKeys(base)) {
-      if (!/Wuthering|Star.?Rail|Honkai|hkrpg|HoYoPlay|Starward|鸣潮|星穹/i.test(key)) continue;
-      const location=reg(key,'InstallLocation');
-      if (location && path.isAbsolute(location)) candidates.push(location);
-      for (const value of ['DisplayIcon','UninstallString']) {
-        const directory=standaloneGames.commandDirectory(reg(key,value));
-        if (directory) candidates.push(directory);
+  const official = [];
+  for (const record of options.registrations ?? standaloneGames.uninstallRecords()) {
+    const location = typeof record.location === 'string' ? record.location.trim().replace(/^"(.*)"$/, '$1') : '';
+    const icon = standaloneGames.commandExecutable(record.icon);
+    const iconDir = icon && path.dirname(icon);
+    if (/Wuthering|Star.?Rail|Honkai|hkrpg|HoYoPlay|Starward|鸣潮|星穹/i.test(record.name)) {
+      for (const dir of [location, iconDir, standaloneGames.commandDirectory(record.uninstall)]) {
+        if (dir && path.isAbsolute(dir)) candidates.push(dir);
       }
     }
+    const name = standaloneGames.neteaseTitle(record);
+    if (!name) continue;
+    if (location && (!path.isAbsolute(location) || /^[\\/]{2}/.test(location))) continue;
+    const useIcon = !!iconDir && (!location || !fs.existsSync(location));
+    const raw = useIcon ? iconDir : location;
+    if (!raw || !path.isAbsolute(raw) || /^[\\/]{2}/.test(raw)) continue;
+    const dir = path.resolve(raw), base = path.basename(dir).toLowerCase();
+    if (!base || SYSTEM_DIRS.has(base) || LIBRARY_NAME.test(base) ||
+        /^(?:netease(?: games)?|loading bay|网易游戏|common)$/.test(base) || /[\\/]steamapps(?:[\\/]|$)/i.test(dir)) continue;
+    try {
+      if (!fs.lstatSync(dir).isDirectory() || fs.realpathSync(dir).toLowerCase() !== dir.toLowerCase()) continue;
+      // DisplayIcon can belong to a shared store client even when other games
+      // live nearby. When it is the only location, check the exact image.
+      if (useIcon && (!fs.lstatSync(icon).isFile() || NOT_A_GAME_EXE.test(path.basename(icon)) ||
+          !neteaseClient(path.basename(icon), dir))) continue;
+    } catch { continue; }
+    if (location && !holdsGame(dir, 3, neteaseClient)) continue;
+    official.push({launcher:'NetEase Games', id:null, name, dir, poster:null});
   }
-  return standaloneGames.fromRoots(candidates);
+  return dedupe([...standaloneGames.fromRoots(candidates), ...official]);
 }
 
 function discover(extraFolders = [], scanDrives = false, excludedRoots = [], findAutoRoots = autoRoots) {
@@ -560,5 +600,5 @@ function discover(extraFolders = [], scanDrives = false, excludedRoots = [], fin
 
 module.exports = {
   discover, folder, dedupe, autoRoots, drives, isInside, filterExcluded,
-  steam, linuxSteamRoots, gog, ubisoft, xbox, standalone, gamingRootFolder, setRegistryRunner, isBrokenSteamOrphan
+  steam, steamLibraries, linuxSteamRoots, gog, ubisoft, xbox, standalone, gamingRootFolder, setRegistryRunner, isBrokenSteamOrphan
 };

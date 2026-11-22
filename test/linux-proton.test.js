@@ -44,6 +44,40 @@ test('Linux Steam discovery keeps a secondary-library prefix separate from the S
   assert.equal(context.prefix, prefix);
   assert.equal(context.steamRoot, root);
   assert.equal(context.proton, path.join(root, 'steamapps', 'common', 'Proton 9.0', 'proton'));
+  const toolsLibrary = path.join(home, 'Compatibility Tools');
+  fs.appendFileSync(path.join(root, 'steamapps', 'libraryfolders.vdf'), '\n"1" { "path" "' + toolsLibrary.replace(/\\/g, '\\\\') + '" }');
+  const secondaryTool = path.join(toolsLibrary, 'steamapps', 'common', 'Proton 9.0');
+  fs.mkdirSync(secondaryTool, {recursive: true});
+  fs.writeFileSync(path.join(secondaryTool, 'proton'), 'fixture');
+  fs.writeFileSync(path.join(path.dirname(prefix), 'config_info'), [
+    '9.0-204', path.join(secondaryTool, 'files', 'share', 'fonts'), path.join(secondaryTool, 'files', 'lib'), '1'
+  ].join('\n'));
+  assert.equal(module.exports.contextForSteamGame(games[0]).proton, path.join(secondaryTool, 'proton'));
+});
+
+test('Linux game setup and hardware profiles both read the native NVIDIA driver utility', async () => {
+  const calls = [];
+  const execFile = (file,args,_options,done) => {
+    calls.push(file);
+    if (file !== 'nvidia-smi') return done(Error('Command not found'));
+    const gpu = 'NVIDIA GeForce RTX 5080, 620.10';
+    done(null,args[0].includes('memory.total') ? gpu+', 16384, 2048, 14336, 360, 400' : gpu);
+  };
+  function load(name, overrides = {}) {
+    const file = path.resolve(__dirname,'../src/core',name), actual = createRequire(file);
+    const module = {exports:{}};
+    vm.runInNewContext(fs.readFileSync(file,'utf8'), {module,process:{platform:'linux'},
+      require:id=>overrides[id] || (id === 'child_process' ? {execFile} : actual(id))}, {filename:file});
+    return module.exports;
+  }
+  const guards = load('install-guards.js');
+  const manager = load('combined-manager.js',{'./install-guards':guards});
+  const rows = await guards.gpuInfo();
+  const hardware = await manager.detectHardwareEnvironment(true);
+  assert.equal(rows?.[0]?.name,'NVIDIA GeForce RTX 5080');
+  assert.equal(hardware.gpu.detected,true);
+  assert.equal(hardware.gpu.vramTotalMB,16384);
+  assert.deepEqual(calls,['nvidia-smi','nvidia-smi']);
 });
 
 test('configured Proton tool is preferred for a Steam prefix', (t) => {

@@ -4,11 +4,11 @@ NeuralFrame 0.1.0 derives from the MIT-licensed DLSS 5 Swapper code by Rakan Alk
 
 The desktop release includes the bootstrap and F8 bridge. References below to bundled rendering components describe the separately distributed runtime packs and the development payload. The exact file digests and pack versions used by this build are in src/core/runtime-catalog.json. Optional optical flow shaders come from [LumeniteFX](https://github.com/umar-afzaal/LumeniteFX).
 
-## Optional RTX Encore and JSONC adapter (updated 2026-11-14)
+## Optional RTX Encore and JSONC adapter (updated 2026-11-20)
 
-The optional Encore backend recommends the original [RTX Encore v2.4.1 release](https://github.com/SilyNoMeta/rtx-encore/releases/tag/v2.4.1) by SilyNoMeta and retains support for the verified original v2.3.0. The component updater reads the author's release repository directly. NeuralFrame does not rebuild or modify its DLL and does not bundle RTX Encore Hub or RTXManager. Recommended archive and extracted-file SHA-256 values are recorded in `src/core/runtime-catalog.json`; supported engine identities are in `src/core/engine-packages.js`. The upstream public repository provides documentation; it is not the rendering engine's source code.
+The optional Encore backend recommends SilyNoMeta's original v2.5.0 and supports verified copies of v2.3.0, v2.4.1 and v2.4.2. NeuralFrame retrieves the original release archive from the author. The recommended archive and file SHA-256 values are recorded in `src/core/runtime-catalog.json`. The supported engine fingerprints are in `src/core/engine-packages.js`. The public repository provides the author's releases and documentation. [RTX Encore v2.5.0](https://github.com/SilyNoMeta/rtx-encore/releases/tag/v2.5.0)
 
-The archive's `THIRD-PARTY-NOTICES.md` is retained in the cache and installed as `RTX-Encore-NOTICES.md` beside the loader. Paired NVIDIA / Streamline notices and licenses are retained separately. The first adapter exposes NVIDIA added frame generation, DLSS SR/DLAA and NR; Intel XeSS/XeFG engines are not provisioned by this adapter.
+NeuralFrame installs the release's `THIRD-PARTY-NOTICES.md` as `RTX-Encore-NOTICES.md` beside the loader. A byte-identical copy of the notice for v2.3.0 through v2.4.2 is retained in `assets/licenses` for historical DLL imports. The v2.5.0 spatial upscaling adapter exposes MoonlightWeb Super Resolution, NIS, FSR 1, SMAA and FXAA. Paired NVIDIA and Streamline files carry their own notices when supplied. [Original third-party notices](https://github.com/SilyNoMeta/rtx-encore/blob/v2.5.0/THIRD-PARTY-NOTICES.md)
 
 The JSONC settings adapter uses Microsoft [jsonc-parser](https://github.com/microsoft/node-jsonc-parser), version 3.3.1, under the MIT license. The dependency retains its upstream LICENSE.md in its package.
 
@@ -162,11 +162,17 @@ text is included in `payload/enhanced/mfg/licenses/MFGAdaUnlock-RenoDx-LICENSE.t
 
 ## MFG-Unlocker (RTXMFG Universal Unlocker)
 
-The independent-loader component recommends the original `MFGUnlocker.dll` 1.7.1 and permits the verified original 1.7.0. The OptiScaler ASI route retains its separate 1.7.0 companion pack. Existing installations are not upgraded by configuration reads or ordinary settings edits.
+The independent-loader component recommends the original `MFGUnlocker.dll` 1.7.1 and permits the verified original 1.7.0. The classic DLSS-G OptiScaler ASI uses its 1.7.0 companion pack. The standalone and OptiScaler XeMFG routes use the original 1.7.1 DLL.
 Upstream releases: https://github.com/dashdogy/MFG-Unlocker/releases
+
+The standalone XeMFG route downloads Intel XeSS SDK 3.0.2 from Intel and installs `libxess_fg.dll`, `libxell.dll`, `LICENSE.txt` and `third-party-programs.txt` together under `RTXMFG-XeSS`. The OptiScaler XeMFG plugin uses the compatible Intel libraries already installed with the host. [Intel XeSS SDK 3.0.2](https://github.com/intel/xess/releases/tag/v3.0.2)
 
 Licensed under the MIT License (Copyright (c) 2026 dashdogy). The full license
 text is tracked at `assets/licenses/MFG-Unlocker-LICENSE.txt` and prepared as the bundled `mfg-license` component at `enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt`. This is separate from the original 1.7.1 archive, which contains only the DLL.
+
+## ANR FG Beta B20
+
+NeuralFrame downloads the full package and add-on directly from Apex Compute's [B20 release](https://github.com/apex-compute/ANR/releases/tag/FG-V.B20). Both original archives are verified against the author's SHA-256 sums. The full package includes the upstream OptiScaler GPL-3.0 license at `LICENSES/OptiScaler-GPL-3.0.txt`. Its corresponding source is available with the same release. The add-on uses the player's OptiScaler installation. [OptiScaler source for B20](https://github.com/apex-compute/ANR/releases/download/FG-V.B20/anr-fg-V.B20-full-optiscaler-source.zip)
 
 ## NVIDIA Streamline SDK v2.14.16 & DLSS / DLSS-G 310.9.16.0
 

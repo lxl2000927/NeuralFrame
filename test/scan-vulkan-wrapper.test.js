@@ -63,3 +63,33 @@ test('a 32-bit wrapper beside a 64-bit game is not the wrapper for it', async (t
   const scan = await scanGame(dir);
   assert.equal(scan.chosen.apiLabel, 'DirectX 9');
 });
+
+test('a wrapper only applies to the Direct3D version the selected executable loads', async t => {
+  const dir = game(t, 'scan-dx-variants-');
+  const dx11 = writePe(path.join(dir,'Game11.exe'), {text:'D3D11CreateDevice'});
+  const dx12 = writePe(path.join(dir,'Game12.exe'), {text:'D3D12CreateDevice'});
+  const wrapper = writePe(path.join(dir,'d3d11.dll'), {text:'DXVK vkGetInstanceProcAddr'});
+  let scan = await scanGame(dir);
+  const label = file => scan.exeCandidates.find(item => item.path === file).apiLabel;
+  assert.equal(label(dx11), 'Vulkan');
+  assert.equal(label(dx12), 'DirectX 12');
+  fs.renameSync(wrapper, path.join(dir,'d3d12.dll'));
+  scan = await scanGame(dir);
+  assert.equal(label(dx11), 'DirectX 11');
+  assert.equal(label(dx12), 'Vulkan');
+});
+
+test('a Vulkan installation receipt belongs only to its recorded executable', async t => {
+  const dir = game(t, 'scan-layer-owner-');
+  const exe = writePe(path.join(dir,'First','Game.exe'), {text:'vkCreateInstance'});
+  const other = writePe(path.join(dir,'Second','Other.exe'), {text:'D3D11CreateDevice'});
+  const layer = path.join(dir,'ReShade64.json');
+  fs.writeFileSync(layer, '{}');
+  fs.mkdirSync(path.join(dir,'_DLSS5_Backup'));
+  fs.writeFileSync(path.join(dir,'_DLSS5_Backup','manifest.json'), JSON.stringify({
+    version:1, game:{exe:path.relative(dir,exe),api:'vulkan'}, route:'feeder', added:[], replaced:[],
+    vulkanLayer:{manifest:layer}
+  }));
+  assert.equal((await scanGame(dir,exe)).reshade.kind,'vulkan-layer');
+  assert.equal((await scanGame(dir,other)).reshade.installed,false);
+});

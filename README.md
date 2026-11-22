@@ -1,18 +1,18 @@
 # NeuralFrame
 
-NeuralFrame 0.1.2 是集成社区与开源项目图形组件的 Windows x64 游戏画质工具，面向 RTX 20–50 系列显卡，按游戏管理神经渲染（NR）、多帧生成（MFG）、DLSS 超分辨率与配套运行库。应用前可以预览文件变更，并保留备份、回滚和恢复能力。
+NeuralFrame 0.1.3 是集成社区与开源项目图形组件的 Windows x64 游戏画质工具，面向 RTX 20–50 系列显卡，并为符合条件的 Radeon 显卡提供 XeMFG、OptiFG 补帧路线，按游戏管理神经渲染（NR）、多帧生成（MFG）、DLSS 超分辨率与配套运行库。应用前可以预览文件变更，并保留备份、回滚和恢复能力。
 
 RTX 20–40 可通过相应组件解锁支持的多帧生成路线；RTX 50 已原生支持多帧生成，NeuralFrame 为其提供参数、运行库与神经渲染组件管理，不将原生功能称为解锁。具体可用功能仍取决于显卡架构、游戏输入、图形 API、驱动与所选组件。
 
-**[下载 0.1.2](https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.2)** · [项目进度与待办](PROJECT_STATUS.md) · [开发与构建](docs/BUILDING.md) · [第三方声明](THIRD_PARTY_NOTICES.md)
+**[下载 0.1.3](https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.3)** · [开发版进度](PROJECT_STATUS.md) · [文档索引](docs/README.md) · [开发与构建](docs/BUILDING.md) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
 ## 下载与使用
 
 | 文件 | 用途 |
 | --- | --- |
-| `NeuralFrame-0.1.2-Portable-x64.exe` | 直接运行的便携单文件 |
-| `NeuralFrame-0.1.2-Setup-x64.exe` | 支持选择路径、创建快捷方式及卸载的安装程序 |
-| `NeuralFrame-0.1.2-Source.zip` | 带已验证原生启动组件与 F8 桥接的源码，可用于重新打包 |
+| `NeuralFrame-0.1.3-Portable-x64.exe` | 直接运行的便携单文件 |
+| `NeuralFrame-0.1.3-Setup-x64.exe` | 支持选择路径、创建快捷方式及卸载的安装程序 |
+| `NeuralFrame-0.1.3-Source.zip` | 带已验证原生启动组件与 F8 桥接的源码，可用于重新打包 |
 | `SHA256SUMS.txt` | 三个发布文件的 SHA-256，可用 PowerShell 的 `Get-FileHash` 对照 |
 
 1. 打开「游戏」，选择自动识别的游戏，或手动添加游戏目录。遇到带反作弊的游戏，先查看该游戏说明并确认游戏方允许第三方插件。
@@ -36,7 +36,7 @@ RTX 20–40 可通过相应组件解锁支持的多帧生成路线；RTX 50 已�
 
 运行时证据有边界。DLL 在磁盘上只能证明安装；进程加载模块可以证明加载；有效倍率需来自当前游戏会话。显存预算以 1080p 为参考，实际占用取决于游戏、分辨率和画质设置。手选倍率和档位都不能保证输出帧率或兼容所有游戏。
 
-## 引用项目与插件组件
+## 0.1.3 发行版的引用项目与插件组件
 
 NeuralFrame 从 skyi7943-cmd 的 Enhanced 2.3.0 代码继续开发。其基础包含 Rakan Alkhaldi 的 DLSS 5 Swapper（截至 v2.2.9 的 MIT 代码）。桌面界面、按需组件库、运行诊断和事务式部署由本分支继续维护。NVIDIA App 用作桌面布局参考。[直接上游](https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced) · [原始版权声明](LICENSE)
 
@@ -46,7 +46,8 @@ NeuralFrame 从 skyi7943-cmd 的 Enhanced 2.3.0 代码继续开发。其基础�
 | RenoDX DLSS 5 / DLSS Tool | 通用和多通道神经渲染插件。NR 模型 DLL 独立选择，以文件 SHA-256 区分模型。 | [ShortFuse / RenoDX](https://github.com/clshortfuse/renodx) · [RHI 发布源](https://github.com/RankFTW/rhi-repo/releases) |
 | SmarterGamers 模型发布包 | 提供独立标注来源的 NR 模型；与 RankFTW 同名版本分别记录下载包和 DLL 指纹。 | [SmarterGamers 发布源](https://github.com/SmarterGamers/SmarterGamers-DLSS5-Swapper/releases) |
 | MFGAdaUnlock-RenoDx 1.5.5 / MFG-Unlocker | 独立维护的补帧插件。鸣潮独立加载推荐原版 1.7.1，可保留或选择已适配历史版本；OptiScaler ASI 单独保留 1.7.0。 | [mavismmg](https://github.com/mavismmg/MFGAdaUnlock-RenoDx) · [dashdogy](https://github.com/dashdogy/MFG-Unlocker) |
-| RTX Encore | 无原生补帧游戏的可选后端，原仓库发现更新；推荐 2.4.1，保留已适配 2.3.0。 | [SilyNoMeta](https://github.com/SilyNoMeta/rtx-encore) |
+| Intel XeSS、ANR FG、Dlssg_for_sm86 | 供 XeMFG、ANR FG 与相应的 DX12 / Vulkan 补帧路线使用。 | [Intel XeSS](https://github.com/intel/xess) · [ANR](https://github.com/apex-compute/ANR) · [Dlssg_for_sm86](https://github.com/sdli1995/dlssg_for_sm86) |
+| RTX Encore | 无原生补帧游戏的可选后端。推荐 2.5.0，保留已适配的 2.3.0、2.4.1 和 2.4.2。 | [SilyNoMeta](https://github.com/SilyNoMeta/rtx-encore) |
 | ReShade、DLSS5-Feeder 1.17 / 1.19 | 加载游戏内 add-on，通过着色器和辅助进程把相应输入送入渲染链。 | [ReShade](https://github.com/crosire/reshade) · [DLSS5-Feeder](https://github.com/jlrouzies-fr/DLSS5-Feeder) |
 | OptiScaler DLSS-NR 与 Pre-SR Multipass | 提供可选的替换和多通道路线，按游戏、图形 API 与所选版本部署。 | [DLSS-NR](https://github.com/Dagherbou/OptiScaler_DLSSNR) · [Pre-SR 上游](https://github.com/wilsjo2/OptiScaler-DLSSNR-PreSR-Multipass) · [配套构建](https://github.com/jlrouzies-fr/OptiScaler-DLSSNR-PreSR-Multipass) |
 | dgVoodoo2、LumeniteFX、vort Shaders | 分别用于特定旧版 DirectX 转换、可选光流和 Feeder 运动估计。 | [dgVoodoo2](https://github.com/dege-diosg/dgVoodoo2) · [LumeniteFX](https://github.com/umar-afzaal/LumeniteFX) · [vort Shaders](https://github.com/vortigern11/vort_Shaders) |
@@ -54,10 +55,10 @@ NeuralFrame 从 skyi7943-cmd 的 Enhanced 2.3.0 代码继续开发。其基础�
 | 中文适配、WinMM 预加载器、F8 桥接 | 中文词条包含上游翻译和本地补充；预加载器服务特定 32 位路线；F8 桥接连接游戏与管理器。 | [翻译来源](https://github.com/Yukikaze20170315/RenoDX-DLSS5-Generic) · [桥接源码](overlay/) · [WinMM 源码](src/native/dgv_preload32/) · [Dear ImGui](https://github.com/ocornut/imgui) |
 | Electron、React、Lucide | 桌面运行环境、界面组件与图标。 | [Electron](https://github.com/electron/electron) · [React](https://github.com/facebook/react) · [Lucide](https://github.com/lucide-icons/lucide) |
 
-本版有 **16 个按需运行包**。应用随带中文适配、WinMM 预加载器、F8 桥接及相关许可。配套运行包以清单固定大小与 SHA-256；在线发现的版本先进入组件库，只有程序已接入且满足游戏与硬件条件的版本才能应用。管理器代码使用 MIT 许可，第三方文件分别遵循其随附许可。[组件版本与哈希](src/core/runtime-catalog.json) · [早期配套包存档](https://github.com/lxl2000927/NeuralFrame/releases/tag/runtime-components-2026.11.06) · [完整声明](THIRD_PARTY_NOTICES.md)
+本版有 **21 个按需运行包**。应用随带中文适配、WinMM 预加载器、F8 桥接及相关许可。配套运行包以清单固定大小与 SHA-256；在线发现的版本先进入组件库，只有程序已接入且满足游戏与硬件条件的版本才能应用。管理器代码使用 MIT 许可，第三方文件分别遵循其随附许可。[组件版本与哈希](src/core/runtime-catalog.json) · [早期配套包存档](https://github.com/lxl2000927/NeuralFrame/releases/tag/runtime-components-2026.11.06) · [完整声明](THIRD_PARTY_NOTICES.md)
 
 ## 数据与开发
 
 游戏列表、设置和组件索引沿用 `%APPDATA%\dlss5-swapper-enhanced`。游戏原始备份保存在对应游戏目录。卸载管理器前，如果需要撤销插件部署，请先在游戏页执行恢复。
 
-桌面界面见 `ui/src/`，Electron 入口是 `main.js` 和 `preload.js`，安装、组件、回滚和诊断逻辑在 `src/core/`。本地启动、原生资源准备和测试命令见[开发与构建](docs/BUILDING.md)。
+桌面主界面在 [ui/src/](ui/src/)，Electron 从 [main.js](main.js) 加载构建结果。[preload.js](preload.js) 提供桌面接口，安装、回滚与诊断逻辑在 [src/core/](src/core/)。启动与测试步骤见[开发与构建](docs/BUILDING.md)。本版新增的 Radeon、XeSS 帧生成路线和 F7 面板见[游戏路线与监控](docs/GAME-ROUTES.md)。

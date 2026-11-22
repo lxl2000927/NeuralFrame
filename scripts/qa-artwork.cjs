@@ -1,7 +1,7 @@
-const {_electron}=require('@playwright/test'),path=require('node:path'),assert=require('node:assert/strict');
-const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+const { launchFixture } = require('../test/fixtures/launch-electron.cjs');
+const assert=require('node:assert/strict');
 (async()=>{
-  const app=await _electron.launch({executablePath:require('electron'),args:[path.resolve('test/fixtures/neuralframe-artwork-main.cjs')],env});
+  const { app, close } = await launchFixture({ main: 'neuralframe-artwork-main.cjs' });
   try{
     const p=await app.firstWindow();p.setDefaultTimeout(15_000);
     await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].show());
@@ -109,5 +109,5 @@ const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
     assert.equal((await audit()).peak,4);assert.deepEqual(errors,[]);
     console.log('Large-library artwork workflow passed: 160 games, visible priority, nested preloading, broken image repair, explicit retry, online recovery, custom protection and no automatic retry loop.');
     console.log(JSON.stringify(await audit(),null,2));
-  }finally{await app.close();}
+  }finally{await close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

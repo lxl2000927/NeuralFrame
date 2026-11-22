@@ -4,7 +4,9 @@
 const links = Object.freeze({
   github: 'https://github.com/lxl2000927/NeuralFrame',
   releases: 'https://github.com/lxl2000927/NeuralFrame/releases/latest',
-  coffee: 'https://github.com/lxl2000927/NeuralFrame'
+  'amd-afmf': 'https://www.amd.com/en/products/software/adrenalin/afmf.html',
+  coffee: 'https://github.com/lxl2000927/NeuralFrame',
+  f7Source: 'https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/blob/ea23fd10f1c66aa8224fbeefbba89ae7026e6db1/overlay/zh-cn-overlay.cpp#L1111'
 });
 function projectUrl(key) {
   if (key && typeof key === 'object' && typeof key.componentSource === 'string') {

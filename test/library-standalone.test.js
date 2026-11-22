@@ -3,6 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const standalone=require('../src/library-standalone');
 const library=require('../src/library');
+const {writePe}=require('./fixtures/pe');
 function fixture(t){
  const prefix=path.join(os.tmpdir(),'enhanced-library-'),root=fs.mkdtempSync(prefix);
  t.after(()=>{library.setRegistryRunner();assert.ok(path.resolve(root).startsWith(path.resolve(prefix)));fs.rmSync(root,{recursive:true,force:true});});
@@ -43,15 +44,48 @@ test('launcher-only and stale folders are not games and arbitrary apps are not t
 });
 test('known uninstall records find moved games and preserve exclusion/deduplication',t=>{
  const root=fixture(t),game=path.join(root,'Custom Install');wuwa(game);
- library.setRegistryRunner(args=>{
-  const [,key,flag,value]=args;
-  if(key==='HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall')return 'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\KRInstall Wuthering Waves\n';
-  if(/KRInstall Wuthering Waves$/.test(key)&&flag==='/v'&&value==='DisplayIcon')return `    DisplayIcon    REG_SZ    "${path.join(game,'launcher.exe')}",0\n`;
-  throw Error('not found');
- });
- const found=library.standalone({roots:[],platform:'win32'});assert.equal(found.length,1);assert.equal(found[0].dir,game);
+ const registrations=[{name:'KRInstall Wuthering Waves',icon:`"${path.join(game,'launcher.exe')}",0`}];
+ const found=library.standalone({roots:[],platform:'win32',registrations});assert.equal(found.length,1);assert.equal(found[0].dir,game);
  assert.equal(library.dedupe([...found,...library.folder(game)]).length,1);
  assert.deepEqual(library.filterExcluded(found,[game]),[]);
+});
+
+test('recognizes NetEase official games from a corroborated installation and keeps Steam copies separate', t=>{
+ const root=fixture(t),official=path.join(root,'Naraka'),steam=path.join(root,'steamapps','common','Naraka');
+ const once=path.join(root,'OnceHuman'),launcher=path.join(root,'Launcher'),other=path.join(root,'Music');
+ for(const dir of [official,steam])writePe(path.join(dir,'Client','Binaries','Win64','Game.exe'));
+ writePe(path.join(once,'client.exe'));
+ writePe(path.join(launcher,'launcher.exe'));writePe(path.join(other,'Music.exe'));
+ const base={name:'{package-id}',title:'永劫无间',publisher:'杭州网易雷火科技有限公司'};
+ const registrations=[{...base,location:official},{...base,location:steam},{...base,location:launcher},
+   {...base,location:path.join(root,'Missing')},{...base,title:'网易云音乐',url:'https://oncehuman.game.invalid',location:other},
+   {...base,publisher:'Unknown',location:other},
+   {...base,title:'Once Human Global',url:'https://www.oncehuman.game/',icon:`"${path.join(once,'client.exe')}",0`},
+   {...base,location:official}];
+ const found=library.standalone({roots:[],platform:'win32',registrations});
+ assert.deepEqual(found.map(g=>g.dir).sort(),[official,once].sort());
+ assert.ok(found.every(g=>g.launcher==='NetEase Games'));
+ const merged=library.dedupe([...found,{launcher:'Steam',id:'1203220',name:'永劫无间',dir:steam}]);
+ assert.equal(merged.find(g=>g.dir===steam).launcher,'Steam');
+ assert.equal(merged.find(g=>g.dir===official).launcher,'NetEase Games');
+});
+test('NetEase does not turn an external store record, stale icon or shared launcher helper into an official game',t=>{
+ const root=fixture(t), bin=path.join(root,'Loading Bay','bin'), store=path.join(root,'Store copy');
+ const game=writePe(path.join(store,'NarakaBladepoint.exe'));
+ const helper=writePe(path.join(bin,'QtWebEngineProcess.exe'));
+ const launcher=writePe(path.join(bin,'launcher.exe'));
+ const note=path.join(root,'Incomplete');touch(path.join(note,'Game.exe'));
+ const base={name:'Official',title:'NARAKA: BLADEPOINT',publisher:'NetEase Games'};
+ const registrations=[
+   {...base,location:bin}, {...base,icon:helper}, {...base,icon:launcher},
+   {...base,location:note}, {...base,icon:path.join(store,'MissingGame.exe')},
+   {...base,name:'Steam App 1203220',location:store}, {...base,name:'Uplay Install 999',icon:game},
+ ];
+ assert.deepEqual(library.standalone({roots:[],platform:'win32',registrations}),[]);
+ assert.equal(library.standalone({roots:[],platform:'win32',registrations:[{...base,icon:game}]})[0].dir,store);
+ const moved = {...base,location:path.join(root,'Old install'),icon:game};
+ assert.equal(library.standalone({roots:[],platform:'win32',registrations:[moved]})[0].dir,store);
+ assert.deepEqual(library.standalone({roots:[],platform:'win32',registrations:[{...moved,icon:helper}]}),[]);
 });
 test('install commands are only parsed as absolute executable paths',t=>{
  const root=fixture(t),exe=path.join(root,'launcher.exe');

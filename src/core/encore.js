@@ -1,16 +1,32 @@
 'use strict';
 const path = require('node:path'), crypto = require('node:crypto');
-const {fs} = require('./preview-fs');
+const {fs, active:previewActive} = require('./preview-fs');
 const journal = require('./file-journal'), apply = require('./apply'), pe = require('./pe');
 const configFile = require('./encore-config'), routes = require('../shared/install-routes');
 const catalog = require('./runtime-catalog.json');
 const engines = require('./engine-packages');
-const VERSION = '2.4.1', CONFIG = 'rtx-encore.jsonc';
+const VERSION = engines.recommended('encore').version, CONFIG = 'rtx-encore.jsonc';
 const FG_FILES = ['nvngx_dlssg.dll','sl.interposer.dll','sl.common.dll','sl.dlss_g.dll','sl.reflex.dll','sl.pcl.dll'];
 const PROXIES = ['version.dll','dinput8.dll','winmm.dll','dxgi.dll'];
 const fail = message => Object.assign(new Error(message), {code:'errEncore'});
 const key = value => path.resolve(value).toLowerCase();
 const digest = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const statusHashes = new Map();
+function matchesReceipt(file, sha256) {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || !/^[a-f0-9]{64}$/.test(sha256)) return false;
+    if (previewActive()) return digest(file) === sha256;
+    const stamp = [stat.dev,stat.ino,stat.size,stat.mtimeMs,stat.ctimeMs].join(':');
+    let cached = statusHashes.get(file);
+    if (!cached || cached.stamp !== stamp) {
+      cached = {stamp,sha256:digest(file)};
+      if (statusHashes.size >= 256) statusHashes.delete(statusHashes.keys().next().value);
+      statusHashes.set(file,cached);
+    }
+    return cached.sha256 === sha256;
+  } catch { return false; }
+}
 function readConfig(file) {
   if (fs.statSync(file).size > 2 * 1024 * 1024) throw fail('Encore 配置超过读取上限。');
   return fs.readFileSync(file,'utf8');
@@ -27,12 +43,16 @@ function target(scan, selected) {
   const chosen = selected || scan.chosen;
   return {...chosen, hasNativeFg:chosen?.hasNativeFg ?? routes.nativeFgPresent(scan)};
 }
+function targetIssue(gameDir, chosen) {
+  return routes.encoreReason(chosen) || (require('./compatibility').hasAntiCheat(gameDir,chosen.path)
+    ? routes.encoreReason({...chosen,antiCheatWarning:true}) : null);
+}
 function assertTarget(gameDir, scan, selected, gpuName) {
   const chosen = target(scan,selected);
   if (require('./wuthering-waves').gameRoot(gameDir,chosen?.path)) throw fail('鸣潮继续使用独立加载路线，不切换 Encore。');
-  const reason = routes.encoreReason(chosen);
+  const reason = targetIssue(gameDir,chosen);
   if (reason) throw fail(reason);
-  if (gpuName != null && !/\bRTX\s*(?:20|30|40|50)\d{2}(?:\b|(?=Ti\b|Super\b|D\b))/i.test(gpuName))
+  if (!/\bRTX\s*(?:20|30|40|50)\d{2}(?:\b|(?=Ti\b|Super\b|D\b))/i.test(gpuName || ''))
     throw fail('Encore 首批适配需要识别到 NVIDIA RTX 20 / 30 / 40 / 50 显卡。');
   return chosen;
 }
@@ -41,12 +61,12 @@ function installedEngine(gameDir, manifest) {
   if (manifest?.route !== 'encore' || !PROXIES.includes(proxy)) return null;
   const filePath = journal.safePath(gameDir,path.join(path.dirname(manifest.game.exe),proxy));
   const rel = path.relative(gameDir,filePath), sha256 = manifest.encore.files?.[rel];
-  const identified = engines.describe('encore',{sha256});
+  const identified = engines.identify('encore',sha256);
   return {...identified,filePath,sha256,packageId:manifest.encore.packageId ?? null,
     version:identified.version || manifest.encore.version || null};
 }
 function inspect(gameDir, scan, manifest) {
-  const chosen = target(scan), reason = routes.encoreReason({...chosen,
+  const chosen = target(scan), reason = targetIssue(gameDir,{...chosen,
     launcherProtected:!!require('./wuthering-waves').gameRoot(gameDir,chosen?.path)});
   const recommended = engines.recommended('encore');
   const out = {available:!reason, reason, version:recommended.version, engine:recommended,
@@ -62,20 +82,25 @@ function inspect(gameDir, scan, manifest) {
   // Resolve capabilities from known deployed bytes, never a version label in
   // a manifest or an imported filename. Status is not a claim of in-game use.
   if (installed) {
-    try {
-      out.engine.verified = !!installed.verified && fs.existsSync(installed.filePath) && fs.statSync(installed.filePath).isFile() && digest(installed.filePath) === installed.sha256;
-    } catch { out.engine.verified = false; }
     delete out.engine.filePath;
-    if (!out.engine.verified) out.engine.reason = 'Encore 加载器缺失或已被修改，请重新预览安装。';
+    if (!installed.verified || !matchesReceipt(installed.filePath,installed.sha256))
+      Object.assign(out.engine,{verified:false,compatible:false,recommended:false,capabilities:{},label:'配套文件缺失或已变化',
+        reason:'Encore 加载器缺失或已被修改，请重新预览安装。'});
   }
   out.version = out.engine.version;
   out.capabilities = out.engine.verified ? out.engine.capabilities : {};
-  const files = Object.keys(manifest.encore?.files || {});
-  out.filesPresent = files.length > 0 && files.every(rel => fs.existsSync(journal.safePath(gameDir,rel)));
+  const files = Object.entries(manifest.encore?.files || {});
+  out.filesPresent = !!out.engine.verified && files.length > 0 && files.every(([rel,sha256]) => {
+    const file = journal.safePath(gameDir,rel);
+    if (installed && key(file) === key(installed.filePath)) return true;
+    if (path.basename(file).toLowerCase() === CONFIG) return fs.existsSync(file) && fs.lstatSync(file).isFile();
+    return matchesReceipt(file,sha256);
+  });
   try {
     const file = journal.safePath(gameDir,path.relative(gameDir,path.join(path.dirname(chosen.path),CONFIG)));
     out.settings = {...configFile.read(readConfig(file)),
       neuralModelId:manifest.neuralRendering?.modelId || configFile.DEFAULTS.neuralModelId};
+    if (out.settings.neuralMode !== 'off' && manifest.neuralRendering?.mode === 'legacy') out.settings.neuralMode = 'legacy';
   } catch (error) { out.error = error.message; }
   return out;
 }
@@ -141,7 +166,7 @@ async function install(options, log = () => {}) {
         throw fail('发现其他工具的渲染或补帧加载器，请先在原工具中还原：'+path.relative(bin,file));
     }
   }
-  const items = [
+  const items = require('../shared/encore-spatial').spatialOnly(settings) ? [] : [
     ...FG_FILES.map(name => ({...sourceFile(payloadDir,name.startsWith('nvngx')?'fg-modern':'sl-modern',name),name})),
     {...sourceFile(payloadDir,'sl-modern','THIRD_PARTY_NOTICES.md'),name:'NeuralFrame-Streamline-NOTICES.md'},
     {...sourceFile(payloadDir,'sl-modern','nvngx_dlss.license.txt'),name:'NeuralFrame-NVIDIA-LICENSE.txt'},
@@ -150,8 +175,14 @@ async function install(options, log = () => {}) {
   if (!engine.retained) items.unshift({source:engine.filePath,sha256:engine.sha256,name:proxy});
   const notice = full('RTX-Encore-NOTICES.md');
   if (engine.noticePath) items.push({source:engine.noticePath,sha256:digest(engine.noticePath),name:'RTX-Encore-NOTICES.md'});
-  else if (!ownedFile(notice) || !fs.existsSync(notice)) {
-    try { items.push({...sourceFile(payloadDir,'encore','THIRD-PARTY-NOTICES.md'),name:'RTX-Encore-NOTICES.md'}); }
+  else if (!engine.retained || !ownedFile(notice) || !fs.existsSync(notice)) {
+    try {
+      const historical = engines.identify('encore',engine.sha256);
+      if (historical.verified && !historical.recommended) {
+        const source = await engines.legacyEncoreNotice();
+        items.push({source,sha256:digest(source),name:'RTX-Encore-NOTICES.md'});
+      } else items.push({...sourceFile(payloadDir,'encore','THIRD-PARTY-NOTICES.md'),name:'RTX-Encore-NOTICES.md'});
+    }
     catch { throw Object.assign(fail('请先准备 Encore 配套组件以补齐原版许可说明。'),{code:'errRuntimeComponents',dependencies:['runtime:encore']}); }
   }
   if (settings.upscaling === 'dlss') items.push({...sourceFile(payloadDir,'sr-modern','nvngx_dlss.dll'),name:'nvngx_dlss.dll'});
@@ -173,7 +204,7 @@ async function install(options, log = () => {}) {
     if (settings.dlssRenderScale === 'custom' && settings.dlssCustomScale < engine.capabilities.dlssCustomScaleMin)
       throw fail(`所选 Encore 版本的 DLSS 自定义渲染比例最低为 ${engine.capabilities.dlssCustomScaleMin}%，请先调整比例。`);
   }
-  const configured = configFile.configure(text,settings,hasNativeDlss,engine.capabilities);
+  const configured = configFile.configure(text,settings,hasNativeDlss,engine.capabilities,!!priorEngine && priorEngine.version !== engine.version);
   const manifest = apply.beginManifest(gameDir,exePath,api);
   manifest.route = 'encore';
   const files = {...owned};

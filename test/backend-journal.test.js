@@ -115,3 +115,30 @@ test('unsafe paths cannot escape the selected game during backup or recovery', a
   const manifest = core.beginManifest(root, path.join(root, 'game.exe'), 'dxgi');
   await assert.rejects(core.writeTracked(manifest, root, path.join(root, '_DLSS5_Backup', 'owned.json'), 'bad'), { code: 'errUnsafeTarget' });
 });
+
+test('switching native MFG to ANR releases the managed MFG add-on and preserves the original settings', async t => {
+  const {writePe} = require('./fixtures/pe');
+  const backends = require('../src/core/backend-manager');
+  const root = temp(t), gameDir = path.join(root,'game');
+  const exePath = writePe(path.join(gameDir,'Game.exe'), {text:'D3D12CreateDevice'});
+  const payloadDir=require('./fixtures/payload').root;
+  fs.copyFileSync(path.join(payloadDir,'enhanced/streamline-2.14.16/nvngx_dlssg.dll'),path.join(gameDir,'nvngx_dlssg.dll'));
+  const ini = path.join(gameDir,'ReShade.ini'), original = '[OtherPlugin]\r\nMySetting=7\r\n';
+  fs.writeFileSync(ini,original);
+  const native = core.beginManifest(gameDir,exePath,'dxgi');
+  native.route = 'native';
+  await core.saveActiveManifest(gameDir,native);
+  const options = {gameDir,exePath,api:'dxgi',apiLabel:'DirectX 12',bitness:64,
+    gpuName:'NVIDIA GeForce RTX 4070',userDataDir:path.join(root,'profile'),payloadDir};
+  await require('../src/core/mfg-manager').applyMfgConfiguration(gameDir, {...options,mode:'x3',upgradeDlssg:false});
+  const mfg = path.join(gameDir,'renodx-mfgunlock.addon64');
+  assert.equal(backends.readManifest(gameDir).mfg.mode,'x3');
+  assert.ok(fs.existsSync(mfg));
+  const {chosen:target} = await require('../src/core/scan').scanGame(gameDir,exePath);
+  assert.equal(target.hasNativeDlssFg,true);
+  const installed = await backends.install({...options,target,route:'anr'});
+  assert.equal(installed.route,'anr');
+  assert.equal(fs.existsSync(mfg),false);
+  assert.ok(await backends.restore(gameDir));
+  assert.equal(fs.readFileSync(ini,'utf8'),original);
+});

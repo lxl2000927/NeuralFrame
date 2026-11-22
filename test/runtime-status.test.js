@@ -143,6 +143,41 @@ test('probe is read-only, session bound, coalesced, bounded and clears states af
   time+=3000;processes=[{...proc,exe,startedAt:new Date(time).toISOString(),modules:[]}];assert.notEqual((await reader.inspect(dir)).nr.state,'active');
   assert.deepEqual(fs.readFileSync(log),before);assert.deepEqual(fs.readdirSync(dir).sort(),['Game.exe','ReShade.log']);
 });
+test('a playable Crash title is queried alongside its siblings without attributing helper processes', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-crash-title-'));
+  t.after(() => fs.rmSync(root, {recursive:true,force:true}));
+  const game = require('./fixtures/pe').writePe(path.join(root,'CrashBandicoot4.exe'),{text:'D3D12CreateDevice'});
+  const helper = path.join(root,'GameLauncher.exe');
+  const detector = new RuntimeStatus({temp:root,
+    scanGame:async () => ({chosen:{path:game},exeCandidates:[{path:game},{path:helper}]}),
+    query:async paths => {assert.deepEqual(paths,[game]);return {processes:[{...proc,exe:game}]};}});
+  assert.equal((await detector.inspect(root)).processState,'running');
+});
+
+test('runtime telemetry stays with the executable that owns its directory and the 32-bit Feeder host', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-runtime-owner-'));
+  t.after(() => fs.rmSync(root, {recursive:true,force:true}));
+  const bin = path.join(root,'Bin'), host = path.join(bin,'host64');
+  fs.mkdirSync(host,{recursive:true});
+  const game = path.join(bin,'Game.exe');
+  const time = Date.now(), live = {...proc,exe:game,startedAt:new Date(time-5000).toISOString()};
+  const write = (dir,count) => fs.writeFileSync(path.join(dir,'ReShade.log'),new Date(time).toISOString()+' telemetry nr[evals='+count+']\n');
+  function read(bitness, other = path.join(root,'OtherGame.exe')) {
+    const exe = {path:game,bitness};
+    return new RuntimeStatus({temp:bin,clock:()=>time+100,
+      scanGame:async()=>({chosen:exe,exeCandidates:[exe,{path:other,bitness:64}]}),
+      query:async()=>({processes:[live]})}).inspect(root);
+  }
+  write(root,91);
+  assert.equal((await read(64)).nr.state,'not_loaded');
+  assert.equal((await read(64,path.join(root,'OtherBuild','OtherGame.exe'))).nr.state,'not_loaded');
+  write(host,72);
+  assert.equal((await read(64)).nr.state,'not_loaded');
+  assert.equal((await read(32)).nr.evaluatedFrames,72);
+  write(bin,22);
+  assert.equal((await read(64)).nr.evaluatedFrames,22);
+});
+
 test('a pending status file cannot hide a newer provider result for the same game session', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-provider-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

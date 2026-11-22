@@ -15,6 +15,54 @@ function scratch(t) {
   return dir;
 }
 
+test('model inspection rejects ARM64 and renamed executables even with valid NR symbols and CUDA descriptors', t => {
+  const root = scratch(t);
+  for (const type of ['arm64','exe']) {
+    const file = writeNr(path.join(root,type,'nvngx_dlssnr.dll'));
+    const bytes = fs.readFileSync(file), pe = bytes.readUInt32LE(0x3c);
+    if (type === 'arm64') bytes.writeUInt16LE(0xaa64, pe + 4);
+    else bytes.writeUInt16LE(bytes.readUInt16LE(pe + 22) & ~0x2000, pe + 22);
+    fs.writeFileSync(file, bytes);
+    assert.equal(models.inspectNeuralModelBinary(file).valid, false, type);
+    assert.throws(() => models.importNeuralModel(file, path.join(root,'profile')), {code:'errInvalidNeuralModel'});
+  }
+});
+
+test('game diagnostics survive a directory at the model path and exclude wrong-bitness runtime dependencies', async t => {
+  const root = scratch(t), game = path.join(root,'game');
+  writePe(path.join(game,'Game.exe'), {text:'D3D12CreateDevice'});
+  fs.mkdirSync(path.join(game,'nvngx_dlssnr.dll'));
+  writePe(path.join(game,'nvngx_dlss.dll'), {bitness:32});
+  writePe(path.join(game,'sl.common.dll'), {bitness:32});
+  writePe(path.join(game,'sl.interposer.dll'), {bitness:32});
+  fs.mkdirSync(path.join(game,'renodx-dlss.addon64'));
+  writePe(path.join(game,'renodx-dlss5.addon64'),{bitness:32});
+  const status = await models.inspectGameNeuralStatus(game, {payloadDir:path.join(root,'empty')});
+  assert.equal(status.currentModel, null);
+  assert.equal(status.dependencies.hasNeuralDll, false);
+  assert.equal(status.dependencies.hasDlssSrDll, false);
+  assert.equal(status.dependencies.hasConsumer,false);
+  const mfg = await require('../src/core/mfg-manager').inspectGameMfgStatus(game);
+  assert.equal(mfg.streamline.present, false);
+  assert.equal(mfg.streamline.filesCount, 0);
+});
+
+test('disabling NR restores a core replaced by an earlier release and preserves an unrelated NGX core', async t => {
+  const root = scratch(t), game = path.join(root,'game');
+  const exePath = writePe(path.join(game,'Game.exe'),{text:'D3D12CreateDevice'});
+  const tracked = writePe(path.join(game,'Engine/NGX/_nvngx.dll'),{version:[4,3,0,0]});
+  const unrelated = writePe(path.join(game,'Engine/NGX/nvngx.dll'),{version:[4,4,0,0]});
+  const oldCore = fs.readFileSync(tracked), otherCore = fs.readFileSync(unrelated);
+  const oldSr = writePe(path.join(root,'old-runtime/nvngx_dlss.dll'),{version:[3,8,0,0]});
+  const apply = require('../src/core/apply');
+  const manifest = apply.beginManifest(game,exePath,'dxgi');
+  await apply.copyTracked(manifest,game,oldSr,tracked,{kind:'runtime'});
+  assert.notDeepEqual(fs.readFileSync(tracked),oldCore);
+  await models.applyNeuralModelSelection(game,{mode:'off',exePath,payloadDir:path.join(root,'empty')});
+  assert.deepEqual(fs.readFileSync(tracked),oldCore);
+  assert.deepEqual(fs.readFileSync(unrelated),otherCore);
+});
+
 test('a version-specific import rejects a different NR fingerprint before publishing any files', t => {
   const dir = scratch(t), user = path.join(dir, 'profile');
   const file = writeNr(path.join(dir, 'extracted', 'nvngx_dlssnr.dll'), '310.8.0.0');
@@ -48,8 +96,12 @@ test('graphics preview resolves one model for the executable, nested plugins and
   const dir = scratch(t), game = path.join(dir, 'Game'), user = path.join(dir, 'Profile');
   const payload = path.join(dir, 'payload'), source = path.join(dir, 'import/nvngx_dlssnr.dll');
   const nested = path.join(game, 'Engine/Plugins');
+  const ngxCore = writePe(path.join(game,'Engine/NGX/_nvngx.dll'),{version:[4,3,0,0]});
+  const coreBytes = fs.readFileSync(ngxCore);
   writePe(path.join(game, 'Game.exe'), {text:'D3D12CreateDevice'});
   for (const base of [game,nested,path.join(payload,'streamline')]) writePe(path.join(base,'nvngx_dlss.dll'),{version:'3.8.0.0'});
+  fs.copyFileSync(path.join(payloadDir,'renodx-dlss5.addon64'), path.join(payload,'renodx-dlss5.addon64'));
+  fs.copyFileSync(path.join(payloadDir,'reshade-vulkan','ReShade64.dll'), path.join(game,'dxgi.dll'));
   writeNr(source);
   const lib = new ComponentLibrary(user, {payloadDir:payload});
   const saved = await lib.importPackage({component:'dlss-nr', files:{'nvngx_dlssnr.dll': source}});
@@ -86,6 +138,8 @@ test('graphics preview resolves one model for the executable, nested plugins and
   assert.equal(fs.existsSync(path.join(game,'nvngx_dlssnr.dll')),false);
   const installed = await run(cfg,preview.token);
   assert.equal(installed.ok,true,JSON.stringify(installed));
+  assert.deepEqual(fs.readFileSync(ngxCore),coreBytes);
+  assert.equal(fs.existsSync(path.join(path.dirname(ngxCore),'nvngx_dlssnr.dll')),false);
   for (const base of [game,nested]) assert.equal(models.inspectNeuralModelBinary(path.join(base,'nvngx_dlssnr.dll')).sha256,info.sha256);
   const stored=backends.readManifest(game).neuralRendering;
   assert.deepEqual([stored.modelId,stored.modelVersion,stored.sha256],[info.modelId,info.version,info.sha256]);
@@ -124,6 +178,7 @@ test('graphics preview resolves one model for the executable, nested plugins and
   // A leftover consumer does not authorize reinstalling or replacing its NR model.
   const modelPath = path.join(game,'nvngx_dlssnr.dll');
   writePe(path.join(game,'renodx-dlss5.addon64'),{});
+  writePe(path.join(game,'nvngx_dlssg.dll'),{version:[310,9,16,0]});
   t.mock.method(require('../src/core/mfg-manager'),'applyMfgConfiguration',async()=>({ok:true}));
   for (const modelExists of [false,true]) {
     if (modelExists) fs.copyFileSync(source, modelPath);
@@ -189,14 +244,19 @@ test('loose portable DLLs and spoofed bundled cache files require an explicit mo
   assert.ok(list().some(m => m.availableOnDisk && m.sha256 === imported.sha256));
   fs.copyFileSync(path.join(payloadDir, 'streamline/nvngx_dlssnr.dll'), cache);
   assert.equal(list().find(m => m.id === '310.8.SF-v2').filePath, cache);
+  const bundleDir = path.join(dir,'standalone-payload'), standalone = path.join(bundleDir,'streamline/nvngx_dlssnr.dll');
+  fs.mkdirSync(path.dirname(standalone),{recursive:true});
+  fs.renameSync(cache,standalone);
+  const freshProfile = path.join(dir,'fresh-profile');
+  const available = models.listNeuralModels({payloadDir:bundleDir,userDataDir:freshProfile});
+  assert.equal(available.find(m => m.id === '310.8.SF-v2').filePath,standalone);
+  assert.equal(fs.existsSync(freshProfile),false,'reading status must not copy the bundled model to the profile');
 });
 
 test('import index cannot override actual version/hash, duplicate files are merged and missing entries are not ready', t => {
   const dir = scratch(t), file = path.join(dir, 'external.dll'), indexDir = path.join(dir, 'neural-models');
   writeNr(file);
   fs.mkdirSync(indexDir);
-  // Prevent background cache copy in this isolated test.
-  fs.writeFileSync(path.join(indexDir, 'bundled-310.8.SF-v2.dll'), 'fixture');
   fs.writeFileSync(path.join(indexDir, 'index.json'), JSON.stringify([
     { id:'310.9.16-oct2026', modelId:'310.9.16-oct2026', version:'999.0.0.0', sha256:'stale', filePath:file },
     { id:'duplicate', modelId:'duplicate', filePath:file },
@@ -227,8 +287,33 @@ test('game manifest cannot relabel a model file or fabricate an installed SR run
   assert.equal(status.currentModel.version, '310.8.0.0');
   assert.equal(status.runtimeVersion, null);
   assert.equal(status.configuredRuntimeStack, 'oct2026-310.9.16');
-  assert.equal(status.mode, 'latest_compatible');
+  assert.equal(status.mode, 'off');
+  assert.equal(status.dependencies.hasConsumer,false);
   assert.deepEqual(fs.readFileSync(manifest), before, 'inspection must not migrate files in the game');
+});
+
+test('32-bit NR diagnostics require both sides of the Feeder bridge and respect each ReShade disable list', async t => {
+  const game = scratch(t), host = path.join(game,'host64'), name = 'renodx-dlss5.addon64';
+  const feeder = 'dlss5-feed.addon32', bridge = 'dlss5-feed-host64.exe';
+  writePe(path.join(game,'Game.exe'),{bitness:32,text:'Direct3DCreate9'});
+  writeNr(path.join(host,'nvngx_dlssnr.dll'));
+  fs.copyFileSync(path.join(payloadDir,name),path.join(host,name));
+  const inspect = () => models.inspectGameNeuralStatus(game,{payloadDir:path.join(game,'empty')});
+  assert.equal((await inspect()).dependencies.hasConsumer,false);
+  fs.copyFileSync(path.join(payloadDir,'feeder',feeder),path.join(game,feeder));
+  assert.equal((await inspect()).mode,'off');
+  writePe(path.join(host,bridge),{bitness:64});
+  assert.equal((await inspect()).dependencies.hasConsumer,false);
+  fs.copyFileSync(path.join(payloadDir,'feeder',bridge),path.join(host,bridge));
+  assert.notEqual((await inspect()).mode,'off');
+  for (const [dir,addon] of [[game,feeder],[host,name]]) {
+    const ini = path.join(dir,'ReShade.ini');
+    fs.writeFileSync(ini,'[ADDON]\nDisabledAddons='+addon+'\n');
+    const status = await inspect();
+    assert.equal(status.dependencies.hasConsumer,true);
+    assert.equal(status.mode,'off');
+    fs.unlinkSync(ini);
+  }
 });
 
 test('explicit unavailable model fails without silently installing another model', async t => {

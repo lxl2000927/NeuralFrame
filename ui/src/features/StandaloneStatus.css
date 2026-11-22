@@ -1,5 +1,8 @@
 .standalone-status { grid-column: 1 / -1; padding: 18px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); min-width: 0; }
 .standalone-status header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.standalone-controls { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+.standalone-controls label { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; }
+.standalone-controls button { min-height:30px; padding:4px 10px; }
 .standalone-status h3 { margin: 0; }
 .standalone-status p { margin: 10px 0; line-height: 1.55; }
 .standalone-table { overflow-x: auto; }

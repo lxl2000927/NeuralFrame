@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { applySwap, restore } = require('../src/core/apply');
+const { writePe } = require('./fixtures/pe');
 
 function put(file, contents = path.basename(file)) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -19,7 +20,7 @@ test('64-bit Feeder route installs the synthetic contract and Lumenite in proces
   const gameDir = path.join(root, 'No Mans Sky');
   const payload = path.join(root, 'Payload');
   const exePath = put(path.join(gameDir, 'NMS.exe'));
-  const originalDlss = put(path.join(gameDir, 'nvngx_dlss.dll'), 'original dlss');
+  const originalDlss = writePe(path.join(gameDir, 'nvngx_dlss.dll'), {bitness:32});
   const setup = put(path.join(payload, 'ReShade_Setup_6.8.0_Addon.exe'));
   const shaderRoot = path.join(payload, 'feeder', 'reshade-shaders');
   const lumeniteRoot = path.join(root, 'LumeniteFX');
@@ -37,8 +38,8 @@ test('64-bit Feeder route installs the synthetic contract and Lumenite in proces
   const source = {
     hasNeuralRendering: true,
     payload: [
-      { name: 'nvngx_dlssnr.dll', path: put(path.join(payload, 'nvngx_dlssnr.dll')), version: '310.8.0' },
-      { name: 'nvngx_dlss.dll', path: put(path.join(payload, 'nvngx_dlss.dll'), 'new dlss'), version: '310.8.0' }
+      { name: 'nvngx_dlssnr.dll', path: writePe(path.join(payload, 'nvngx_dlssnr.dll')), version: '310.8.0' },
+      { name: 'nvngx_dlss.dll', path: writePe(path.join(payload, 'nvngx_dlss.dll'), {text:'new dlss'}), version: '310.8.0' }
     ],
     feeder: {
       ok64: true,
@@ -54,10 +55,17 @@ test('64-bit Feeder route installs the synthetic contract and Lumenite in proces
     return { code: 0, output: '' };
   };
 
-  const manifest = await applySwap({
+  const config = {
     gameDir, exePath, api: 'dxgi', bitness: 64, route: 'feeder', source,
     reshadeSetup: setup, setupRunner, installReShade: true
-  });
+  };
+  const incompatible = fs.readFileSync(originalDlss);
+  await assert.rejects(() => applySwap(config), {code:'errRuntimeArchitecture'});
+  assert.deepEqual(fs.readFileSync(originalDlss), incompatible);
+  assert.deepEqual(fs.readdirSync(gameDir).sort(), ['NMS.exe', 'nvngx_dlss.dll']);
+  writePe(originalDlss, {text:'original dlss'});
+  const original = fs.readFileSync(originalDlss);
+  const manifest = await applySwap(config);
 
   assert.equal(manifest.route, 'feeder');
   assert.equal(manifest.feeder.provider, 3);
@@ -69,7 +77,7 @@ test('64-bit Feeder route installs the synthetic contract and Lumenite in proces
   assert.match(fs.readFileSync(path.join(gameDir, 'ReShadePreset.ini'), 'utf8'), /Lumenite_Kernel@lumenite_Kernel\.fx,DLSS5_Feed@DLSS5_Feed\.fx/);
 
   await restore(gameDir);
-  assert.equal(fs.readFileSync(originalDlss, 'utf8'), 'original dlss');
+  assert.deepEqual(fs.readFileSync(originalDlss), original);
   assert.equal(fs.existsSync(path.join(gameDir, 'dlss5-feed.addon64')), false);
   assert.equal(fs.existsSync(path.join(gameDir, 'reshade-shaders')), false);
 });

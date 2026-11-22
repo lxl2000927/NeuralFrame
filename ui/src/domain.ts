@@ -1,4 +1,17 @@
-import type { Draft, Game, Library, Model, Status, Updates } from "./types";
+import type { Draft, Game, Library, Model, Runtime, Status, Updates } from "./types";
+
+export function launcherLabel(launcher: string) {
+  return launcher === "Added by hand" ? "手动添加" : launcher === "NetEase Games" ? "网易游戏" : launcher;
+}
+
+export function sameExecutable(a?: string | null, b?: string | null) {
+  return !!a && !!b && a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+}
+
+export function otherRunningExecutable(runtime?: Runtime | null, selected?: string | null) {
+  const running = runtime?.process?.exe;
+  return selected && running && !sameExecutable(running, selected) ? running : undefined;
+}
 
 export function libraryUpgrade(candidate: Updates["candidates"][number], packages: Library["packages"]): [string, string] | undefined {
   // Model releases can be parallel builds for different GPU architectures or
@@ -31,6 +44,20 @@ export function modelArchitectureLimit(model: Model, gpuSm?: string | null, prof
   if (!sm || !model.architectures?.length || model.architectures.includes(String(sm))) return "";
   return gpuSm ? "本机显卡不支持" : "当前档位不支持";
 }
+export const neuralGpuReason = "当前未检测到 NVIDIA 显卡，DLSS 神经渲染需要兼容的 NVIDIA RTX 显卡。";
+export const mfgGpuReason = "当前经典补帧路线使用 NVIDIA DLSS-G，需要 NVIDIA 显卡。";
+export const frameRouteLabels = {
+  xemfg:"XeMFG 独立帧生成", "xemfg-optiscaler":"XeMFG · OptiScaler 插件", optifg:"OptiFG · FSR 帧生成",
+} as const;
+export function usesFramePanel(route?:string|null): route is keyof typeof frameRouteLabels {
+  return !!route && Object.hasOwn(frameRouteLabels, route);
+}
+export const gameRouteLabels:Record<string,string> = {
+  native:"原生 DLSS（RenoDX）", feeder:"Feeder + ReShade", renodx:"RenoDX DLSS Tool", optiscaler:"OptiScaler DLSS-NR",
+  encore:"Encore 新增帧生成（实验性）", anr:"ANR FG B20", "anr-addon":"ANR FG B20 · OptiScaler Add-on",
+  sm86:"Dlssg_for_sm86 0.4.2","sm86-delta":"Dlssg_for_sm86 · 三角洲 DX12 / Vulkan",
+  "wuwa-proxy":"鸣潮兼容路线（version.dll）", streamline:"旧版通用预设", ...frameRouteLabels,
+};
 export function groupByLauncher(games: Game[], grouped: boolean) {
   if (!grouped) return [{ name: "", games }];
   const groups = new Map<string, Game[]>();
@@ -136,4 +163,8 @@ export function applyPatch(base: Draft, draft: Draft, scope: "changed" | "neural
 }
 export const errorText = (error: unknown) =>
   (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
-export const size = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
+export function size(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${Number((bytes / 1024).toFixed(1))} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}

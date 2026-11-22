@@ -58,41 +58,85 @@ function checkOwnedTarget(info, targetDir) {
   return { ...info, dir };
 }
 
-async function existing(runner) {
+async function existing(runner, accepts) {
   const result = await runner('reg.exe', ['query', KEY]);
   if (result.code !== 0) return null;
   for (const line of String(result.stdout || '').split(/\r?\n/)) {
     const match = line.match(/^\s*(.+?\.json)\s+REG_DWORD\s+0x0\s*$/i);
-    if (!match || !/reshade/i.test(match[1])) continue;
-    if (fs.existsSync(match[1].trim())) return path.resolve(match[1].trim());
+    if (!match || (!accepts && !/reshade/i.test(match[1]))) continue;
+    const file = path.resolve(match[1].trim());
+    if (fs.existsSync(file) && (!accepts || accepts(file))) return file;
   }
   return null;
 }
 
+function checkedReShadeFile(sourceDir, name) {
+  const item = require('./runtime-catalog.json').packs.find(p=>p.id==='reshade').files.find(f=>f.path==='reshade-vulkan/'+name);
+  const file = path.join(sourceDir,name);
+  if (!item || !fs.existsSync(file) || fs.statSync(file).size !== item.size ||
+      require('node:crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex') !== item.sha256)
+    throw Object.assign(Error('请重新准备 ReShade 加载器组件。'),{code:'errReShadePayloadMissing',dependencies:['runtime:reshade']});
+  return file;
+}
+
+function layerInfo(file) {
+  try {
+    if (fs.statSync(file).size <= 1024*1024) return JSON.parse(fs.readFileSync(file,'utf8')).layer;
+  } catch { /* A broken external layer is not a usable add-on host. */ }
+  return null;
+}
+function addonLayer(file, bitness, layer = layerInfo(file)) {
+  try {
+    if (layer?.name !== 'VK_LAYER_reshade' || layer.type !== 'GLOBAL' || !layer.library_path) return false;
+    const dll = path.resolve(path.dirname(file), layer.library_path.replace(/[\\/]/g,path.sep));
+    const pe = require('./pe');
+    return pe.getBitness(dll) === bitness && pe.hasExports(dll,['vkGetInstanceProcAddr','vkGetDeviceProcAddr']) &&
+      require('./scan').inspectReShade(path.dirname(dll),[path.basename(dll)]).addonSupport;
+  } catch { return false; }
+}
+
 async function register(options) {
-  const { sourceDir, targetDir, gameDir, bitness = 64, runner = defaultRunner } = options;
-  const current = await existing(runner);
+  const { sourceDir, targetDir, gameDir, bitness = 64, runner = defaultRunner, requireAddonHost = false } = options;
+  if (process.platform === 'linux' && runner === defaultRunner)
+    throw Object.assign(new Error('The ReShade Vulkan layer requires Windows. Select a DirectX renderer for this Proton game.'), {code:'errLinuxVulkanUnsupported'});
   const our64 = path.join(targetDir, 'ReShade64.json');
+  let incompatible = false;
+  const current = await existing(runner, !requireAddonHost ? undefined : file=>{
+    if (samePath(file,our64)) return true;
+    const info = layerInfo(file);
+    if (addonLayer(file,bitness,info)) return true;
+    if (info?.name==='VK_LAYER_reshade' || (!info && /reshade/i.test(path.basename(file)))) incompatible = true;
+    return false;
+  });
+  if (!current && incompatible) throw Object.assign(Error('已注册的 ReShade Vulkan 层与游戏架构或插件加载要求不匹配。'),{code:'errReShadeHost'});
   const ours = current && samePath(current, our64);
   if (current && !ours) return { manifest: current, owned: false, global: true };
 
   const info = { manifest: our64, owned: true, global: true, dir: targetDir };
-  const commit = () => installLayerFiles(sourceDir, targetDir, gameDir, bitness, runner);
+  const reuse = requireAddonHost && ours && addonLayer(current,bitness);
+  if (requireAddonHost && !reuse) {
+    checkedReShadeFile(sourceDir,'ReShade'+bitness+'.dll');
+    checkedReShadeFile(sourceDir,'ReShade'+bitness+'.json');
+  }
+  const commit = reuse ? () => rememberOwner(targetDir,gameDir) : () => installLayerFiles(sourceDir, targetDir, gameDir, bitness, runner);
   // Keep registry changes until every game-local stage and version override
   // succeeded. The game manifest records the shared-layer owner first.
   if (!require('./file-journal').deferExternal(gameDir, our64 + ':' + bitness, commit)) await commit();
   return info;
 }
 
-async function installLayerFiles(sourceDir, targetDir, gameDir, bitness, runner) {
-  await fs.promises.mkdir(targetDir, { recursive: true });
-  // Record the owner before the first shared write, so Restore can retry a
-  // registration interrupted after only one file or registry value.
+async function rememberOwner(targetDir, gameDir) {
   const games = readUsers(targetDir);
   if (!games.some(item => samePath(item, gameDir))) {
     games.push(path.resolve(gameDir));
     await writeUsers(targetDir, games);
   }
+}
+
+async function installLayerFiles(sourceDir, targetDir, gameDir, bitness, runner) {
+  await fs.promises.mkdir(targetDir, { recursive: true });
+  // Keep ownership if registration is interrupted after a shared write.
+  await rememberOwner(targetDir,gameDir);
   const names = bitness === 32
     ? ['ReShade64.dll', 'ReShade64.json', 'ReShade32.dll', 'ReShade32.json']
     : ['ReShade64.dll', 'ReShade64.json'];
@@ -159,4 +203,4 @@ async function registryValueAbsent(runner, file) {
   return false;
 }
 
-module.exports = { KEY, register, detach, checkOwnedTarget, existing, defaultRunner };
+module.exports = { KEY, register, detach, checkOwnedTarget, existing, defaultRunner, checkedReShadeFile, addonLayer };

@@ -14,8 +14,14 @@ const journal = require('./file-journal');
 const replaceFile = require('./replace-file');
 const apply = require('./apply');
 const feederConfig = require('./feeder-config');
+const optiMfgConfig = require('./optiscaler-shared-config');
 const { scanGame } = require('./scan');
 const { detectGpuArchitecture } = require('./neural-models');
+const classicGpuReason = '当前经典补帧路线使用 NVIDIA DLSS-G，需要 NVIDIA 显卡。';
+
+function assertMfgGpu(nvidiaPresent) {
+  if (nvidiaPresent === false) throw Object.assign(new Error(classicGpuReason), {code:'errMfgNvidiaRequired'});
+}
 
 // 经过验证的开源 MFG 解锁组件指纹表 (MIT License)
 const MFG_UNLOCKERS = Object.freeze({
@@ -75,8 +81,8 @@ const TESTED_MFG_GAMES = Object.freeze([
 
 // 检测 GPU 对 NVIDIA DLSS-G 与 x3/x4 MFG 的底层硬件支持能力（支持笔记本 40 系、40 系桌面卡、50 系桌面卡三档）
 // 注意：遵循严格要求，x3/x4 在未经当前游戏运行时实测验证生效前，绝不提前标记为“已验证可用”！
-function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile = null, standaloneEngine = null) {
-  const arch = detectGpuArchitecture(gpuName);
+function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile = null, standaloneEngine = null, nvidiaPresent = null) {
+  const arch = detectGpuArchitecture(nvidiaPresent === false ? '' : gpuName);
   if (arch.code === 'blackwell') {
     return {
       gpuName,
@@ -143,7 +149,7 @@ function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile
     };
   }
 
-  const unknown = arch.code === 'unknown';
+  const unknown = arch.code === 'unknown' && nvidiaPresent !== false;
   const unavailable = unknown ? { status: 'untested', badge: '尚未确认' } : { status: 'incompatible', badge: '不兼容' };
   return {
     gpuName,
@@ -162,7 +168,7 @@ function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile
       x3: unavailable,
       x4: unavailable
     },
-    summary: unknown ? '显卡架构未识别，无法确认多帧生成能力；应用时不启用 Ada 专用修补。请先在设置中确认显卡检测结果。'
+    summary: nvidiaPresent === false ? classicGpuReason : unknown ? '显卡架构未识别，无法确认多帧生成能力；应用时不启用 Ada 专用修补。请先在设置中确认显卡检测结果。'
       : `${gpuName} (${arch.family}) 不具备 Ada/Blackwell 原生 DLSS-G 硬件能力。社区方案须按具体组件、游戏输入与安装路线另行判断，不能仅凭档位确认支持。`
   };
 }
@@ -178,7 +184,7 @@ function inspectDlssgBinary(filePath) {
   } catch (err) {
     return { exists: true, valid: false, isFakeWrapper: false, version: null, reason: `读取失败: ${err.message}` };
   }
-  const bitness = pe.getBitness(filePath);
+  const bitness = pe.getBitness(filePath, {dllOnly:true});
   const version = pe.getFileVersion(filePath);
   const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
 
@@ -202,9 +208,11 @@ function inspectDlssgBinary(filePath) {
 
   const hasNvidiaDlssg = buf.includes(Buffer.from('nvngx_dlssg.pdb', 'latin1')) ||
     buf.includes(Buffer.from('DLSSGInstanceManager', 'latin1')) ||
-    pe.versionMentions(filePath, 'NVIDIA');
+    (pe.versionMentions(filePath, 'NVIDIA') &&
+      ['D3D12','VULKAN'].some(api => pe.hasExports(filePath,
+        ['CreateFeature','EvaluateFeature','ReleaseFeature'].map(fn=>'NVSDK_NGX_'+api+'_'+fn), 'nvngx_dlssg.dll')));
 
-  if (!hasNvidiaDlssg || bitness !== 64) {
+  if (!hasNvidiaDlssg || bitness !== 64 || !pe.matchesNvidiaFeature(filePath, 'fg')) {
     return {
       exists: true,
       valid: false,
@@ -216,7 +224,7 @@ function inspectDlssgBinary(filePath) {
     };
   }
 
-  const is310_9 = /^310\.9\./.test(String(version || ''));
+  const knownMfg = MFG_UNLOCKERS.renodxAddon.supportedDlssg.includes(version);
   return {
     exists: true,
     valid: true,
@@ -226,15 +234,15 @@ function inspectDlssgBinary(filePath) {
     size: buf.length,
     version: version || '0.0.0.0',
     sha256,
-    supportsMfgX3X4: is310_9,
-    reason: is310_9
+    supportsMfgX3X4: knownMfg,
+    reason: knownMfg
       ? `NVIDIA 原生 DLSS-G ${version}，支持 x2/x3/x4 多帧生成管线`
-      : `NVIDIA 原生 DLSS-G ${version} (旧版仅含 x2 管线，建议升级至内置 310.9.1 或 310.9.16 以启用 x3/x4)`
+      : '已识别 NVIDIA DLSS-G，此版本的多帧生成配套尚未验证。'
   };
 }
 
 // 检测游戏目录中的注入器冲突与第三方补帧干扰
-function detectMfgInjectorConflicts(gameDir, exeDir, scan) {
+function detectMfgInjectorConflicts(gameDir, exeDir, scan, primaryDlssg) {
   const conflicts = [];
   if (!exeDir || !fs.existsSync(exeDir)) return conflicts;
 
@@ -253,17 +261,6 @@ function detectMfgInjectorConflicts(gameDir, exeDir, scan) {
         message: `检测到第三方 FSR3 帧生成替换组件 (${name})，会劫持并阻止原生 NVIDIA DLSS-G 运行。`
       });
     }
-    if (lower === 'nvngx_dlssg.dll') {
-      const check = inspectDlssgBinary(full);
-      if (check.isFakeWrapper) {
-        conflicts.push({
-          severity: 'error',
-          file: name,
-          code: 'CONFLICT_FAKE_DLSSG',
-          message: check.reason
-        });
-      }
-    }
     if (/^(version|winmm|dinput8|winhttp)\.dll$/i.test(lower)) {
       const isMfgProxy = pe.versionMentions(full, 'MFGUnlocker') ||
         (() => { try { return fs.readFileSync(full).includes(Buffer.from('RTXMFG-Universal')); } catch { return false; } })();
@@ -278,9 +275,20 @@ function detectMfgInjectorConflicts(gameDir, exeDir, scan) {
     }
   }
 
+  const candidates = new Set((scan?.dlssFiles || [])
+    .filter(file => /^nvngx_dlssg\.dll$/i.test(file.name) && file.bitness === 64).map(file => file.path));
+  const adjacent = files.find(name => /^nvngx_dlssg\.dll$/i.test(name));
+  if (adjacent) candidates.add(path.join(exeDir, adjacent));
+  for (const file of candidates) {
+    const check = primaryDlssg?.filePath === file ? primaryDlssg : inspectDlssgBinary(file);
+    if (check.isFakeWrapper) {
+      conflicts.push({severity:'error', file:path.relative(gameDir,file), code:'CONFLICT_FAKE_DLSSG', message:check.reason});
+    }
+  }
+
   // 检查游戏图形 API 是否支持原生 DLSS-G (仅 DirectX 12 与 Vulkan 支持)
   const apiLabel = scan?.chosen?.apiLabel || '';
-  if (apiLabel && !/DirectX 12|Vulkan|DirectX 11\/12|DirectX \(DXGI\)/i.test(apiLabel)) {
+  if (apiLabel && !['DirectX 12','Vulkan'].includes(apiLabel)) {
     conflicts.push({
       severity: 'error',
       file: scan?.chosen?.name || '',
@@ -385,6 +393,71 @@ function verifyMfgRuntimeStatus(gameDir, exeDir) {
 }
 
 // 读取当前游戏目录已配置的 MFG 模式与参数
+function installedEngineInfo(file, release) {
+  const matched = require('./xemfg-optiscaler').matches(file, release, !require('./preview-fs').active());
+  return {version:matched ? release.version : pe.getFileVersion(file), recognizedBuild:matched};
+}
+function privateStreamlineIssue(dir, config, target, prepareDlssg = false) {
+  const libraryPath = feederConfig.getIni(config,'Libraries','OptiDllPath');
+  const hostRoot = libraryPath == null || /^auto$/i.test(libraryPath) ? 'OptiScaler' : libraryPath.replace(/[\\/]/g,path.sep);
+  const relative = path.relative(dir,path.resolve(dir,hostRoot,'streamline'));
+  const modules = ['sl.interposer.dll','sl.common.dll','sl.dlss_g.dll','sl.reflex.dll','sl.pcl.dll'];
+  try {
+    for (const name of modules) {
+      const file = journal.safePath(dir,path.join(relative,name));
+      const symbols = name === 'sl.interposer.dll' ? ['slInit','slShutdown','slGetFeatureFunction'] : ['slGetPluginFunction'];
+      if (pe.getBitness(file,{dllOnly:true}) !== 64 || !pe.hasExports(file,symbols,name))
+        return 'OptiScaler 私有 Streamline 目录缺少有效的 64 位组件：' + name;
+    }
+    const privateNgx = journal.safePath(dir,path.join(relative,'nvngx_dlssg.dll'));
+    // Streamline prefers its private directory, then searches the game's NGX
+    // folders. A conflicting private provider takes precedence over a good copy.
+    const privateExists = fs.existsSync(privateNgx);
+    const candidates = privateExists ? [privateNgx] : [path.join(dir,'nvngx_dlssg.dll'), ...(target.gameDlssgProviders || [])
+      .filter(file => { const rel = path.relative(dir,file); return !path.isAbsolute(rel) && !rel.split(path.sep).includes('..'); })];
+    const featurePath = feederConfig.getIni(config,'Libraries','NvngxFeaturePath');
+    if (!privateExists && featurePath && !/^auto$/i.test(featurePath))
+      candidates.push(path.resolve(dir,featurePath.replace(/[\\/]/g,path.sep),'nvngx_dlssg.dll'));
+    if (prepareDlssg && !candidates.some(file => fs.existsSync(file))) return null;
+    const api = target.api === 'vulkan' ? 'VULKAN' : 'D3D12';
+    const exports = ['CreateFeature','EvaluateFeature','ReleaseFeature'].map(entry => 'NVSDK_NGX_' + api + '_' + entry);
+    if (!candidates.some(file => pe.getBitness(file,{dllOnly:true}) === 64 && pe.versionMentions(file,'NVIDIA') &&
+        pe.matchesNvidiaFeature(file,'fg') && pe.hasExports(file,exports,'nvngx_dlssg.dll')))
+      return 'OptiScaler 未找到可用于 DLSSG 输出的 NVIDIA nvngx_dlssg.dll。';
+  } catch { return '无法检查 OptiScaler 的私有 Streamline 目录。'; }
+  return null;
+}
+
+function classicAsiInput(target, config, input) {
+  if (input === 'dlssg') return target.hasGameStreamlineFg;
+  if (input !== 'upscaler') return target.api !== 'vulkan' && target.classicFgInputs?.includes(input);
+  const kinds = target.api === 'vulkan' ? [...(target.classicVkUpscalerInputs || []), ...(target.hasXeMfgDlssSrVk ? ['dlss'] : [])] : target.optiFgInputs || [];
+  const keys = {dlss:['EnableDlssInputs'],xess:['EnableXeSSInputs'],ffx:['EnableFfxInputs','UseFfxInputs'],
+    fsr2:['EnableFsr2Inputs','UseFsr2Inputs'],fsr3:['EnableFsr3Inputs','UseFsr3Inputs']};
+  const setting = key => feederConfig.getIni(config,'Inputs',key)?.toLowerCase();
+  return kinds.some(kind => keys[kind]?.every(key => setting(key) !== 'false') &&
+    (kind !== 'fsr2' || !['UseFsr2Dx11Inputs','UseFsr2VulkanInputs'].some(key => setting(key) === 'true')));
+}
+
+function classicMfgTarget(target, manifest, requested = 'auto', prepareDlssg = false) {
+  const dir = path.dirname(target.path), ini = path.join(dir, 'OptiScaler.ini');
+  const canLoadAsi = fs.existsSync(ini) && require('./anr').hasMfgAsiHost(target.path, target.api);
+  const optiRoute = manifest?.route === 'optiscaler' ||
+    (canLoadAsi && !fs.existsSync(path.join(dir, 'renodx-dlss5.addon64')));
+  const backend = requested === 'auto' ? (optiRoute ? 'mfg-unlocker-asi' : 'renodx-mfgunlock') : requested;
+  if (backend === 'renodx-mfgunlock') return {backend, issue:target.hasNativeDlssFg ? null : '当前程序未检测到可供 NVIDIA 补帧使用的 DLSS-G 输入。'};
+  if (backend !== 'mfg-unlocker-asi') throw Error('无效的补帧后端');
+  if (!canLoadAsi)
+    return {backend, issue:'未检测到当前程序可加载的 OptiScaler ASI 宿主。'};
+  const config = feederConfig.readText(ini);
+  const output = feederConfig.getIni(config,'FrameGen','FGOutput')?.trim().toLowerCase();
+  const input = feederConfig.getIni(config,'FrameGen','FGInput')?.trim().toLowerCase();
+  const replacement = feederConfig.getIni(config,'FrameGen','FGNvngxReplacement')?.toLowerCase() ?? 'auto';
+  if (!['none','auto'].includes(replacement)) return {backend, issue:'OptiScaler 已选择其他 DLSSG 提供程序，请先在宿主中切回 NVIDIA 输出。'};
+  if (output !== 'dlssg' || !classicAsiInput(target,config,input))
+    return {backend, issue:'当前程序缺少与 OptiScaler 配置匹配的补帧输入或 DLSSG 输出。'};
+  return {backend,issue:privateStreamlineIssue(dir,config,target,prepareDlssg)};
+}
 function readCurrentMfgConfiguration(exeDir) {
   if (!exeDir || !fs.existsSync(exeDir)) {
     return { installed: false, backend: null, mode: 'off', multiplier: 1, settings: {} };
@@ -400,17 +473,18 @@ function readCurrentMfgConfiguration(exeDir) {
     const iniText = feederConfig.readText(reshadeIni);
     const enabled = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'Enabled');
     const forceMult = Number(feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'ForceMultiplier') || 0);
-    const temporalFix = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'TemporalFix') !== '0';
+    const temporalFix = !/^(false|0)$/i.test(feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'TemporalFix'));
     const qualityGuard = Number(feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'QualityGuardMode') || 0);
     const runtimeSelection = Number(feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode') || 0);
     const adaptiveProfile = Number(feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'AdaptiveQualityProfile') || 0);
-    const isOff = enabled === '0' || enabled === 'false';
+    const isOff = /^(false|0)$/i.test(enabled);
     const mult = isOff ? 1 : ([2, 3, 4].includes(forceMult) ? forceMult : 3);
     // Disabled Ada fixes do not establish the physical GPU architecture.
     const mfgStrategy = !temporalFix ? 'native_controls' : (adaptiveProfile === 2 ? 'ada_desktop_ultra' : 'ada_laptop_safe');
     return {
       installed: !isOff,
       backend: 'renodx-mfgunlock',
+      ...installedEngineInfo(addonFile, MFG_UNLOCKERS.renodxAddon),
       backendName: MFG_UNLOCKERS.renodxAddon.name,
       mode: isOff ? 'off' : `x${mult}`,
       multiplier: mult,
@@ -430,12 +504,12 @@ function readCurrentMfgConfiguration(exeDir) {
     let mult = 3;
     let enabled = true;
     let temporalFix = true;
-    if (fs.existsSync(optiIni)) {
-      const text = feederConfig.readText(optiIni);
-      const fm = Number(feederConfig.getIni(text, 'MfgUnlock', 'ForceMultiplier') || 3);
+    const host = feederConfig.readText(optiIni);
+    if (host) {
+      const fm = Number(feederConfig.getIni(host, 'MfgUnlock', 'ForceMultiplier') || 3);
       if ([2, 3, 4].includes(fm)) mult = fm;
-      enabled = !/^(false|0)$/i.test(feederConfig.getIni(text, 'MfgUnlock', 'Enabled'));
-      temporalFix = !/^(false|0)$/i.test(feederConfig.getIni(text, 'MfgUnlock', 'TemporalFix'));
+      enabled = !/^(false|0)$/i.test(feederConfig.getIni(host, 'MfgUnlock', 'Enabled'));
+      temporalFix = !/^(false|0)$/i.test(feederConfig.getIni(host, 'MfgUnlock', 'TemporalFix'));
     }
     if (fs.existsSync(universalJson)) {
       try {
@@ -446,9 +520,20 @@ function readCurrentMfgConfiguration(exeDir) {
         if ([2, 3, 4].includes(fm)) mult = fm;
       } catch {}
     }
+    // The ASI delegates FG to OptiScaler. Prefer the host's interpolation
+    // count over the old NeuralFrame/Enhanced settings when it is present.
+    const count = [feederConfig.getIni(host, 'DLSSG', 'OverrideInterpolationCount'),
+      feederConfig.getIni(host, 'DLSSG', 'InterpolationCount')].map(Number).find(n => [1,2,3].includes(n));
+    if (count !== undefined) { mult = count + 1; enabled = true; }
+    const output = feederConfig.getIni(host,'FrameGen','FGOutput')?.trim().toLowerCase();
+    const replacement = feederConfig.getIni(host,'FrameGen','FGNvngxReplacement')?.trim().toLowerCase();
+    if (/^(false|0)$/i.test(feederConfig.getIni(host,'Plugins','LoadAsiPlugins')) ||
+        /^(false|0)$/i.test(feederConfig.getIni(host,'FrameGen','Enabled')) ||
+        (output && output !== 'dlssg') || (replacement && !['none','auto'].includes(replacement))) enabled = false;
     return {
       installed: enabled,
       backend: 'mfg-unlocker-asi',
+      ...installedEngineInfo(asiFile, MFG_UNLOCKERS.asiPlugin),
       backendName: MFG_UNLOCKERS.asiPlugin.name,
       mode: enabled ? `x${mult}` : 'off',
       multiplier: enabled ? mult : 1,
@@ -463,6 +548,7 @@ function readCurrentMfgConfiguration(exeDir) {
 async function inspectGameMfgStatus(gameDir, {
   payloadDir,
   gpuName = '',
+  nvidiaPresent = null,
   driverVersion = '',
   hardwareProfile = null,
   scanResult
@@ -472,7 +558,7 @@ async function inspectGameMfgStatus(gameDir, {
   const exeDir = exePath ? path.dirname(exePath) : gameDir;
 
   // 查找游戏中的 nvngx_dlssg.dll
-  const dlssgFiles = scan.dlssFiles.filter((f) => /^nvngx_dlssg\.dll$/i.test(f.name));
+  const dlssgFiles = scan.dlssFiles.filter((f) => /^nvngx_dlssg\.dll$/i.test(f.name) && f.bitness === 64 && !f.featureMismatch);
   const exeDlssg = path.join(exeDir, 'nvngx_dlssg.dll');
   const primaryDlssgPath = fs.existsSync(exeDlssg)
     ? exeDlssg
@@ -480,31 +566,17 @@ async function inspectGameMfgStatus(gameDir, {
   const dlssgCheck = inspectDlssgBinary(primaryDlssgPath);
 
   // 查找 Streamline 组件
-  const slInterposer = scan.streamlineFiles.find((f) => /^sl\.interposer\.dll$/i.test(f.name)) ||
-    (fs.existsSync(path.join(exeDir, 'sl.interposer.dll')) ? {
-      path: path.join(exeDir, 'sl.interposer.dll'),
-      name: 'sl.interposer.dll',
-      version: pe.getFileVersion(path.join(exeDir, 'sl.interposer.dll'))
-    } : null);
-  const slDlssg = scan.streamlineFiles.find((f) => /^sl\.dlss_g\.dll$/i.test(f.name)) ||
-    (fs.existsSync(path.join(exeDir, 'sl.dlss_g.dll')) ? {
-      path: path.join(exeDir, 'sl.dlss_g.dll'),
-      name: 'sl.dlss_g.dll',
-      version: pe.getFileVersion(path.join(exeDir, 'sl.dlss_g.dll'))
-    } : null);
-  const slReflex = scan.streamlineFiles.find((f) => /^sl\.reflex\.dll$/i.test(f.name)) ||
-    (fs.existsSync(path.join(exeDir, 'sl.reflex.dll')) ? {
-      path: path.join(exeDir, 'sl.reflex.dll'),
-      name: 'sl.reflex.dll',
-      version: pe.getFileVersion(path.join(exeDir, 'sl.reflex.dll'))
-    } : null);
+  const streamline = scan.streamlineFiles.filter(file => file.bitness === scan.chosen?.bitness && file.bitness === 64 && !file.featureMismatch);
+  const slInterposer = streamline.find(file => /^sl\.interposer\.dll$/i.test(file.name));
+  const slDlssg = streamline.find(file => /^sl\.dlss_g\.dll$/i.test(file.name));
+  const slReflex = streamline.find(file => /^sl\.reflex\.dll$/i.test(file.name));
 
   const streamlineStatus = {
     present: Boolean(slInterposer || slDlssg),
     interposerVersion: slInterposer ? slInterposer.version : null,
     dlssgPluginVersion: slDlssg ? slDlssg.version : null,
     reflexPluginVersion: slReflex ? slReflex.version : null,
-    filesCount: scan.streamlineFiles.length
+    filesCount: streamline.length
   };
 
   const wuwa = require('./wuthering-waves');
@@ -512,7 +584,7 @@ async function inspectGameMfgStatus(gameDir, {
   const proxy = protectedRoot &&
     wuwa.inspectProxy(exeDir, require('./backend-manager').readManifest(gameDir));
   let gpuSupport = evaluateMfgGpuSupport(gpuName, driverVersion, hardwareProfile,
-    proxy?.mfg?.engine && { ...proxy.mfg.engine, component: 'mfg-universal' });
+    proxy?.mfg?.engine && { ...proxy.mfg.engine, component: 'mfg-universal' }, nvidiaPresent);
   // Absence of an identified standalone engine is missing route evidence,
   // not proof that every community solution is incompatible. Do not add
   // supported modes or native capability before the bytes are recognized.
@@ -524,7 +596,15 @@ async function inspectGameMfgStatus(gameDir, {
       modeBadges: { ...gpuSupport.modeBadges, x2: pending, x3: pending, x4: pending } };
   }
   const currentConfig = proxy?.mfg || readCurrentMfgConfiguration(exeDir);
-  const conflicts = detectMfgInjectorConflicts(gameDir, exeDir, scan);
+  const externalXeMfg = nvidiaPresent === false && proxy?.mfg.settings.xemfgStandalone === 1;
+  const conflicts = detectMfgInjectorConflicts(gameDir, exeDir, scan, dlssgCheck);
+  let configIssue;
+  if (!protectedRoot && currentConfig.installed && scan.chosen) {
+    configIssue = currentConfig.recognizedBuild
+      ? classicMfgTarget(scan.chosen,null,currentConfig.backend).issue
+      : '当前补帧插件的文件指纹尚未识别。';
+    if (configIssue) conflicts.push({severity:'warning',code:'MFG_CONFIGURATION_UNVERIFIED',message:configIssue});
+  }
   const runtimeVerification = verifyMfgRuntimeStatus(gameDir, exeDir);
 
   // 匹配已知实测游戏条目
@@ -540,13 +620,15 @@ async function inspectGameMfgStatus(gameDir, {
     statusBadge = '不兼容';
   } else if (pendingStandalone) {
     statusBadge = '独立方案待校验';
-  } else if (!gpuSupport.supportedModes.includes('x2') && gpuSupport.architecture.code !== 'unknown') {
+  } else if (gpuSupport.modeBadges.x2.status === 'incompatible') {
     status = 'incompatible';
-    statusBadge = '不兼容';
+    statusBadge = externalXeMfg ? 'NVIDIA DLSS-G 不可用 · 外部 XeMFG 已配置' : '不兼容';
+  } else if (configIssue) {
+    statusBadge = '当前补帧配置待核验';
   } else if (currentConfig.mode === 'x2' && dlssgCheck.valid && gpuSupport.nativeX2) {
     status = 'verified';
     statusBadge = '文件已安装（需游戏验证）';
-  } else if (currentConfig.installed && gpuSupport.nativeX3X4 && dlssgCheck.valid) {
+  } else if (currentConfig.installed && currentConfig.mode !== 'off' && gpuSupport.nativeX3X4 && dlssgCheck.supportsMfgX3X4) {
     status = 'verified';
     statusBadge = '文件已安装（需游戏验证）';
   } else if (gpuSupport.architecture.code !== 'unknown' && (currentConfig.installed || knownGame || (dlssgCheck.valid && streamlineStatus.present))) {
@@ -569,7 +651,9 @@ async function inspectGameMfgStatus(gameDir, {
     currentConfig,
     ...(proxy ? { engine: currentConfig.engine, advanced: currentConfig.advanced,
       version: currentConfig.version, packageId: currentConfig.packageId } : {}),
-    effectiveMultiplier: currentConfig.installed ? `${currentConfig.mode} (待进入游戏验证)` : '未启用 (1x)',
+    effectiveMultiplier: nvidiaPresent === false
+      ? (externalXeMfg ? '已读取外部 XeMFG 配置，实际倍率待游戏验证' : 'NVIDIA DLSS-G 不可用')
+      : currentConfig.installed ? `${currentConfig.mode} (待进入游戏验证)` : '未启用 (1x)',
     runtimeVerification,
     conflicts,
     knownGame,
@@ -597,11 +681,11 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
   // Without hardware evidence, leave architecture-specific patches disabled.
   const gpuArchitecture = detectGpuArchitecture(options.gpuName || '');
   const adaPatches = gpuArchitecture.code === 'ada';
-  const isBlackwellNative = gpuArchitecture.code === 'blackwell';
 
   if (!['off', 'x2', 'x3', 'x4'].includes(mode)) {
     throw Object.assign(new Error(`无效的 MFG 模式: ${mode}`), { code: 'errInvalidMfgMode' });
   }
+  if (mode !== 'off') assertMfgGpu(options.nvidiaPresent);
 
   const scan = require('./game-api').withGameApi(await scanGame(gameDir, options.exePath), options.apiOverride);
   if (!scan.chosen) throw Object.assign(new Error('未在游戏目录中找到可执行文件'), { code: 'errNoExe' });
@@ -619,16 +703,15 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
   }
 
   return journal.transaction(gameDir, async () => {
-    const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
+    const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi', {requireSameExe:true});
     const addonDest = path.join(exeDir, 'renodx-mfgunlock.addon64');
     const asiDest = path.join(exeDir, 'OptiScaler', 'plugins', 'MFGUnlocker.asi');
-    const jsonDest = path.join(exeDir, 'RTXMFG-Universal.json');
     const reshadeIniPath = path.join(exeDir, 'ReShade.ini');
     const optiIniPath = path.join(exeDir, 'OptiScaler.ini');
 
     // 当选择 Off 时，移除已安装的 MFG 解锁插件并清理配置项
     if (mode === 'off') {
-      for (const target of [addonDest, asiDest, jsonDest]) {
+      for (const target of [addonDest, asiDest]) {
         if (fs.existsSync(target)) {
           await apply.trackBeforeWrite(manifest, gameDir, target, { kind: 'disabled-component' });
           await replaceFile.makeWritable(target).catch(() => {});
@@ -642,11 +725,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         iniText = feederConfig.setIni(iniText, 'RenoDX.MFGUnlock', 'Enabled', '0');
         await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
       }
-      if (fs.existsSync(optiIniPath)) {
-        let optiText = feederConfig.readText(optiIniPath);
-        optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'Enabled', 'false');
-        await apply.writeTracked(manifest, gameDir, optiIniPath, optiText, { kind: 'config' });
-      }
+      await optiMfgConfig.configureAsi(gameDir, manifest, optiIniPath, null);
       manifest.hardwareProfile = hardwareProfile;
       manifest.mfg = { mode: 'off', multiplier: 1, backend: null, hardwareProfile, updatedAt: new Date().toISOString() };
       await apply.saveActiveManifest(gameDir, manifest);
@@ -661,49 +740,23 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
     }
 
     const multiplier = Number(mode.slice(1)); // 2, 3, 4
-    const isOptiRoute = manifest.route === 'optiscaler' || Boolean(scan.install?.optiscaler?.installed) ||
-      (fs.existsSync(optiIniPath) && !fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')));
-    const selectedBackend = backend === 'auto'
-      ? (isOptiRoute ? 'mfg-unlocker-asi' : 'renodx-mfgunlock')
-      : backend;
+    const {backend:selectedBackend, issue} = classicMfgTarget(scan.chosen, manifest, backend, upgradeDlssg);
+    if (issue) throw Object.assign(Error(issue), {code:'errMfgInput'});
 
-    // 0. 自动修复旧版本可能覆盖过的 sl.interposer.dll / sl.common.dll / sl.dlss.dll / sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll
-    //    （只要 _DLSS5_Backup/originals 中存在原厂备份且当前文件版本被替换过，或与原厂 sl.interposer.dll 版本不一致，立即还原为原厂文件，杜绝 NBA 2K27 等游戏内帧生成选项变灰）
-    const originalsRoot = path.join(apply.backupRoot(gameDir), 'originals');
-    const findOriginalSlBackup = (relPath) => {
-      const candidates = [];
-      try { candidates.push(apply.originalPath(gameDir, manifest, relPath)); } catch {}
-      if (fs.existsSync(originalsRoot)) {
-        try {
-          for (const sub of fs.readdirSync(originalsRoot)) {
-            candidates.push(path.join(originalsRoot, sub, relPath));
-          }
-        } catch {}
-      }
-      return candidates.find((b) => b && fs.existsSync(b));
-    };
-    const slInterposerPath = path.join(exeDir, 'sl.interposer.dll');
-    const slCommonPath = path.join(exeDir, 'sl.common.dll');
-    const origInterposer = findOriginalSlBackup(path.relative(gameDir, slInterposerPath));
-    const origCommon = findOriginalSlBackup(path.relative(gameDir, slCommonPath));
-    const targetSlVer = (origInterposer && pe.getFileVersion(origInterposer))
-      || (origCommon && pe.getFileVersion(origCommon))
-      || (fs.existsSync(slInterposerPath) && pe.getFileVersion(slInterposerPath))
-      || (fs.existsSync(slCommonPath) && pe.getFileVersion(slCommonPath));
+    // Older installs could replace the game's Streamline SDK. Repair only a
+    // replacement still attributable to the active receipt. An archived backup
+    // belongs to another install and may predate an official game update.
     for (const slName of ['sl.interposer.dll', 'sl.common.dll', 'sl.dlss.dll', 'sl.dlss_g.dll', 'sl.reflex.dll', 'sl.pcl.dll']) {
-      const curPath = path.join(exeDir, slName);
-      if (!fs.existsSync(curPath)) continue;
-      const curVer = pe.getFileVersion(curPath);
-      const rel = path.relative(gameDir, curPath);
-      const validBackup = findOriginalSlBackup(rel);
-      const backupVer = validBackup ? pe.getFileVersion(validBackup) : null;
-      if (validBackup && curVer && ((backupVer && curVer !== backupVer) || (targetSlVer && curVer !== targetSlVer))) {
-        await journal.capture(gameDir, curPath);
-        await replaceFile.copyFile(validBackup, curPath, { clearReadOnly: true });
-        if (Array.isArray(manifest.replaced)) {
-          manifest.replaced = manifest.replaced.filter((r) => String(r.rel).toLowerCase() !== rel.toLowerCase());
-        }
-      }
+      const destination = path.join(exeDir, slName);
+      const rel = path.relative(gameDir, destination);
+      const receipt = manifest.replaced.find(entry => path.relative(entry.rel, rel) === '');
+      if (!receipt?.newVersion || pe.getFileVersion(destination) !== receipt.newVersion) continue;
+      const backup = apply.originalPath(gameDir, manifest, receipt.rel);
+      const originalVersion = pe.getFileVersion(backup);
+      if (!originalVersion || (receipt.oldVersion && receipt.oldVersion !== originalVersion)) continue;
+      await journal.capture(gameDir, destination);
+      await replaceFile.copyFile(backup, destination, { clearReadOnly: true });
+      manifest.replaced = manifest.replaced.filter(entry => entry !== receipt);
     }
 
     // 1. 确保游戏具备支持 x2/x3/x4 的正版 nvngx_dlssg.dll (310.9.16.0)
@@ -723,13 +776,14 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
 
       if (fs.existsSync(srcDlssg)) {
         const dlssgTargets = scan.dlssFiles
-          .filter((f) => /^nvngx_dlssg\.dll$/i.test(f.name) && f.bitness === 64)
+          .filter((f) => /^nvngx_dlssg\.dll$/i.test(f.name) && f.bitness === 64 && !f.featureMismatch)
           .map((f) => f.path);
         if (!dlssgTargets.length) dlssgTargets.push(path.join(exeDir, 'nvngx_dlssg.dll'));
 
         for (const dest of dlssgTargets) {
           await apply.copyTracked(manifest, gameDir, srcDlssg, dest, {
             kind: 'runtime',
+            runtimeBitness: 64,
             newVersion: pe.getFileVersion(srcDlssg)
           });
           onLog({
@@ -738,6 +792,11 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
           });
         }
       }
+    }
+
+    if (upgradeDlssg && selectedBackend === 'mfg-unlocker-asi') {
+      const outputIssue = privateStreamlineIssue(exeDir,feederConfig.readText(optiIniPath),scan.chosen);
+      if (outputIssue) throw Object.assign(Error(outputIssue),{code:'errMfgInput'});
     }
 
     // 2. 根据所选后端与硬件档位部署 MFG 解锁器与配置文件
@@ -753,50 +812,18 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       }
 
       // 若之前存在 ASI 版，先清理避免双钩子冲突
-      for (const stale of [asiDest, jsonDest]) {
-        if (fs.existsSync(stale)) {
-          await apply.trackBeforeWrite(manifest, gameDir, stale, { kind: 'disabled-component' });
-          await replaceFile.makeWritable(stale);
-          await fs.promises.unlink(stale);
-        }
+      await optiMfgConfig.configureAsi(gameDir, manifest, optiIniPath, null);
+      if (fs.existsSync(asiDest)) {
+        await apply.trackBeforeWrite(manifest, gameDir, asiDest, { kind: 'disabled-component' });
+        await replaceFile.makeWritable(asiDest);
+        await fs.promises.unlink(asiDest);
       }
 
-      // 确保 ReShade (Addon 支持版) 已安装：Vulkan 游戏注册全局 Vulkan Implicit Layer，DX11/DX12 游戏安装 dxgi.dll
-      const reshadeCheck = scan.reshade;
-      if (scan.chosen.api === 'vulkan') {
-        const vulkanLayer = require('./vulkan-layer');
-        const vkSrcDir = effectivePayloadDir ? path.join(effectivePayloadDir, 'reshade-vulkan') : null;
-        const vkTargetDir = path.join(
-          options.userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced'),
-          'reshade-vulkan'
-        );
-        if (vkSrcDir && fs.existsSync(path.join(vkSrcDir, 'ReShade64.dll'))) {
-          manifest.vulkanLayer = await vulkanLayer.register({
-            sourceDir: vkSrcDir,
-            targetDir: vkTargetDir,
-            gameDir,
-            bitness: 64
-          });
-        }
-        // 清理 Vulkan 游戏目录中可能误放的 dxgi.dll (ReShade)，防止 sl.common.dll 与 vulkan-1.dll 同时加载两份 ReShade
-        await apply.retireVulkanDxgi(manifest, gameDir, exeDir);
-      } else if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
-        const bundledReshade = effectivePayloadDir ? path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll') : null;
-        if (bundledReshade && fs.existsSync(bundledReshade)) {
-          const safeHook = apply.selectSafeReShadeHook
-            ? apply.selectSafeReShadeHook(exeDir, scan.chosen.api, scan.chosen.apiLabel, options.reshadeProxy || 'dxgi')
-            : { hook: 'dxgi.dll' };
-          const hookName = safeHook.hook || 'dxgi.dll';
-          const hookFile = path.join(exeDir, hookName);
-          const hookExisted = fs.existsSync(hookFile);
-          await apply.copyTracked(manifest, gameDir, bundledReshade, hookFile, { kind: 'reshade' });
-          manifest.reshade.installedByUs = !hookExisted;
-          manifest.reshade.file = hookName;
-          onLog({ code: 'reshadeInstalled', params: { version: pe.getFileVersion(hookFile), file: hookName, bitness: 64 } });
-        }
-      }
-
-      // 部署 renodx-mfgunlock.addon64 与开源许可证
+      await require('./optional-graphics').prepareReShadeHost({
+        gameDir,exe:scan.chosen,manifest,payloadDir:effectivePayloadDir,
+        userDataDir:options.userDataDir || path.join(os.homedir(),'AppData','Roaming','dlss5-swapper-enhanced'),
+        reshadeProxy:options.reshadeProxy,registryRunner:options.registryRunner
+      },onLog);
       await apply.copyTracked(manifest, gameDir, srcAddon, addonDest, {
         kind: 'addon',
         newVersion: MFG_UNLOCKERS.renodxAddon.version
@@ -893,7 +920,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         iniText = feederConfig.setIni(iniText, sec, key, val);
       }
       await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
-      await apply.enableAddonInIni(exeDir, 'renodx-mfgunlock.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
+      await apply.enableAddonInIni(exeDir, 'renodx-mfgunlock.addon64', (code, params) => onLog({ code, params }), gameDir, manifest, effectivePayloadDir);
       onLog({ code: 'mfgConfigured', params: { backend: 'renodx-mfgunlock', mode, multiplier, hardwareProfile } });
     } else {
       // 部署 MFG-Unlocker (OptiScaler ASI 插件模式)
@@ -924,26 +951,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         await apply.copyTracked(manifest, gameDir, licenseSrc, path.join(exeDir, 'OptiScaler', 'licenses', 'MFG-Unlocker-LICENSE.txt'), { kind: 'license' });
       }
 
-      const universalConfig = JSON.stringify({
-        enabled: true,
-        multiplier,
-        forceMultiplier: multiplier,
-        maxCount: 4,
-        temporalFix: adaPatches,
-        blackwellNative: isBlackwellNative,
-        hardwareProfile,
-        logTelemetry: true
-      }, null, 2);
-      await apply.writeTracked(manifest, gameDir, jsonDest, universalConfig, { kind: 'config' });
-
-      if (fs.existsSync(optiIniPath)) {
-        let optiText = feederConfig.readText(optiIniPath);
-        optiText = feederConfig.setIni(optiText, 'Plugins', 'LoadAsiPlugins', 'true');
-        optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'Enabled', 'true');
-        optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'ForceMultiplier', String(multiplier));
-        optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'TemporalFix', adaPatches ? 'true' : 'false');
-        await apply.writeTracked(manifest, gameDir, optiIniPath, optiText, { kind: 'config' });
-      }
+      await optiMfgConfig.configureAsi(gameDir, manifest, optiIniPath, multiplier);
       onLog({ code: 'mfgConfigured', params: { backend: 'mfg-unlocker-asi', mode, multiplier, hardwareProfile } });
     }
 
@@ -954,7 +962,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       backend: selectedBackend,
       runtimeStack: effectiveStack,
       hardwareProfile,
-      hdrCompatibility: Boolean(hdrCompatibility),
+      hdrCompatibility: selectedBackend === 'renodx-mfgunlock' && Boolean(hdrCompatibility),
       updatedAt: new Date().toISOString()
     };
     await apply.saveActiveManifest(gameDir, manifest);
@@ -976,6 +984,8 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
 }
 
 module.exports = {
+  assertMfgGpu,
+  classicMfgTarget,
   MFG_UNLOCKERS,
   TESTED_MFG_GAMES,
   evaluateMfgGpuSupport,

@@ -38,7 +38,7 @@ const relKey = (rel) => path.normalize(String(rel)).toLowerCase();
 // not merely the most recent click on Install. Reusing it is what makes a
 // second install (or an upgrade to a newer payload) still restore the genuine
 // originals instead of forgetting files that were already up to date.
-function beginManifest(gameDir, exePath, api) {
+function beginManifest(gameDir, exePath, api, {requireSameExe = false} = {}) {
   const manifestPath = path.join(backupRoot(gameDir), MANIFEST);
   let previous = null;
   if (fs.existsSync(manifestPath)) {
@@ -49,6 +49,9 @@ function beginManifest(gameDir, exePath, api) {
     }
     if (!previous || previous.version !== 1) throw fail('errBackupInvalid');
     if (previous.restorePhase) throw fail('errBackendRecovery');
+    if (requireSameExe && previous.game?.exe && path.relative(path.resolve(gameDir, previous.game.exe), exePath) !== '') {
+      throw new Error('请先在安装方式中切换到所选游戏程序，再修改图形参数。');
+    }
   }
 
   return {
@@ -92,7 +95,8 @@ function wasAdded(manifest, rel) {
 }
 
 function rememberAdded(manifest, rel) {
-  if (!wasAdded(manifest, rel)) manifest.added.push(rel);
+  const key = relKey(rel);
+  if (!wasAdded(manifest, rel) && !manifest.replaced.some(entry => relKey(entry.rel) === key)) manifest.added.push(rel);
 }
 
 // Keep the first oldVersion forever: it is the version in the backup. Later
@@ -104,7 +108,7 @@ function rememberReplacement(manifest, item) {
   const previous = manifest.replaced.find((row) => relKey(row.rel) === key);
   if (previous) {
     previous.newVersion = item.newVersion;
-    if (item.kind && !previous.kind) previous.kind = item.kind;
+    if (item.kind && (!previous.kind || previous.kind === 'optiscaler-shared-config')) previous.kind = item.kind;
     return;
   }
   manifest.replaced.push(item);
@@ -118,8 +122,8 @@ function fail(code, params) {
 }
 
 function parseVersion(text) {
-  const m = String(text || '').match(/(\d+)\.(\d+)\.(\d+)/);
-  return m ? m.slice(1).map(Number) : null;
+  const m = String(text || '').match(/(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?/);
+  return m ? m.slice(1).map(part => Number(part || 0)) : null;
 }
 
 // Positive when a is newer than b.
@@ -127,7 +131,7 @@ function compareVersions(a, b) {
   const x = parseVersion(a);
   const y = parseVersion(b);
   if (!x || !y) return 0;
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i];
   return 0;
 }
 
@@ -269,8 +273,25 @@ async function retireVulkanDxgi(manifest, gameDir, exeDir) {
   }
 }
 
+function checkRuntimeRole(gameDir, dest, src) {
+  const role = pe.nvidiaFeatureForName(dest);
+  if (role && ((src && !pe.matchesNvidiaFeature(src, role)) ||
+      (fs.existsSync(dest) && !pe.matchesNvidiaFeature(dest, role)))) {
+    const rel = path.relative(gameDir, dest);
+    throw Object.assign(new Error('DLSS 运行库的组件身份与目标文件名不符：' + rel), {code:'errRuntimeIdentity', params:{rel}});
+  }
+}
 async function copyTracked(manifest, gameDir, src, dest, meta = {}) {
-  src = require('./component-deploy').resolveSource(gameDir, src, dest);
+  // Component rollback has already verified the saved and installed hashes.
+  // A historical snapshot can contain the user's original mislabeled DLL.
+  if (meta.kind !== 'component-rollback') {
+    src = require('./component-deploy').resolveSource(gameDir, src, dest);
+    checkRuntimeRole(gameDir, dest, src);
+  }
+  if (meta.runtimeBitness && (pe.getBitness(src, {dllOnly:true}) !== meta.runtimeBitness ||
+      (fs.existsSync(dest) && pe.getBitness(dest, {dllOnly:true}) !== meta.runtimeBitness))) {
+    throw fail('errRuntimeArchitecture', { rel: path.relative(gameDir, dest) });
+  }
   if (meta.newVersion) meta = { ...meta, newVersion: pe.getFileVersion(src) };
   const rel = await trackBeforeWrite(manifest, gameDir, dest, meta);
   await saveActiveManifest(gameDir, manifest);
@@ -524,6 +545,15 @@ async function applyFeeder(config, log) {
     throw fail('errVulkanSupportMissing');
   }
 
+  // The in-process consumer and the separate host for 32-bit games both load x64 NGX DLLs.
+  const hostDir = bitness === 32 ? path.join(exeDir, 'host64') : exeDir;
+  for (const name of ['nvngx_dlss.dll', 'nvngx_dlssnr.dll']) {
+    const dest = path.join(hostDir, name);
+    checkRuntimeRole(gameDir, dest);
+    if (fs.existsSync(dest) && pe.getBitness(dest, {dllOnly:true}) !== 64) {
+      throw fail('errRuntimeArchitecture', { rel: path.relative(gameDir, dest) });
+    }
+  }
   const manifest = beginManifest(gameDir, exePath, api);
   manifest.route = 'feeder';
   manifest.game.bitness = bitness;
@@ -746,7 +776,6 @@ async function applyFeeder(config, log) {
   const consumerName = 'renodx-dlss5.addon64';
   const consumerFile = source.feeder.hostAddon;
 
-  const hostDir = bitness === 32 ? path.join(exeDir, 'host64') : exeDir;
   await setAsideRivalConsumers(manifest, gameDir, hostDir, consumerName, log);
   const hostExe = bitness === 32 ? path.join(hostDir, 'dlss5-feed-host64.exe') : null;
   const hostFiles = bitness === 32 ? [
@@ -802,8 +831,8 @@ async function applyFeeder(config, log) {
       log('feedVkLayerReady', { rel: path.relative(gameDir, path.join(layerDir, launcher || '')) });
     }
   }
-  await enableAddonInIni(exeDir, bitness === 32 ? 'dlss5-feed.addon32' : 'dlss5-feed.addon64', log, gameDir, manifest);
-  await enableAddonInIni(hostDir, consumerName, log, gameDir, manifest);
+  await enableAddonInIni(exeDir, bitness === 32 ? 'dlss5-feed.addon32' : 'dlss5-feed.addon64', log, gameDir, manifest, source.payloadRoot);
+  await enableAddonInIni(hostDir, consumerName, log, gameDir, manifest, source.payloadRoot);
   await saveActiveManifest(gameDir, manifest);
   if (legacyRegistration?.commit && !journal.deferExternal(gameDir, 'legacy-registry', legacyRegistration.commit)) await legacyRegistration.commit();
   log('applyDone');
@@ -812,14 +841,14 @@ async function applyFeeder(config, log) {
 
 // Keeps ReShade from starting with our add-on switched off, and clears stale
 // multi-pass NRPasses>1 left behind by an earlier renodx-dlss.addon64 run.
-async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
+async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest, payloadRoot) {
   // 自动同步部署游戏内 Home 菜单全量简体中文化与 32 位神经渲染面板插件 (dlss5-zh-cn.addon64 / dlss5-zh-cn.addon32)
   const tmpRoot = path.resolve(require('os').tmpdir()).toLowerCase();
   const normExeDir = path.resolve(exeDir).toLowerCase();
   const isRealGameDir = !normExeDir.startsWith(tmpRoot);
-  if (isRealGameDir && gameDir && manifest) {
+  if ((payloadRoot || isRealGameDir) && gameDir && manifest) {
     const name = /\.addon32$/i.test(addonName) ? 'dlss5-zh-cn.addon32' : 'dlss5-zh-cn.addon64';
-    const source = path.join(require('./payload-root').resolvePayloadDir(), 'enhanced', 'zh-cn', name);
+    const source = path.join(require('./payload-root').resolvePayloadDir(payloadRoot), 'enhanced', 'zh-cn', name);
     if (fs.existsSync(source) && fs.existsSync(exeDir)) {
       await copyTracked(manifest, gameDir, source, path.join(exeDir, name), { kind: 'addon' });
     }
@@ -940,6 +969,10 @@ async function applySwap(config, onLog) {
   if (config.route === 'renodx' && !multipass) throw fail('errMultipassMissing');
 
   const scan = await scanGame(gameDir, exePath);
+  for (const file of scan.dlssFiles) {
+    if (file.featureMismatch && /^nvngx_dlss(?:nr)?\.dll$/i.test(file.name) && file.bitness === bitness)
+      checkRuntimeRole(gameDir, file.path);
+  }
   const manifest = beginManifest(gameDir, exePath, api);
   manifest.route = multipass ? 'renodx' : 'native';
   manifest.game.apiLabel = config.apiLabel;
@@ -957,7 +990,7 @@ async function applySwap(config, onLog) {
   for (const file of existing) {
     const replacement = payloadByName.get(file.name.toLowerCase());
     if (!replacement) continue;
-    if (file.bitness !== bitness || pe.getBitness(replacement.path) !== bitness) {
+    if (file.bitness !== bitness || pe.getBitness(replacement.path, {dllOnly:true}) !== bitness) {
       log('skipRuntimeArchitecture', { rel: file.rel });
       continue;
     }
@@ -984,11 +1017,11 @@ async function applySwap(config, onLog) {
   for (const name of new Set(beside)) {
     const item = payloadByName.get(name.toLowerCase());
     if (!item) continue;
-    if (pe.getBitness(item.path) !== bitness) throw fail('errReShadeArchitecture');
+    if (pe.getBitness(item.path, {dllOnly:true}) !== bitness) throw fail('errReShadeArchitecture');
     const dest = path.join(exeDir, name);
     const rel = path.relative(gameDir, dest);
     if (fs.existsSync(dest)) {
-      if (pe.getBitness(dest) !== bitness) throw Object.assign(fail('errRuntimeArchitecture'), { message: rel });
+      if (pe.getBitness(dest, {dllOnly:true}) !== bitness) throw fail('errRuntimeArchitecture', { rel });
       const current = pe.getFileVersion(dest);
       if (current === item.version) {
         log('skipSameVersion', { rel, version: current });
@@ -1159,7 +1192,7 @@ async function applySwap(config, onLog) {
 
   // The file enabled is the file installed. This used to name source.addon,
   // which on the multipass route is not the add-on that was copied.
-  if (addonName) await enableAddonInIni(exeDir, addonName, log, gameDir, manifest);
+  if (addonName) await enableAddonInIni(exeDir, addonName, log, gameDir, manifest, source.payloadRoot);
   // The multipass tool's settings are not on ReShade's Home tab, where "No
   // effect files found" sends people looking in the wrong place (#336).
   if (multipass) log('multipassNext', { dlss: existing.some((file) => /^nvngx_dlss\.dll$/i.test(file.name)) ? 'yes' : 'no' });
@@ -1175,6 +1208,7 @@ async function restoreFiles(gameDir, manifest, onLog, { archived = false, skipLe
   if (manifest.version !== 1 || !Array.isArray(manifest.replaced) || !Array.isArray(manifest.added)) throw fail('errBackupInvalid');
   manifest = require('./wuthering-waves').restoreManifest(gameDir, manifest, archived, true, onLog);
   require('./encore').assertOwnedFiles(gameDir, manifest);
+  require('./optional-graphics').checkOwned(gameDir, manifest);
   // Validate every path and backup before restoring the first file.
   for (const item of manifest.replaced) {
     journal.safePath(gameDir, item.rel);
@@ -1184,7 +1218,11 @@ async function restoreFiles(gameDir, manifest, onLog, { archived = false, skipLe
   }
   for (const rel of [...manifest.added, ...(manifest.addedDirs || [])]) journal.safePath(gameDir, rel);
   journal.safePath(gameDir, manifest.game.exe);
+  // Legacy ASI receipts use the active universal JSON to identify an owned INI
+  // field. Read it before restoring any of the originals.
+  require('./optiscaler-shared-config').recoverLegacyConfig(gameDir, manifest);
   legacyRegistry.checkOwned(manifest.legacyRegistry, gameDir);
+  if (!archived) await require('./anr').removeGeneratedLoader(gameDir, manifest);
   if (!skipLegacyRegistry && manifest.legacyRegistry) {
     const info = manifest.legacyRegistry;
     const detach = () => legacyRegistry.detach(info, gameDir, registryRunner);
@@ -1195,7 +1233,8 @@ async function restoreFiles(gameDir, manifest, onLog, { archived = false, skipLe
     const target = journal.safePath(gameDir, item.rel);
     if (fs.existsSync(backupPath)) {
       await journal.capture(gameDir, target);
-      await copyOver(backupPath, target);
+      if (!await require('./optiscaler-shared-config').restoreExternal(gameDir, manifest, item) &&
+          !await require('./optional-graphics').restoreSharedConfig(gameDir, manifest, item.rel)) await copyOver(backupPath, target);
       log('restored', { rel: item.rel, version: item.oldVersion || null, kind: item.kind || null });
     }
   }
@@ -1203,6 +1242,7 @@ async function restoreFiles(gameDir, manifest, onLog, { archived = false, skipLe
   const originals = new Set(manifest.replaced.map(item => relKey(item.rel)));
   for (const rel of manifest.added) {
     if (originals.has(relKey(rel))) continue;
+    if (await require('./optional-graphics').restoreSharedConfig(gameDir, manifest, rel)) continue;
     const target = journal.safePath(gameDir, rel);
     if (fs.existsSync(target)) {
       await journal.capture(gameDir, target);
@@ -1317,7 +1357,8 @@ async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTar
   }
   const detachOwnedLayer = vulkanLayer.checkOwnedTarget(manifest.vulkanLayer, vulkanLayerTarget);
   const detachOwnedRegistry = legacyRegistry.checkOwned(manifest.legacyRegistry, gameDir);
-  const needsDetach = detachOwnedLayer || detachOwnedRegistry;
+  const detachDelta = manifest.route === 'sm86-delta' && manifest.graphicsRoute?.deltaCache?.owned;
+  const needsDetach = detachOwnedLayer || detachOwnedRegistry || detachDelta;
   const awaitingDetach = !archived && needsDetach && ['detach-vulkan', 'detach-external'].includes(manifest.restorePhase);
   delete manifest.restorePhase;
   async function retireManifest() {
@@ -1334,7 +1375,7 @@ async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTar
       if (needsDetach) {
         // The registry and shared layer are outside the game transaction. Keep
         // a live, retryable record after committing the local restore.
-        await saveActiveManifest(gameDir, { ...manifest, restorePhase: detachOwnedRegistry ? 'detach-external' : 'detach-vulkan' });
+        await saveActiveManifest(gameDir, { ...manifest, restorePhase: detachOwnedRegistry || detachDelta ? 'detach-external' : 'detach-vulkan' });
       } else if (!archived) await retireManifest();
     });
   }
@@ -1342,6 +1383,7 @@ async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTar
     const removed = await vulkanLayer.detach(detachOwnedLayer, gameDir);
     log(removed ? 'vulkanLayerRemoved' : 'vulkanLayerKept');
   } else if (manifest.vulkanLayer) log('vulkanLayerKept');
+  if (detachDelta) await require('./delta-cache').detach(gameDir, manifest);
   if (detachOwnedRegistry) await legacyRegistry.detach(detachOwnedRegistry, gameDir, registryRunner);
   if (needsDetach) {
     await journal.transaction(gameDir, async () => {

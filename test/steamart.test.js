@@ -68,6 +68,13 @@ test('home tiles prefer catalog banners and fall back to a landscape Steam capsu
   assert.deepEqual(art.tileUrls('Unlisted local game', null), []);
 });
 
+test('The Witcher 3 tiles use only the Steam capsule and then the header', () => {
+  const base = 'https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/292030/';
+  for (const id of [292030, '292030']) {
+    assert.deepEqual(art.tileUrls('The Witcher 3', id), [base + 'capsule_616x353.jpg', base + 'header.jpg']);
+  }
+});
+
 test('cache retries empty and deleted artwork while preserving existing images on upgrade', () => {
   const onDisk = value => value === 'good';
   const now = 100000000;

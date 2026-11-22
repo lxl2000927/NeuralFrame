@@ -3,17 +3,22 @@ import { t } from "../i18n";
 import { modelArchitectureLimit } from "../domain";
 import type { ReactNode } from "react";
 import type { EncoreSettings, Status, EngineInfo } from "../types";
+import * as spatial from "../../../src/shared/encore-spatial.js";
 
 export const defaultEncore: EncoreSettings = {mfgMode:"off",neuralMode:"off",neuralModelId:"310.8.SF-v2",
   upscaling:"off",motion:"game",nrResolution:"custom",nrScale:75,nrPasses:1};
+const spatialEngines = [['mwsr','MWSR'],['nis','NVIDIA Image Scaling (NIS)'],['fsr1','AMD FSR 1']];
+const isSpatial = (engine:string) => spatial.engines.includes(engine);
 
 export function encoreSettingsIssue(value:EncoreSettings,status:Status,hasNativeDlss?:boolean,engine?:EngineInfo,baseline?:EncoreSettings):string | null {
   if (hasNativeDlss && value.upscaling !== 'off') return "游戏已有原生 DLSS，请先关闭附加超分。";
-  if (!['off','dlss'].includes(value.upscaling) || !['off','x2','x3','x4','x5','x6'].includes(value.mfgMode))
+  if ((!['off','dlss'].includes(value.upscaling) && !isSpatial(value.upscaling)) || !['off','x2','x3','x4','x5','x6'].includes(value.mfgMode))
     return "当前配置使用了未适配的引擎或补帧模式，请重新选择。";
   if (!['game','encore','shader','quality','fast'].includes(value.motion)) return "Encore 参数包含尚未适配的值，请重新选择。";
-  if (engine?.compatible === false) return "所选引擎尚未适配，请选择已适配版本。";
+  if (engine?.compatible === false) return engine.reason || "所选引擎尚未适配，请选择已适配版本。";
   const switchingEngine = !!status.encore?.installed && !!engine?.version && status.encore.version !== engine.version;
+  const spatialError = spatial.settingsIssue(value,!!engine?.capabilities?.spatialUpscaling,baseline,switchingEngine);
+  if (spatialError) return spatialError;
   const scaleChanged = value.dlssRenderScale !== baseline?.dlssRenderScale || value.dlssCustomScale !== baseline?.dlssCustomScale;
   if ((scaleChanged || switchingEngine) && value.dlssRenderScale === 'custom' && (!Number.isInteger(value.dlssCustomScale) ||
       Number(value.dlssCustomScale) < (engine?.capabilities?.dlssCustomScaleMin || 50) || Number(value.dlssCustomScale) > 100))
@@ -43,15 +48,20 @@ export function EncorePanel({value,status,hasNativeDlss,issue,onChange,onModels,
 }) {
   const change = (patch:Partial<EncoreSettings>) => onChange({...value,...patch});
   const models = status.neural?.availableModels || [];
+  const supportsSpatial = !!engine?.capabilities?.spatialUpscaling;
+  const srLabel = supportsSpatial ? t("附加超分引擎") : t("附加 DLSS 超分");
+  const srOptions = [["off",t("关闭（保留游戏设置）")]];
+  if (!hasNativeDlss) srOptions.push(["dlss",supportsSpatial ? "NVIDIA DLSS" : t("启用（游戏分辨率 / DLAA）")],...(supportsSpatial ? spatialEngines : []));
+  if (!srOptions.some(([id])=>id===value.upscaling)) srOptions.push([value.upscaling,t("游戏内自定义值（保留）")]);
   const mfgModes = [["off",t("关闭")],...[2,3,4,5,6].map(n=>["x"+n,n+"×"+(n>4?" · "+t("实验性"):"")])];
   if (!mfgModes.some(([id])=>id===value.mfgMode)) mfgModes.push([value.mfgMode,t("游戏内使用了其他模式，请重新选择")]);
   return <div>
-    <p className="footnote">{t("Encore 首批适配没有原生帧生成的游戏。参数写入后需重启游戏，Insert 打开游戏内面板。")}</p>
+    <p className="footnote">{t("Encore 适用于没有原生帧生成的离线游戏。请勿在联网或带反作弊保护的游戏中启用。应用后重启游戏，按 Insert 打开面板。")}</p>
     {issue && <p className="error" role="alert">{t(issue)}</p>}
     <div className="graphics-modules">
       <section className="graphics-module" aria-label={t("Encore 帧生成配置")}>
         <header className="module-heading"><div><span className="module-eyebrow">RTX Encore {engine?.version || status.encore?.version || ''}</span><h2>{t("新增帧生成")}</h2></div>
-          <span className="module-badge">{t(status.encore?.installed ? status.encore.filesPresent ? "已部署 · 待运行验证" : "配套文件缺失 · 可重新应用" : "尚未部署")}</span></header>
+          <span className="module-badge">{t(status.encore?.installed ? status.encore.filesPresent ? "已部署 · 待运行验证" : "配套文件缺失或已变化" : "尚未部署")}</span></header>
         <div className="module-fields">
           {engineControl}
           <div className="module-field"><span>{t("DLSS 帧生成倍率")}</span>
@@ -67,9 +77,23 @@ export function EncorePanel({value,status,hasNativeDlss,issue,onChange,onModels,
       <section className="graphics-module" aria-label={t("Encore 图像配置")}>
         <header className="module-heading"><div><span className="module-eyebrow">RTX Encore · NR / SR</span><h2>{t("图像处理")}</h2></div></header>
         <div className="module-fields">
-          <div className="module-field"><span>{t("附加 DLSS 超分")}</span>
-            <Select label={t("附加 DLSS 超分")} value={value.upscaling} disabled={hasNativeDlss && value.upscaling === 'off'}
-              options={[["off",t("关闭（保留游戏设置）")],...(!hasNativeDlss ? [["dlss",t("启用（游戏分辨率 / DLAA）")]] : [])]} onChange={upscaling=>change({upscaling})}/></div>
+          <div className="module-field"><span>{srLabel}</span>
+            <Select label={srLabel} value={value.upscaling} disabled={hasNativeDlss && value.upscaling === 'off'}
+              options={srOptions} onChange={upscaling=>change({upscaling})}/></div>
+          {!hasNativeDlss && supportsSpatial && isSpatial(value.upscaling) && <>
+            <p className="footnote">{t("空间超分输出到屏幕分辨率。DX11 / DX12 需使用较低的同宽高比窗口分辨率，每边最多放大 2 倍。Vulkan 取决于游戏呈现方式。")}</p>
+            <label className="module-field"><span>{t("空间超分锐化（0–100%）")}</span>
+              <input type="number" min={0} max={100} step={1} value={Number.isNaN(value.spatialSharpness) ? '' : value.spatialSharpness ?? 30} onChange={e=>change({spatialSharpness:e.target.valueAsNumber})}/></label>
+            <div className="module-field"><span>{t("空间超分抗锯齿")}</span>
+              <Select label={t("空间超分抗锯齿")} value={value.spatialAa ?? 'off'}
+                options={[['off',t('关闭')],['smaa','SMAA 1x'],['fxaa','FXAA 3.11']]} onChange={spatialAa=>change({spatialAa})}/></div>
+            {(value.spatialAa==='smaa' || value.spatialAa==='fxaa') && <div className="module-field"><span>{t("抗锯齿处理位置")}</span>
+              <Select label={t("抗锯齿处理位置")} value={value.spatialAaPlacement ?? 'before'} options={[['before',t('缩放前')],['after',t('缩放后')]]}
+                onChange={spatialAaPlacement=>change({spatialAaPlacement})}/></div>}
+            {value.spatialAa==='smaa' && <div className="module-field"><span>{t("SMAA 质量")}</span>
+              <Select label={t("SMAA 质量")} value={value.spatialAaQuality ?? 'high'} options={[['low',t('低')],['medium',t('中')],['high',t('高')],['ultra',t('极高')]]}
+                onChange={spatialAaQuality=>change({spatialAaQuality})}/></div>}
+          </>}
           {hasNativeDlss && <p className="footnote">{t("游戏已有原生 DLSS 超分，请在游戏中设置。")}</p>}
           {hasNativeDlss && <>
             <div className="module-field"><span>{t("原生 DLSS 超分比例")}</span>
@@ -92,7 +116,7 @@ export function EncorePanel({value,status,hasNativeDlss,issue,onChange,onModels,
                   m.version && !/^310\.(?:8\.0|9\.16)(?:\.0)?$/.test(m.version) ? t("Encore 版本未适配") : modelArchitectureLimit(m,status.hardware?.gpu?.architecture?.sm) ? t("本机显卡不支持") : '',
                   t(m.availableOnDisk ? "已入库" : m.downloadable ? "按需下载" : "未导入")].filter(Boolean).join(' · ')]) : [[value.neuralModelId,value.neuralModelId]]}
                 onChange={neuralModelId=>change({neuralModelId})}/></div>
-            <button onClick={onModels}>{t("从模型库选择")}</button>
+            <button onClick={onModels}>{t("管理模型")}</button>
             <div className="module-field"><span>{t("NR 工作分辨率")}</span>
               <Select label={t("NR 工作分辨率")} value={value.nrResolution} onChange={nrResolution=>change({nrResolution})} options={[
                 ["render",t("跟随渲染分辨率")],["output",t("输出分辨率")],["quality",t("质量")],["balanced",t("平衡")],

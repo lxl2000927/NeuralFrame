@@ -53,6 +53,11 @@ export function t(
   values: unknown[] = [],
 ): string {
   if (!source) return "";
+  // Most Chinese UI strings are already exact catalog keys. Avoid walking every
+  // dynamic backend-message pattern on each render; retain that fallback for
+  // interpolated messages which are not exact keys.
+  if (current === "zh" && !values.length && Object.hasOwn(catalog, source))
+    return source;
   let result =
     current === "en"
       ? catalog[source] || source

@@ -381,7 +381,7 @@ function inspectNeuralModelBinary(filePath, { fresh = false } = {}) {
   const cached = cacheable && binaryInspectionCache.get(cacheKey);
   if (!fresh && cached && cached.stamp === stamp) return cached.result;
 
-  const bitness = pe.getBitness(filePath);
+  const bitness = pe.getBitness(filePath, { dllOnly: true });
   const version = pe.getFileVersion(filePath);
   let buf;
   try {
@@ -413,7 +413,7 @@ function inspectNeuralModelBinary(filePath, { fresh = false } = {}) {
 
   let reason = identity.reason;
   if (!reason && bitness !== 64) {
-    reason = `DLSS 5 神经渲染运行时必须为 64 位 PE 文件 (当前检测到: ${bitness || '未知'} 位)`;
+    reason = 'DLSS 5 神经渲染运行时需要 x64 DLL。';
   }
   if (!reason && fatbin.architectures.length === 0) {
     reason = 'DLL 内部未检测到有效的 CUDA Fatbin (0xBA55ED50) 神经网络核函数容器';
@@ -528,28 +528,15 @@ function listNeuralModels({ payloadDir, userDataDir, gpuName = '', hardwareProfi
     persistentBundledPath
   ].filter(Boolean);
 
-  let bundledPath = null;
   let bundledInspection = null;
   for (const cand of candidateBundledPaths) {
     if (fs.existsSync(cand)) {
       const check = inspectNeuralModelBinary(cand);
       if (check?.valid && (cand !== persistentBundledPath || check.sha256 === MODEL_DATABASE[0].sha256)) {
-        bundledPath = cand;
         bundledInspection = check;
         break;
       }
     }
-  }
-
-  // Retain only the pinned bundled build in the legacy offline cache.
-  if (bundledInspection?.sha256 === MODEL_DATABASE[0].sha256 && persistentBundledPath && !require('./preview-fs').active() &&
-      !bundledPath.includes('component-library-v1') && path.resolve(bundledPath) !== path.resolve(persistentBundledPath)) {
-    try {
-      if (!fs.existsSync(persistentBundledPath)) {
-        fs.mkdirSync(path.dirname(persistentBundledPath), { recursive: true });
-        fs.promises.copyFile(bundledPath, persistentBundledPath, fs.constants.COPYFILE_EXCL).catch(() => {});
-      }
-    } catch {}
   }
 
   // 索引只提供用户备注；版本、身份、可用性均重新读取文件（带状态缓存）。
@@ -720,6 +707,12 @@ function parseNeuralRuntimeLogs(gameDir, exeDir) {
   };
 }
 
+function hasNeuralAddon(dir, name) {
+  const file = path.join(dir,name);
+  return pe.getBitness(file,{dllOnly:true}) === (name.endsWith('32') ? 32 : 64) &&
+    pe.hasExports(file,['NAME','DESCRIPTION'],name);
+}
+
 // 检查指定游戏目录的 DLSS 5 神经渲染完整状态、模型版本、依赖项与 GPU 兼容性
 async function inspectGameNeuralStatus(gameDir, {
   payloadDir,
@@ -749,12 +742,22 @@ async function inspectGameNeuralStatus(gameDir, {
     path.join(targetDir, 'nvngx_dlss.dll'),
     path.join(exeDir, 'nvngx_dlss.dll'),
     ...(scan.primaryDlss ? [scan.primaryDlss.path] : [])
-  ].find((p) => p && fs.existsSync(p)) || null;
+  ].find((p) => p && pe.getBitness(p, {dllOnly:true}) === 64 && pe.matchesNvidiaFeature(p, 'sr')) || null;
   const dlssSrVersion = dlssSrPath ? pe.getFileVersion(dlssSrPath) : null;
 
-  const consumerAddons = ['renodx-dlss5.addon64', 'renodx-dlss.addon64', 'dlss5-feed.addon64', 'dlss5-feed.addon32']
-    .filter((name) => fs.existsSync(path.join(exeDir, name)) || fs.existsSync(path.join(targetDir, name)));
-  const optiInstalled = Boolean(scan.install?.optiscaler?.installed);
+  const renderAddons = ['renodx-dlss5.addon64', 'renodx-dlss.addon64'].filter(name => hasNeuralAddon(targetDir,name));
+  const consumerAddons = [...renderAddons];
+  const feederAddon = 'dlss5-feed.addon' + bitness;
+  const hasFeeder = hasNeuralAddon(exeDir,feederAddon);
+  if (hasFeeder) consumerAddons.push(feederAddon);
+  const selectedRoute = exePath && scan.install?.exe && path.relative(path.resolve(gameDir,scan.install.exe),exePath) === ''
+    ? scan.install.route : null;
+  const optiInstalled = selectedRoute === 'optiscaler' && Boolean(scan.install.optiscaler?.installed);
+  const needsFeeder = bitness === 32 || selectedRoute === 'feeder';
+  const bridge = path.join(targetDir,'dlss5-feed-host64.exe');
+  const hasBridge = bitness !== 32 || (pe.getBitness(bridge,{exeOnly:true}) === 64 &&
+    pe.findMarkers(bridge,['dlss5-feed-host.log','pipe\\dlss5-feed.']).size === 2);
+  const hasRenderer = renderAddons.length > 0 && (!needsFeeder || (hasFeeder && hasBridge));
   const wuwa = require('./wuthering-waves');
   const proxy = exePath && wuwa.gameRoot(gameDir, exePath) && wuwa.inspectProxy(exeDir);
   if (proxy) consumerAddons.push('version.dll');
@@ -763,14 +766,14 @@ async function inspectGameNeuralStatus(gameDir, {
     hasNeuralDll: Boolean(activeModelInfo && activeModelInfo.valid),
     hasDlssSrDll: Boolean(dlssSrPath),
     dlssSrVersion,
-    hasConsumer: consumerAddons.length > 0 || optiInstalled,
+    hasConsumer: selectedRoute === 'optiscaler' ? optiInstalled : Boolean(hasRenderer || proxy),
     consumerAddons,
     optiInstalled,
     reshadeInstalled: Boolean(scan.reshade && scan.reshade.installed),
     missing: []
   };
   if (!dependencies.hasNeuralDll) dependencies.missing.push('nvngx_dlssnr.dll');
-  if (!dependencies.hasDlssSrDll) dependencies.missing.push('nvngx_dlss.dll');
+  if (!dependencies.hasDlssSrDll && !(optiInstalled && scan.chosen?.hasNativeUpscaler)) dependencies.missing.push('nvngx_dlss.dll');
   if (!dependencies.hasConsumer) dependencies.missing.push('RenoDX / Feeder / OptiScaler 神经渲染消费者组件');
 
   const gpuCompat = activeModelInfo && activeModelInfo.valid
@@ -787,7 +790,12 @@ async function inspectGameNeuralStatus(gameDir, {
   try {
     const mfPath = path.join(apply.backupRoot(gameDir), 'manifest.json');
     if (fs.existsSync(mfPath)) {
-      manifestNr = JSON.parse(fs.readFileSync(mfPath, 'utf8'))?.neuralRendering || null;
+      const manifest = JSON.parse(fs.readFileSync(mfPath, 'utf8'));
+      const appliesToTarget = manifest?.game?.exe ? exePath && path.relative(path.resolve(gameDir, manifest.game.exe), exePath) === ''
+        : scan.exeCandidates?.length === 1;
+      if (appliesToTarget) {
+        manifestNr = manifest.neuralRendering || null;
+      }
     }
   } catch {}
 
@@ -795,9 +803,12 @@ async function inspectGameNeuralStatus(gameDir, {
   let mode = 'off';
   const optiIni = path.join(exeDir, 'OptiScaler.ini');
   const config = require('./feeder-config');
-  const optiEnabled = optiInstalled && !/^(false|0)$/i.test(config.getIni(config.readText(optiIni), 'DlssNr', 'Enabled'));
-  const savedEnabled = manifestNr?.mode && manifestNr.mode !== 'off';
-  if (activeModelInfo?.valid && (proxy ? proxy.nr : (savedEnabled || consumerAddons.length || optiEnabled))) {
+  const optiEnabled = optiInstalled && /^true$/i.test(config.getIni(config.readText(optiIni), 'DlssNr', 'Enabled'));
+  const renderIni = hasRenderer ? config.readText(path.join(targetDir,'ReShade.ini')) : '';
+  const feederIni = needsFeeder && hasRenderer && exeDir !== targetDir ? config.readText(path.join(exeDir,'ReShade.ini')) : renderIni;
+  const rendererEnabled = hasRenderer && renderAddons.some(name => config.enableAddons(renderIni,[name]) === renderIni) &&
+    (!needsFeeder || config.enableAddons(feederIni,[feederAddon]) === feederIni);
+  if (activeModelInfo?.valid && (proxy ? proxy.nr : selectedRoute === 'optiscaler' ? optiEnabled : rendererEnabled)) {
     if (manifestNr && manifestNr.mode && manifestNr.mode !== 'off') {
       mode = manifestNr.mode === 'oct2026_faster' ? 'latest_compatible' : manifestNr.mode;
     } else if (activeModelInfo.modelId === '310.8.SF-v2' || activeModelInfo.knownModel?.role === 'release') {
@@ -836,7 +847,7 @@ async function inspectGameNeuralStatus(gameDir, {
     hardwareProfile: profileInfo.id,
     profileDetails: profileInfo,
     installed: Boolean(activeModelInfo && activeModelInfo.valid && dependencies.hasConsumer),
-    currentModel: activeModelInfo ? {
+    currentModel: activeModelInfo?.valid ? {
       id: activeModelInfo.modelId,
       name: effectiveModelObj ? effectiveModelObj.name : activeModelInfo.modelName,
       version: activeModelInfo.version,
@@ -894,7 +905,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
   }
 
   return journal.transaction(gameDir, async () => {
-    const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
+    const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi', {requireSameExe:true});
     const destNr = path.join(targetDir, 'nvngx_dlssnr.dll');
 
     // 如果选择关闭神经渲染 ('off')，将已注入的 nvngx_dlssnr.dll 与消费者插件一并移除或从备份恢复，避免孤立插件提示“未安装 NR 运行时”
@@ -903,12 +914,17 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
       for (const item of scan.dlssFiles || []) {
         if (/^nvngx_dlssnr\.dll$/i.test(item.name)) {
           deepTargets.push(item.path);
-        } else if (/^(nvngx_dlss|_?nvngx)\.dll$/i.test(item.name)) {
+        } else if (!item.featureMismatch && /^nvngx_dlss\.dll$/i.test(item.name)) {
           deepTargets.push(item.path);
           deepTargets.push(path.join(path.dirname(item.path), 'nvngx_dlssnr.dll'));
+        } else if (/^_?nvngx\.dll$/i.test(item.name) &&
+                   manifest.replaced.some(record => path.relative(item.path, path.resolve(gameDir, record.rel)) === '')) {
+          // Older versions could replace the NGX core. Off may restore its
+          // recorded original without treating its directory as an SR site.
+          deepTargets.push(item.path);
         }
       }
-      const filesToDisable = [
+      const filesToDisable = manifest.route === 'optiscaler' ? [destNr] : [
         destNr,
         path.join(exeDir, 'nvngx_dlssnr.dll'),
         path.join(exeDir, 'renodx-dlss5.addon64'),
@@ -943,16 +959,14 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
       }
       // 如果存在 OptiScaler.ini，将 [DlssNr] Enabled 设为 false
       const optiIni = path.join(exeDir, 'OptiScaler.ini');
-      if (fs.existsSync(optiIni)) {
-        const feederConfig = require('./feeder-config');
-        const updated = feederConfig.setIni(feederConfig.readText(optiIni), 'DlssNr', 'Enabled', 'false');
-        await apply.writeTracked(manifest, gameDir, optiIni, updated, { kind: 'config' });
-      }
+      await require('./optiscaler-shared-config').configureNeural(gameDir, manifest, optiIni, false);
       manifest.hardwareProfile = hardwareProfile;
       manifest.neuralRendering = { mode: 'off', modelId: null, hardwareProfile, updatedAt: new Date().toISOString() };
       await apply.saveActiveManifest(gameDir, manifest);
       return { ok: true, mode: 'off', modelId: null };
     }
+
+    if (manifest.route === 'optiscaler') require('./optiscaler').assertNeuralTarget(scan,manifest);
 
     // 查找要部署的目标模型文件（全系模型兼容笔记本 40 系、40 系桌面卡与 50 系桌面卡）
     const models = listNeuralModels({ payloadDir: effectivePayloadDir, userDataDir, gpuName, hardwareProfile });
@@ -999,110 +1013,141 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     }
 
     // 使用受追踪拷贝部署 nvngx_dlssnr.dll（自动备份原版文件）
+    if (manifest.route === 'optiscaler' && fs.existsSync(destNr) && fs.statSync(destNr).isFile() &&
+        (pe.getBitness(destNr,{dllOnly:true}) !== 64 || !pe.matchesNvidiaFeature(destNr,'nr'))) {
+      const tracked = [...manifest.added, ...manifest.replaced.map(row => row.rel)];
+      if (tracked.some(rel => path.relative(path.resolve(gameDir,rel),destNr) === '')) {
+        await apply.trackBeforeWrite(manifest,gameDir,destNr,{kind:'runtime',newVersion:binaryCheck.version});
+        await replaceFile.makeWritable(destNr);
+        await fs.promises.unlink(destNr);
+      }
+    }
     await apply.copyTracked(manifest, gameDir, chosenModel.filePath, destNr, {
       kind: 'runtime',
+      runtimeBitness: 64,
       newVersion: binaryCheck.version
     });
     onLog({ code: 'neuralModelInstalled', params: { id: chosenModel.id, version: binaryCheck.version } });
 
     // 如果存在 OptiScaler.ini，确保 [DlssNr] Enabled=true
     const optiIni = path.join(exeDir, 'OptiScaler.ini');
-    if (fs.existsSync(optiIni)) {
-      const feederConfig = require('./feeder-config');
-      const updated = feederConfig.setIni(feederConfig.readText(optiIni), 'DlssNr', 'Enabled', 'true');
-      await apply.writeTracked(manifest, gameDir, optiIni, updated, { kind: 'config' });
-    }
+    await require('./optiscaler-shared-config').configureNeural(gameDir, manifest, optiIni, true);
+
+    const effectiveStack = runtimeStack || (hardwareProfile === 'rtx50_desktop' ? 'oct2026-310.9.16' : 'baseline-310.9.1');
+    const saveSelection = async () => {
+      manifest.hardwareProfile = hardwareProfile;
+      manifest.neuralRendering = {
+        mode,
+        modelId: chosenModel.id,
+        modelVersion: binaryCheck.version,
+        sha256: binaryCheck.sha256,
+        architectures: binaryCheck.architectures,
+        runtimeStack: effectiveStack || 'baseline-310.9.1',
+        hardwareProfile,
+        updatedAt: new Date().toISOString()
+      };
+      await apply.saveActiveManifest(gameDir, manifest);
+
+      return {
+        ok: true,
+        mode,
+        modelId: chosenModel.id,
+        version: binaryCheck.version,
+        sha256: binaryCheck.sha256,
+        hardwareProfile,
+        compatibility: compat
+      };
+    };
+    if (manifest.route === 'optiscaler') return saveSelection();
 
     // Defaults for new fields or an explicit tuning reset. Hardware profiles
     // own resolution/workset budgets; these are configuration targets, not
     // measurements or guarantees of in-game VRAM usage or frame rate.
-    const feederConfig = require('./feeder-config');
-    const reshadeIniPath = path.join(targetDir, 'ReShade.ini');
-    const isDesktopProfile = hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx50_desktop';
-    const isHost64 = targetDir !== exeDir;
-    const isFeederRoute = isHost64 || manifest.route === 'feeder';
-    const hasNativeStreamline = !isFeederRoute && (
-      fs.existsSync(path.join(exeDir, 'sl.interposer.dll')) ||
-      fs.existsSync(path.join(exeDir, 'sl.common.dll')) ||
-      (Array.isArray(scan.streamlineFiles) && scan.streamlineFiles.length > 0)
-    );
-    let iniText = feederConfig.readText(reshadeIniPath);
-    if (!hasNativeStreamline && !isFeederRoute) {
-      iniText = iniText.replace(/^EnableHooks=.*\r?\n?/gim, '');
-    }
-    const nrSettings = [
-      ['OVERLAY', 'UiLanguage', 'zh-Hans'],
-      ['ADDON', 'AddonPath', '.\\'],
-      ['RenoDX DLSS', 'NRPasses', '1'],
-      ['RenoDX.DLSS5', 'ConfigVersion', '7'],
-      ...(isFeederRoute
-        ? [['RenoDX.DLSS5', 'EnableHooks', '2'], ['RenoDX.DLSS5', 'NREnableUpscaling', '0']]
-        : (hasNativeStreamline ? [['RenoDX.DLSS5', 'EnableHooks', '1']] : [])),
-      ['RenoDX.DLSS5', 'NeuralUplift', '1'],
-      ['RenoDX.DLSS5', 'NRAutoMask', '0'],
-      ['RenoDX.DLSS5', 'NRChainedHistory', '1'],
-      ['RenoDX.DLSS5', 'NRChromaClamp', '1'],
-      ['RenoDX.DLSS5', 'NRCodecMode', '2'],
-      ['RenoDX.DLSS5', 'NRColorStrength', '1'],
-      ['RenoDX.DLSS5', 'NRDepthMode', '0'],
-      ['RenoDX.DLSS5', 'NRDetailStability', '0'],
-      ['RenoDX.DLSS5', 'NRDiffuseWhiteNits', '203'],
-      ['RenoDX.DLSS5', 'NRFollowInputRes', '0'],
-      ['RenoDX.DLSS5', 'NRGlobalTone', '1'],
-      ['RenoDX.DLSS5', 'NRGpuTimers', '0'],
-      ['RenoDX.DLSS5', 'NRIntensity', '1'],
-      ['RenoDX.DLSS5', 'NRLinearUnitNits', '0'],
-      ['RenoDX.DLSS5', 'NRLocalStructure', '1'],
-      ['RenoDX.DLSS5', 'NRLocalTone', '1'],
-      ['RenoDX.DLSS5', 'NRLookMode', '0'],
-      ['RenoDX.DLSS5', 'NRLookUpsample', '1'],
-      ['RenoDX.DLSS5', 'NRMaxWorksets', isDesktopProfile ? '8' : '4'],
-      ['RenoDX.DLSS5', 'NRMVecScaleX', '1'],
-      ['RenoDX.DLSS5', 'NRMVecScaleY', '1'],
-      ['RenoDX.DLSS5', 'NRNormAttackStops', '4'],
-      ['RenoDX.DLSS5', 'NRNormGovernor', '2'],
-      ['RenoDX.DLSS5', 'NRNormReleaseStops', '0.5'],
-      ['RenoDX.DLSS5', 'NRNormSlewStops', '0.02'],
-      ['RenoDX.DLSS5', 'NRPaperWhiteScale', '2.5375'],
-      ['RenoDX.DLSS5', 'NRPasses', '1'],
-      ['RenoDX.DLSS5', 'NRPQCalibration', '1'],
-      ['RenoDX.DLSS5', 'NRPreset', '0'],
-      ['RenoDX.DLSS5', 'NRPreUpscale', '0'],
-      ['RenoDX.DLSS5', 'NRProxyAnchor', '4'],
-      ['RenoDX.DLSS5', 'NRResolutionScale', isDesktopProfile ? '1' : '0.75'],
-      ['RenoDX.DLSS5', 'NRResponse', '1'],
-      ['RenoDX.DLSS5', 'NRScreenshotKey', '116'],
-      ['RenoDX.DLSS5', 'NRSkinIndependent', '1'],
-      ['RenoDX.DLSS5', 'NRSkinStructure', '-1'],
-      ['RenoDX.DLSS5', 'NRSourceEncoding', '0'],
-      ['RenoDX.DLSS5', 'NRSourcePrimaries', '0'],
-      ['RenoDX.DLSS5', 'NRStyle', '0'],
-      ['RenoDX.DLSS5', 'NRToggleKey', isHost64 ? '0' : '117'],
-      ['RenoDX.DLSS5', 'NRTransferMode', '0'],
-      ['RenoDX.DLSS5', 'NRTransferStrength', '1'],
-      ['RenoDX.DLSS5', 'NRUICorrection', '0'],
-      ['RenoDX.DLSS5', 'NRHookPoint', '0'],
-      ['RenoDX.DLSS5', 'UiLanguage', 'zh-Hans']
-    ];
-    // Reapplying NR should not erase tuning made in the in-game panel. Only
-    // loader requirements are mandatory; a profile change updates its resource
-    // budget, while an explicit reset restores the complete managed defaults.
-    const previousProfile = manifest.neuralRendering?.hardwareProfile || manifest.hardwareProfile;
-    const profileChanged = !!previousProfile && previousProfile !== hardwareProfile;
-    const profileKeys = new Set(['NRResolutionScale', 'NRMaxWorksets']);
-    const requiredKeys = new Set(['ConfigVersion', 'EnableHooks', 'NeuralUplift', 'NREnableUpscaling']);
-    for (const [sec, k, v] of nrSettings) {
-      if (options.resetNeuralTuning === true || feederConfig.getIni(iniText, sec, k) === null ||
-          requiredKeys.has(k) || (isHost64 && k === 'NRToggleKey') ||
-          (profileChanged && profileKeys.has(k))) {
-        iniText = feederConfig.setIni(iniText, sec, k, v);
+    if (manifest.route !== 'renodx') {
+      const feederConfig = require('./feeder-config');
+      const reshadeIniPath = path.join(targetDir, 'ReShade.ini');
+      const isDesktopProfile = hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx50_desktop';
+      const isHost64 = targetDir !== exeDir;
+      const isFeederRoute = isHost64 || manifest.route === 'feeder';
+      const hasNativeStreamline = !isFeederRoute && scan.streamlineFiles.some(file => !file.featureMismatch && file.bitness === bitness);
+      let iniText = feederConfig.readText(reshadeIniPath);
+      if (!hasNativeStreamline && !isFeederRoute) {
+        iniText = feederConfig.editIniField(iniText, 'RenoDX.DLSS5', 'EnableHooks', null);
       }
+      const nrSettings = [
+        ['OVERLAY', 'UiLanguage', 'zh-Hans'],
+        ['ADDON', 'AddonPath', '.\\'],
+        ['RenoDX DLSS', 'NRPasses', '1'],
+        ['RenoDX.DLSS5', 'ConfigVersion', '7'],
+        ...(isFeederRoute
+          ? [['RenoDX.DLSS5', 'EnableHooks', '2'], ['RenoDX.DLSS5', 'NREnableUpscaling', '0']]
+          : (hasNativeStreamline ? [['RenoDX.DLSS5', 'EnableHooks', '1']] : [])),
+        ['RenoDX.DLSS5', 'NeuralUplift', '1'],
+        ['RenoDX.DLSS5', 'NRAutoMask', '0'],
+        ['RenoDX.DLSS5', 'NRChainedHistory', '1'],
+        ['RenoDX.DLSS5', 'NRChromaClamp', '1'],
+        ['RenoDX.DLSS5', 'NRCodecMode', '2'],
+        ['RenoDX.DLSS5', 'NRColorStrength', '1'],
+        ['RenoDX.DLSS5', 'NRDepthMode', '0'],
+        ['RenoDX.DLSS5', 'NRDetailStability', '0'],
+        ['RenoDX.DLSS5', 'NRDiffuseWhiteNits', '203'],
+        ['RenoDX.DLSS5', 'NRFollowInputRes', '0'],
+        ['RenoDX.DLSS5', 'NRGlobalTone', '1'],
+        ['RenoDX.DLSS5', 'NRGpuTimers', '0'],
+        ['RenoDX.DLSS5', 'NRIntensity', '1'],
+        ['RenoDX.DLSS5', 'NRLinearUnitNits', '0'],
+        ['RenoDX.DLSS5', 'NRLocalStructure', '1'],
+        ['RenoDX.DLSS5', 'NRLocalTone', '1'],
+        ['RenoDX.DLSS5', 'NRLookMode', '0'],
+        ['RenoDX.DLSS5', 'NRLookUpsample', '1'],
+        ['RenoDX.DLSS5', 'NRMaxWorksets', isDesktopProfile ? '8' : '4'],
+        ['RenoDX.DLSS5', 'NRMVecScaleX', '1'],
+        ['RenoDX.DLSS5', 'NRMVecScaleY', '1'],
+        ['RenoDX.DLSS5', 'NRNormAttackStops', '4'],
+        ['RenoDX.DLSS5', 'NRNormGovernor', '2'],
+        ['RenoDX.DLSS5', 'NRNormReleaseStops', '0.5'],
+        ['RenoDX.DLSS5', 'NRNormSlewStops', '0.02'],
+        ['RenoDX.DLSS5', 'NRPaperWhiteScale', '2.5375'],
+        ['RenoDX.DLSS5', 'NRPasses', '1'],
+        ['RenoDX.DLSS5', 'NRPQCalibration', '1'],
+        ['RenoDX.DLSS5', 'NRPreset', '0'],
+        ['RenoDX.DLSS5', 'NRPreUpscale', '0'],
+        ['RenoDX.DLSS5', 'NRProxyAnchor', '4'],
+        ['RenoDX.DLSS5', 'NRResolutionScale', isDesktopProfile ? '1' : '0.75'],
+        ['RenoDX.DLSS5', 'NRResponse', '1'],
+        ['RenoDX.DLSS5', 'NRScreenshotKey', '116'],
+        ['RenoDX.DLSS5', 'NRSkinIndependent', '1'],
+        ['RenoDX.DLSS5', 'NRSkinStructure', '-1'],
+        ['RenoDX.DLSS5', 'NRSourceEncoding', '0'],
+        ['RenoDX.DLSS5', 'NRSourcePrimaries', '0'],
+        ['RenoDX.DLSS5', 'NRStyle', '0'],
+        ['RenoDX.DLSS5', 'NRToggleKey', isHost64 ? '0' : '117'],
+        ['RenoDX.DLSS5', 'NRTransferMode', '0'],
+        ['RenoDX.DLSS5', 'NRTransferStrength', '1'],
+        ['RenoDX.DLSS5', 'NRUICorrection', '0'],
+        ['RenoDX.DLSS5', 'NRHookPoint', '0'],
+        ['RenoDX.DLSS5', 'UiLanguage', 'zh-Hans']
+      ];
+      // Reapplying NR should not erase tuning made in the in-game panel. Only
+      // loader requirements are mandatory; a profile change updates its resource
+      // budget, while an explicit reset restores the complete managed defaults.
+      const previousProfile = manifest.neuralRendering?.hardwareProfile || manifest.hardwareProfile;
+      const profileChanged = !!previousProfile && previousProfile !== hardwareProfile;
+      const profileKeys = new Set(['NRResolutionScale', 'NRMaxWorksets']);
+      const requiredKeys = new Set(['ConfigVersion', 'EnableHooks', 'NeuralUplift', 'NREnableUpscaling']);
+      for (const [sec, k, v] of nrSettings) {
+        if (options.resetNeuralTuning === true || feederConfig.getIni(iniText, sec, k) === null ||
+            requiredKeys.has(k) || (isHost64 && k === 'NRToggleKey') ||
+            (profileChanged && profileKeys.has(k))) {
+          iniText = feederConfig.setIni(iniText, sec, k, v);
+        }
+      }
+      await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
     }
-    await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
-    await apply.enableAddonInIni(targetDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
+    const consumerName = manifest.route === 'renodx' ? 'renodx-dlss.addon64' : 'renodx-dlss5.addon64';
+    await apply.enableAddonInIni(targetDir, consumerName, (code, params) => onLog({ code, params }), gameDir, manifest, effectivePayloadDir);
 
     // 同步部署 DLSS 超分基础运行时栈（笔记本 40 系列与 40 系桌面卡默认使用黄金稳定版 310.9.1.0，防止与游戏内置 sl.dlss 发生 ABI 冲突导致 game_failed）
-    const effectiveStack = runtimeStack || (hardwareProfile === 'rtx50_desktop' ? 'oct2026-310.9.16' : 'baseline-310.9.1');
     if (effectiveStack && effectivePayloadDir) {
       const stackDir = effectiveStack === 'oct2026-310.9.16'
         ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16')
@@ -1113,19 +1158,21 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
         const destDlss = path.join(targetDir, 'nvngx_dlss.dll');
         await apply.copyTracked(manifest, gameDir, srcDlss, destDlss, {
           kind: 'runtime',
+          runtimeBitness: 64,
           newVersion: newDlssVer
         });
         // 针对破解版 / 离线免安装版 UE4/UE5 与 Unity 游戏中藏在深层插件子目录的低版本 nvngx_dlss.dll (2.x/3.x)，
         // 自动执行深层原位备份升级，并同步放置 nvngx_dlssnr.dll（排除 ABI 不兼容的远古 DLSS 1.x）
         const seenDirs = new Set([path.resolve(targetDir).toLowerCase()]);
         for (const item of scan.dlssFiles || []) {
-          if (!/^(nvngx_dlss|_?nvngx)\.dll$/i.test(item.name)) continue;
-          if (item.bitness && item.bitness !== 64) continue;
+          if (item.featureMismatch || !/^nvngx_dlss\.dll$/i.test(item.name)) continue;
+          if (item.bitness !== 64) continue;
           if (item.version && /^1\./.test(String(item.version).trim())) continue;
           const normItem = path.resolve(item.path).toLowerCase();
           if (normItem !== path.resolve(destDlss).toLowerCase() && fs.existsSync(item.path)) {
             await apply.copyTracked(manifest, gameDir, srcDlss, item.path, {
               kind: 'runtime',
+              runtimeBitness: 64,
               newVersion: newDlssVer
             });
           }
@@ -1135,6 +1182,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
             seenDirs.add(normDir);
             await apply.copyTracked(manifest, gameDir, chosenModel.filePath, path.join(itemDir, 'nvngx_dlssnr.dll'), {
               kind: 'runtime',
+              runtimeBitness: 64,
               newVersion: binaryCheck.version
             });
           }
@@ -1153,28 +1201,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
       }
     }
 
-    manifest.hardwareProfile = hardwareProfile;
-    manifest.neuralRendering = {
-      mode,
-      modelId: chosenModel.id,
-      modelVersion: binaryCheck.version,
-      sha256: binaryCheck.sha256,
-      architectures: binaryCheck.architectures,
-      runtimeStack: effectiveStack || 'baseline-310.9.1',
-      hardwareProfile,
-      updatedAt: new Date().toISOString()
-    };
-    await apply.saveActiveManifest(gameDir, manifest);
-
-    return {
-      ok: true,
-      mode,
-      modelId: chosenModel.id,
-      version: binaryCheck.version,
-      sha256: binaryCheck.sha256,
-      hardwareProfile,
-      compatibility: compat
-    };
+    return saveSelection();
   });
 }
 
@@ -1183,6 +1210,7 @@ function getHardwareProfileInfo(profileId = 'rtx40_laptop') {
 }
 
 module.exports = {
+  hasNeuralAddon,
   HARDWARE_PROFILES,
   getHardwareProfileInfo,
   MODEL_DATABASE,

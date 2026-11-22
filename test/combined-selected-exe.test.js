@@ -5,6 +5,20 @@ const {writePe} = require('./fixtures/pe');
 const {scanGame} = require('../src/core/scan');
 const combined = require('../src/core/combined-manager');
 const backend = require('../src/core/backend-manager');
+const apply = require('../src/core/apply');
+
+test('changing NR on a different executable cannot redirect the installed renderer receipt', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(),'nf-route-owner-'));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const installed = writePe(path.join(root,'Game.exe'),{text:'D3D12CreateDevice'});
+  const other = writePe(path.join(root,'Other','Other.exe'),{text:'D3D12CreateDevice'});
+  const manifest = apply.beginManifest(root,installed,'dxgi');
+  manifest.route = 'renodx';
+  await apply.saveActiveManifest(root,manifest);
+  t.mock.method(require('../src/core/install-guards'),'assertGameClosed',async()=>{});
+  await assert.rejects(combined.applyCombinedConfiguration(root,{exePath:other,neuralMode:'off'}),/所选游戏程序/);
+  assert.deepEqual(backend.readManifest(root),manifest);
+});
 
 for (const [feature, options, addon] of [
   ['MFG', {mfgMode:'off'}, 'renodx-mfgunlock.addon64'],

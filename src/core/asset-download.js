@@ -9,6 +9,7 @@ const MiB = 1024 * 1024;
 const idleMs = 60_000;
 class RangeUnsupported extends Error {}
 class Interrupted extends Error {}
+class ResumedChecksumMismatch extends Error {}
 
 // One small first request discovers range support. An ordinary 200 response
 // can be consumed immediately without opening more connections.
@@ -21,14 +22,16 @@ function ranges(size) {
   return parts;
 }
 
-async function transfer({ fetcher, url, originalUrl, signal, size, destination, part, allowFull, progress, rememberEndpoint }) {
+async function transfer({ fetcher, url, originalUrl, signal, size, destination, part, allowFull, progress, rememberEndpoint, connections }) {
   const idle = new AbortController();
   const requestSignal = AbortSignal.any([signal, idle.signal]);
   const timer = setTimeout(() => idle.abort(new Interrupted('下载连接长时间未传输数据，请重试。')), idleMs);
   const start = part && part.start + part.saved;
   let handle;
+  let incompleteFullResponse = false;
   try {
     requestSignal.throwIfAborted();
+    connections?.(1);
     const headers = part ? { Range: `bytes=${start}-${part.end}` } : {};
     const response = await fetcher(url, { signal: requestSignal, headers });
     const partial = part && response.status === 206;
@@ -45,6 +48,7 @@ async function transfer({ fetcher, url, originalUrl, signal, size, destination, 
     const expected = partial ? part.end - start + 1 : size;
     if (!partial) progress(0, true);
     handle = await fs.promises.open(partial ? part.file : destination, partial ? 'a' : 'wx');
+    incompleteFullResponse = !partial;
     let received = 0;
     for await (const chunk of response.body) {
       requestSignal.throwIfAborted();
@@ -56,14 +60,18 @@ async function transfer({ fetcher, url, originalUrl, signal, size, destination, 
       progress(chunk.length);
     }
     if (received !== expected) throw new Interrupted('组件下载不完整，请重试。');
+    incompleteFullResponse = false;
     return !partial;
   } catch (err) {
     if (idle.signal.aborted && !signal.aborted) throw idle.signal.reason;
     throw err;
   } finally {
     clearTimeout(timer);
+    connections?.(-1);
     idle.abort();
     if (handle) await handle.close();
+    // Only the ranged files can be resumed. A retry needs a fresh final path.
+    if (incompleteFullResponse) await fs.promises.rm(destination, {force: true});
   }
 }
 
@@ -77,8 +85,6 @@ async function transferPart(options) {
       const networkError = err instanceof TypeError || /^net::ERR_(CONNECTION|NETWORK|TIMED_OUT)/.test(err.message);
       if (attempt >= 2 || !(err instanceof Interrupted || networkError)) throw err;
       if (options.part.saved === options.part.end - options.part.start + 1) return false;
-      // A server that ignored Range may have already started a full response.
-      if (options.allowFull) await fs.promises.rm(options.destination, { force: true });
       await delay(500 * (attempt + 1), undefined, { signal: options.signal });
     }
   }
@@ -92,11 +98,11 @@ async function downloadAssetCore({ url, size, sha256 }, { cacheRoot, destination
     throw Error('组件下载大小或 SHA-256 无效。');
   }
   signal.throwIfAborted();
-  let loaded = 0, last = 0;
+  let loaded = 0, last = 0, activeConnections = 0;
   function progress(bytes, reset = false) {
     loaded = reset ? bytes : loaded + bytes;
     if (reset || loaded === size || Date.now() - last >= 200) {
-      onProgress(loaded);
+      onProgress(loaded, {connections:activeConnections});
       last = Date.now();
     }
   }
@@ -105,8 +111,9 @@ async function downloadAssetCore({ url, size, sha256 }, { cacheRoot, destination
     // Reuse a fresh GitHub release redirect within this download only.
     if (new URL(value).origin === 'https://release-assets.githubusercontent.com') endpoint = value;
   };
-  const options = { url, originalUrl: url, size, fetcher, signal, destination, progress, rememberEndpoint };
-  let partsDir;
+  const options = { url, originalUrl: url, size, fetcher, signal, destination, progress, rememberEndpoint,
+    connections:delta => { activeConnections = Math.max(0, activeConnections + delta); } };
+  let partsDir, reusedRanges = false;
   if (size < 8 * MiB) {
     progress(0, true);
     await transfer(options);
@@ -126,6 +133,7 @@ async function downloadAssetCore({ url, size, sha256 }, { cacheRoot, destination
       }
       loaded += part.saved;
     }
+    const loadedFromDisk = loaded;
     progress(loaded, true);
     const missing = parts.filter(part => part.saved < part.end - part.start + 1);
     let full = false;
@@ -157,6 +165,7 @@ async function downloadAssetCore({ url, size, sha256 }, { cacheRoot, destination
       full = true;
     }
     if (!full) {
+      reusedRanges = loadedFromDisk > 0;
       const archive = await fs.promises.open(destination, 'wx');
       try {
         for (const part of parts) {
@@ -176,7 +185,9 @@ async function downloadAssetCore({ url, size, sha256 }, { cacheRoot, destination
     // A rejected archive is never retried from disk; the staging file would
     // only collide with the next 'wx' open.
     await fs.promises.rm(destination, { force: true }).catch(() => {});
-    throw Error('组件下载 SHA-256 不匹配，请重试。');
+    const message = '组件下载 SHA-256 不匹配，请重试。';
+    if (reusedRanges) throw new ResumedChecksumMismatch(message);
+    throw Error(message);
   }
   signal.throwIfAborted();
 }
@@ -195,9 +206,16 @@ async function removePartials(cacheRoot, sha256) {
 async function downloadAsset(spec, options) {
   const { cacheRoot, destination } = options;
   try {
-    return await downloadAssetCore(spec, options);
+    try {
+      return await downloadAssetCore(spec, options);
+    } catch (error) {
+      if (!(error instanceof ResumedChecksumMismatch)) throw error;
+      // A prior transfer supplied some ranges. Retry once from this source alone.
+      return await downloadAssetCore(spec, options);
+    }
   } catch (error) {
-    if (options.signal?.aborted && options.purgeOnAbort !== false) {
+    const purge = typeof options.purgeOnAbort === 'function' ? options.purgeOnAbort() : options.purgeOnAbort;
+    if (options.signal?.aborted && purge !== false) {
       await removePartials(cacheRoot, spec.sha256);
       await fs.promises.rm(destination, { force: true }).catch(() => {});
     }

@@ -1,5 +1,7 @@
 <h1 align="center">DLSS 5 Swapper Enhanced (v2.3.0-Enhanced)</h1>
 
+> 上游历史文档：以下截图、命令和功能说明对应 Enhanced 2.3.0。当前 NeuralFrame 请见[项目首页](../README.md)和[开发与构建](BUILDING.md)。
+
 <p align="center">
   <b>最新 DLSS 5 神经渲染 · RTX 40 系列动态多帧生成解锁 & RTX 50 系列原生满血直通 · 100% 离线一键支持 DX8/DX9/DX10/DX11/OpenGL/32位老游戏 · 游戏内 Home 菜单全量零崩溃简体中文化</b><br/>
   <sub>全面适配 RTX 40 系列笔记本（省显存优化）、RTX 40 系列桌面卡与 RTX 50 系列原生显卡 · 100% 永久免费开源</sub>
@@ -8,7 +10,7 @@
 > [!IMPORTANT]
 > ### 🛡️ 独立开源分支与法律合规声明 (Independent MIT Fork & Non-Affiliation Notice)
 > - **中文声明**：本项目（`DLSS 5 Swapper Enhanced`）是基于原开源版本（`v2.2.9`）在 **MIT 许可证（MIT License）** 不可撤销授权下合法衍生的**独立开源社区分支**，由 `skyi7943-cmd` 独立重构与维护。本项目**与原作者（Rakan Alkhaldi）、任何第三方付费下载网站（如 `dlss5swapper.org` 等收费站点）以及 NVIDIA Corporation 均无任何商业隶属、背书或合作关系**。本项目已彻底移除所有指向原作者私有服务器（`5.rakanki.com`）的网络请求与自动升级逻辑，100% 纯本地离线安全运行，且**永久免费开源**。
-> - **English Legal Notice**: **DLSS 5 Swapper Enhanced** is an independent, non-commercial community fork and derivative work based on the MIT-licensed codebase publicly released prior to v2.2.9. Under copyright law and the explicit terms of the [MIT License](LICENSE), the grant to use, copy, modify, merge, publish, and distribute the MIT-licensed software is perpetual and irrevocable. All original copyright notices (`Copyright (c) 2026 Rakan Alkhaldi`) are preserved in [`LICENSE`](LICENSE). **This project is NOT affiliated with, endorsed by, or connected to the original author, `dlss5swapper.org` (or any third-party paywall website), or NVIDIA Corporation.** All upstream private API servers (`5.rakanki.com`) have been permanently disconnected.
+> - **English Legal Notice**: **DLSS 5 Swapper Enhanced** is an independent, non-commercial community fork and derivative work based on the MIT-licensed codebase publicly released prior to v2.2.9. Under copyright law and the explicit terms of the [MIT License](../LICENSE), the grant to use, copy, modify, merge, publish, and distribute the MIT-licensed software is perpetual and irrevocable. All original copyright notices (`Copyright (c) 2026 Rakan Alkhaldi`) are preserved in [`LICENSE`](../LICENSE). **This project is NOT affiliated with, endorsed by, or connected to the original author, `dlss5swapper.org` (or any third-party paywall website), or NVIDIA Corporation.** All upstream private API servers (`5.rakanki.com`) have been permanently disconnected.
 
 ---
 
@@ -57,29 +59,29 @@
 ### 3. 游戏内实测截图展示
 
 #### （1）开启 DLSS 超分 + DLSS 5 神经渲染 + MFG 多帧生成实机画面
-![开启 DLSS 5 神经渲染与 MFG 多帧生成实机画面](docs/screenshots/ingame-hitman3-scene.jpg)
+![开启 DLSS 5 神经渲染与 MFG 多帧生成实机画面](screenshots/ingame-hitman3-scene.jpg)
 
 #### （2）游戏内 `Home` 菜单 — `DLSS 5 Neural Rendering` 全中文实时状态与外观微调面板
-![游戏内 Home 菜单 DLSS 5 神经渲染中文面板 1](docs/screenshots/ingame-dlss5-nr-panel-1.png)
+![游戏内 Home 菜单 DLSS 5 神经渲染中文面板 1](screenshots/ingame-dlss5-nr-panel-1.png)
 
 #### （3）游戏内 `Home` 菜单 — `DLSS 5 Neural Rendering` 性能、单通道叠加与省显存分辨率面板
-![游戏内 Home 菜单 DLSS 5 神经渲染中文面板 2](docs/screenshots/ingame-dlss5-nr-panel-2.png)
+![游戏内 Home 菜单 DLSS 5 神经渲染中文面板 2](screenshots/ingame-dlss5-nr-panel-2.png)
 
 #### （4）游戏内 `Home` 菜单 — `MFG多帧生成` 全中文控制面板（DLSS-G 310.9.16 + 动态多帧生成 + 自适应画质套件 V3）
-![游戏内 Home 菜单 MFG 多帧生成解锁全中文面板](docs/screenshots/ingame-mfg-unlock-panel-zh.png)
+![游戏内 Home 菜单 MFG 多帧生成解锁全中文面板](screenshots/ingame-mfg-unlock-panel-zh.png)
 
 ---
 
 ## 三、DLSS 5 Swapper Enhanced 软件界面截图
 
 #### （1）游戏库主界面（全中文界面、自动识别已安装游戏与图形 API）
-![软件主界面 - 游戏库](docs/screenshots/app-games-library.png)
+![软件主界面 - 游戏库](screenshots/app-games-library.png)
 
 #### （2）`DLSS 5 + MFG` 增强控制中心（三档硬件选择菜单 + 极简三键式中文载入）
-![软件界面 - DLSS 5 + MFG 增强控制中心](docs/screenshots/app-enhanced-control-center.png)
+![软件界面 - DLSS 5 + MFG 增强控制中心](screenshots/app-enhanced-control-center.png)
 
 #### （3）双模块联合运行 7 项诊断、显存预算监控与模型版本库
-![软件界面 - 7 项协同诊断与显存监控](docs/screenshots/app-enhanced-diagnostics.png)
+![软件界面 - 7 项协同诊断与显存监控](screenshots/app-enhanced-diagnostics.png)
 
 ---
 
@@ -100,7 +102,7 @@
 ## 五、快速使用指南
 
 ### 1. 支持原生 DLSS 的新游戏（DirectX 12 / Vulkan）
-1. 前往 **[Releases](../../releases)** 下载并运行最新便携版 **`DLSS5-Swapper-Enhanced-2.3.0-portable.exe`**。
+1. 前往 **[Enhanced Releases](https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/releases)** 查找本历史版本的便携版 **`DLSS5-Swapper-Enhanced-2.3.0-portable.exe`**。
 2. 在左侧选中目标游戏，在顶部切换适合您显卡的硬件档位（**`💻 笔记本 40 系列`** / **`🖥️ 40 系桌面卡`** / **`🔥 50 系列桌面卡`**）。
 3. 点击下方极简三键中的任意一项：
    - **🚀 同时载入 DLSS 5 + MFG 多帧生成**（推荐）
@@ -136,9 +138,9 @@ npx.cmd electron-builder --win portable
 - **MIT 开源授权 (Irrevocable MIT License)**：
   - `Copyright (c) 2026 Rakan Alkhaldi`（Original MIT-licensed codebase up to v2.2.9）
   - `Copyright (c) 2026 skyi7943-cmd`（Enhanced Edition: RTX 40/50 Series Adaptation, Super-Resolution VRAM Saving Architecture & Zero-Crash Simplified Chinese In-Game Localization）
-  - 完整许可证文本见 [`LICENSE`](LICENSE)。
+  - 完整许可证文本见 [`LICENSE`](../LICENSE)。
 - **非官方关联与反收费声明 (Non-Affiliation & Anti-Paywall Statement)**：
   - 本仓库系独立维护的开源衍生版本，与原作者个人及 `dlss5swapper.org` 等任何第三方收费网站无任何关联；
   - 软件已完全切断外部私有 API 通信，不收集任何用户数据，100% 纯本地运行。
-- **第三方组件致谢与许可证**（详见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)）：
+- **第三方组件致谢与许可证**（详见 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)）：
   - **ReShade** (`BSD-3-Clause`) · **MFGAdaUnlock-RenoDx** (`MIT License`) · **OptiScaler** (`GPL-3.0`) · **NVIDIA NGX / DLSS / Streamline Runtime DLLs**（归 NVIDIA Corporation 所有）。

@@ -1,8 +1,8 @@
 import { Download } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { getBridge } from "../bridge";
-import { Select } from "../components";
-import { defaultStack, errorText, modelArchitectureLimit, neuralChoice, profiles } from "../domain";
+import { navigateRadioGroup, Select } from "../components";
+import { defaultStack, errorText, mfgGpuReason, modelArchitectureLimit, neuralChoice, neuralGpuReason, otherRunningExecutable, profiles, sameExecutable } from "../domain";
 import { dateTime, t } from "../i18n";
 import type { Draft, Runtime, RuntimeStack, Status } from "../types";
 import { profileCardCopy, inputOptions as originalInputs } from "./profileCardCopy";
@@ -23,10 +23,10 @@ function nativeFileVersion(file?: { rel: string; version: string | null }) {
   return file ? <span title={file.rel}>{file.version || t("版本未知")}</span> : t("未检测到");
 }
 
-function MultiplierReading({ dir }: { dir: string }) {
+function MultiplierReading({ dir, exePath, active }: { dir: string; exePath?: string; active:boolean }) {
   const [reading, setReading] = useState<Runtime>();
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!reading) return;
@@ -45,67 +45,70 @@ function MultiplierReading({ dir }: { dir: string }) {
       document.removeEventListener("visibilitychange", update);
     };
   }, [reading]);
-  async function inspect() {
-    setBusy(true);
-    setError("");
-    try {
-      const result = await getBridge().componentRuntime(dir);
-      if (!result.ok) throw Error(result.message || t("检测失败"));
-      setReading(result);
-    } catch (e) { setReading(undefined); setError(errorText(e)); }
-    finally { setBusy(false); }
-  }
-  const sample = reading?.mfg;
+  useEffect(() => {
+    if (!active) return;
+    let alive = true, pending = false;
+    const inspect = async () => {
+      if (pending || document.hidden) return;
+      pending = true;
+      try {
+        const result = await getBridge().componentRuntime(dir);
+        if (!result.ok) throw Error(result.message || t("检测失败"));
+        if (alive) { setReading(result); setNow(Date.now()); setError(""); }
+      } catch (e) { if (alive) { setReading(undefined); setError(errorText(e)); } }
+      finally { pending = false; }
+    };
+    void inspect();
+    // Runtime telemetry becomes stale visibly after 30 seconds. Refresh on
+    // demand/window return instead of spawning PowerShell every 10 seconds.
+    document.addEventListener("visibilitychange",inspect);
+    return () => { alive = false; document.removeEventListener("visibilitychange",inspect); };
+  }, [dir,active,retry]);
+  const other = otherRunningExecutable(reading,exePath);
+  const sample = other ? undefined : reading?.mfg;
   const stale = !!reading && now - (sample?.at || reading.checkedAt) > 30000;
   const fpsStale = !!sample?.fpsAt && now - sample.fpsAt > 30000;
   const fpsRatio = !stale && !fpsStale && sample?.state === "active" && sample.sourceFps && sample.sourceFps > 0 &&
     sample.reportedOutputFps && sample.reportedOutputFps > 0 ? sample.reportedOutputFps / sample.sourceFps : null;
   return <div className="multiplier-reading">
-    <span aria-live="polite">{error || (sample ? t(stale ? "运行记录已过期" : sample.label) : t("等待本次运行采样"))}</span>
+    <span aria-live="polite">{error || (stale ? t("运行记录已过期") : other ? t("正在运行的是其他程序：{0}",[other]) : sample ? t(sample.label) : t("等待本次运行采样"))}</span>
     {fpsRatio != null && <small>{t("插件输出 / 基础帧率 ≈ {0}×", [fpsRatio.toFixed(2)])}</small>}
     {reading && <small>{dateTime(reading.checkedAt)}
       {!stale && sample?.state === "active" && sample.appliedMultiplier ? " · " + t("已应用请求 {0}×", [sample.appliedMultiplier]) : ""}
     </small>}
-    <button type="button" disabled={busy} onClick={() => void inspect()}>{t(busy ? "正在检测…" : "检测倍率")}</button>
+    <button type="button" className="component-text-button" onClick={() => setRetry(value => value + 1)}>{t("刷新检测")}</button>
   </div>;
 }
 
 type ModeOption = [string, string, string];
 
-function Modes({ label, value, options, onChange }: {
+export function Modes({ label, value, options, onChange }: {
   label: string; value: string; options: ModeOption[];
   onChange: (value: string) => void;
 }) {
-  return <div className="module-modes" role="radiogroup" aria-label={t(label)} onKeyDown={e => {
-      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
-      e.preventDefault();
-      const buttons = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
-      if (!buttons.length) return;
-      const current = buttons.indexOf(e.target as HTMLButtonElement);
-      const next = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 :
-        (current + (["ArrowRight", "ArrowDown"].includes(e.key) ? 1 : -1) + buttons.length) % buttons.length;
-      buttons[next].click(); buttons[next].focus();
-    }}>
-      {options.map(([id, title, hint]) => <button key={id} type="button" role="radio"
-        aria-checked={id === value} tabIndex={id === value ? 0 : -1} onClick={() => onChange(id)}>
+  return <div className="module-modes" role="radiogroup" aria-label={t(label)} onKeyDown={navigateRadioGroup}>
+      {options.map(([id, title, hint],index) => <button key={id} type="button" role="radio"
+        aria-checked={id === value} tabIndex={id === value || index === 0 && !options.some(([option])=>option === value) ? 0 : -1} onClick={() => onChange(id)}>
         <strong>{title}</strong><small>{t(hint)}</small>
       </button>)}
   </div>;
 }
 
-export function GraphicsPanels({ status, exePath, draft, onChange, onApply, onBrowseModels, profileNotes, gameDir, showGameDetails = false, active = true, onRuntime, neuralAdvanced, engineControl, onResetTuning, resetPending }: {
+export function GraphicsPanels({ status, exePath, draft, onChange, onApply, onBrowseModels, profileNotes, gameDir, active = true, onRuntime, neuralAdvanced, engineControl, engineChoice, selectedEngineName, alternative, onResetTuning, resetPending, mfgSupported = true, mfgIssue, noNativeDlss = false, nrRoute, setupPending = false, hostStack = false }: {
   status: Status; exePath?: string; draft: Draft;
   onChange: (patch: Partial<Draft>) => void;
   onApply: (scope: "neural" | "mfg") => void;
   onBrowseModels: () => void;
   profileNotes?: { neural: string; mfg: string };
   gameDir: string;
-  showGameDetails?: boolean;
   active?: boolean;
   onRuntime?: (value: Runtime | null) => void;
   neuralAdvanced?:ReactNode; engineControl?:ReactNode; onResetTuning?:()=>void; resetPending?:boolean;
+  engineChoice?:ReactNode; selectedEngineName?:string; mfgSupported?:boolean; mfgIssue?:string|null; noNativeDlss?:boolean; nrRoute?:string; setupPending?:boolean; hostStack?:boolean;
+  alternative?:{ fields:ReactNode; neuralControl?:ReactNode; supportedModes:string; blocked:boolean };
 }) {
   const nr = status.neural, mfg = status.mfg;
+  const targetInspected = !exePath || !status.exePath || sameExecutable(status.exePath,exePath);
   const protectedGame = status.launcherProtected;
   const nativeStack = status.nativeRuntimeStack;
   const nativeStackHint = t(nativeStack?.indexMissing
@@ -115,16 +118,17 @@ export function GraphicsPanels({ status, exePath, draft, onChange, onApply, onBr
   const blackwell = mfg?.gpuSupport?.nativeX3X4 === true;
   const profile = t(copy?.label || profiles.find(([id]) => id === status.hardwareProfile)?.[1] || "未识别");
   const models = nr?.availableModels || [];
-  const otherModels = models.map(m => [m.id, [m.name || m.id, m.architectures?.map(sm => "sm_" + sm).join("/"),
+  const modelsById = new Map(models.map(m => [m.id, m]));
+  const modelOptions = models.map(m => [m.id, [m.name || m.id, m.architectures?.map(sm => "sm_" + sm).join("/"),
     t(m.availableOnDisk ? "已入库" : m.downloadable ? "按需下载" : m.sha256 ? "未导入" : "仅目录记录")].filter(Boolean).join(" · ")]);
-  const modelOptions = otherModels;
   if (!modelOptions.some(([id]) => id === "310.8.SF-v2"))
     modelOptions.unshift(["310.8.SF-v2", "310.8.SF-v2 · SmarterGamers · " + t("按需下载")]);
   if (protectedGame && nr?.currentModel?.id && !modelOptions.some(([id]) => id === nr.currentModel?.id))
     modelOptions.push([nr.currentModel.id, nr.currentModel.name || nr.currentModel.id]);
   const gpu = status.hardware?.gpu;
+  const noNvidia = gpu?.nvidiaPresent === false;
   const labeledModels = modelOptions.map(([id, label]) => {
-    const entry = models.find(m => m.id === id)
+    const entry = modelsById.get(id)
       || (nr?.currentModel?.id === id ? nr.currentModel : undefined);
     const limit = entry && modelArchitectureLimit(entry, gpu?.architecture?.sm, status.hardwareProfileInfo?.sm);
     return [id, limit ? t(limit) + " · " + t(label) : label];
@@ -146,14 +150,24 @@ export function GraphicsPanels({ status, exePath, draft, onChange, onApply, onBr
     : communityModes ? supportedModes : support?.unlockRequiredForX3X4 ? "2× 原生 · 3× / 4× 社区支持，需游戏验证" : supportedModes;
   const savedMode = mfg?.currentConfig?.mode;
   const savedModeLabel = savedMode === "dynamic" ? t("动态 · 由运行库调节倍率") : savedMode === "follow" ? t("跟随游戏") : savedMode === "off" ? t("关闭") : savedMode?.startsWith("x") ? savedMode.slice(1) + "×" : t("未记录");
+  const hostControlsFrames = status.graphicsRoute?.route === "optifg" || status.graphicsRoute?.route === "xemfg-optiscaler";
+  const savedModeFact: [string, string] = hostControlsFrames ? ["补帧设置", t("OptiScaler 游戏内菜单")] : status.graphicsRoute
+    ? ["已保存倍率上限", status.graphicsRoute.multiplier ? status.graphicsRoute.multiplier + "×" : t("未记录")]
+    : ["已保存倍率", savedModeLabel];
   const dlssg = mfg?.dlssg;
-  const targetVersion = protectedGame ? undefined : stacks.find(stack => stack.id === "oct2026-310.9.16")?.dlssgVersion;
+  const targetVersion = protectedGame || alternative ? undefined : stacks.find(stack => stack.id === "oct2026-310.9.16")?.dlssgVersion;
   const sl = mfg?.streamline;
   const knownGame = mfg?.knownGame;
   const gameCompatibility = [status.graphicsApi, status.bitness && status.bitness + "-bit", knownGame?.title,
     t(knownGame?.notes || "未收录游戏专用兼容说明，请以运行检测和实际画面为准。")].filter(Boolean).join(" · ");
   const targetArch = status.hardwareProfileInfo?.sm ? `CUDA sm_${status.hardwareProfileInfo.sm}` : t("未识别");
   const latest = models.find(m => m.role === "latest_compatible");
+  const sm = gpu?.architecture?.sm;
+  const comparedModel = model || modelsById.get(draft.neuralModelId);
+  const kernels = sm && comparedModel?.smCounts?.[sm];
+  const octoberModel = modelsById.get("310.9.16");
+  const selectedStack = stacks.find(stack=>stack.id === draft.runtimeStack);
+  const plannedStack = !protectedGame && !hostStack && selectedStack ? stackVersions(selectedStack) : undefined;
   const neuralFacts: [string, ReactNode][] = copy ? [
     ["当前硬件档位 (Hardware Profile)", profile],
     ["当前模型 (Current Model)", model ? (model.name || model.id) + (model.version ? " (" + model.version + ")" : "") : t("未安装 (Off)")],
@@ -167,26 +181,40 @@ export function GraphicsPanels({ status, exePath, draft, onChange, onApply, onBr
     ["当前模型", model ? (model.name || model.id) + " · " + (model.version || "—") : t(nr?.installed ? "未识别" : deployment)],
     ["本地推荐模型", recommended ? [recommended.name || recommended.id, recommended.version].filter(Boolean).join(" · ") : t("未找到本地兼容模型")],
     ["已检测 SR 版本", protectedGame ? undefined : nr?.runtimeVersion || t("未检测到")],
-    ["已保存运行库组合", protectedGame ? undefined : savedStack ? stackVersions(savedStack) : t("未记录")],
+    ["已保存运行库组合", protectedGame || hostStack ? undefined : savedStack ? stackVersions(savedStack) : t("未记录")],
     ["GPU 兼容性", [gpu?.name, gpu?.architecture?.sm && gpu.architecture.family + " · sm_" + gpu.architecture.sm, t(gpuCheck?.reason || "尚未检测")].filter(Boolean).join(" · ")],
+    ["安装状态 (Install Status)", t(deployment)],
   ];
   const mfgFacts: [string, ReactNode][] = copy ? [
     ["当前补帧档位 (MFG Profile)", profile],
     ["当前显卡 (Current GPU)", gpu?.name || t("未识别")],
     ["DLSS-G 版本 (DLSS-G Version)", protectedGame ? (nativeStack?.indexAvailable ? nativeFileVersion(nativeStack.fg) : nativeStackHint) : dlssg?.exists ? (dlssg.version || "—") + " (" + t(dlssg.valid ? "原生 NVIDIA NGX DLSS-G" : "非原生 DLL") + ")" :
       dlssg?.exists === false && targetVersion ? t("未部署 (应用时自动部署 {0})", [targetVersion]) : t("未检测到")],
-    ["支持模式 (Supported Modes)", t(detectedModes)],
-    [protectedGame ? "已保存补帧控制" : "实际生效倍率 (Effective Multiplier)", protectedGame ? savedModeLabel : gameDir && <MultiplierReading key={gameDir} dir={gameDir} />],
+    ["支持模式 (Supported Modes)", alternative?.supportedModes || t(noNvidia ? mfgGpuReason : mfgSupported ? detectedModes : mfgIssue || "多帧生成需要 64 位 DirectX 12 或 Vulkan 游戏。")],
+    [protectedGame ? "已保存补帧控制" : "实际生效倍率 (Effective Multiplier)", protectedGame ? savedModeLabel : gameDir && <MultiplierReading key={gameDir} dir={gameDir} exePath={exePath} active={active} />],
     ["当前游戏兼容性 (Game Compatibility)", protectedGame ? t("鸣潮启动器兼容路线 · version.dll") : knownGame ? knownGame.title + " (" + t(knownGame.notes) + ")" : gameCompatibility],
   ] : [
     ["当前补帧档位", profile], ["当前显卡", gpu?.name || t("未识别")],
     ["DLSS-G 版本", protectedGame ? (nativeStack?.indexAvailable ? nativeFileVersion(nativeStack.fg) : nativeStackHint) :
       dlssg?.exists === false ? [t("未部署"), targetVersion && t("应用补帧时优先部署 {0}", [targetVersion])].filter(Boolean).join(" · ") :
       [dlssg?.version || t("未检测到"), dlssg?.exists && !dlssg.valid && t("文件校验未通过")].filter(Boolean).join(" · ")],
-    ["显卡支持模式", [t("关闭"), t(supportedModes)].join(" / ")],
-    ["已保存倍率", savedModeLabel],
+    ["显卡支持模式", alternative?.supportedModes || (noNvidia ? t(mfgGpuReason) : [t("关闭"), t(supportedModes)].join(" / "))],
+    savedModeFact,
+    ["实际生效倍率 (Effective Multiplier)", !protectedGame && gameDir ? <MultiplierReading key={gameDir} dir={gameDir} exePath={exePath} active={active}/> : undefined],
     ["日志记录的生效倍率", mfg?.runtimeVerification?.effectiveMultiplier ? mfg.runtimeVerification.effectiveMultiplier + "×" : t("未记录")],
   ];
+  neuralFacts.splice(3,0,["2026-10 模型追踪", octoberModel
+    ? [octoberModel.name, t(octoberModel.availableOnDisk ? "已入库" : "按需下载")].join(" · ") : t("无目录记录")]);
+  if (sm && kernels) neuralFacts.push([model ? "当前模型 CUDA 模块" : "所选模型 CUDA 模块",
+    t("sm_{0} · {1} 个模块",[sm,kernels])]);
+  if (!alternative && plannedStack) neuralFacts.push(["待应用运行库组合",plannedStack]);
+  mfgFacts.unshift(["当前所选引擎", selectedEngineName || (protectedGame ? t("鸣潮独立加载器") : t("NVIDIA DLSS 帧生成"))]);
+  const installed = mfg?.currentConfig;
+  const provider = status.graphicsRoute ? (status.graphicsRoute.route === "optifg" ? "OptiScaler · OptiFG" : status.graphicsRoute.route.startsWith("xemfg") ? "MFG Unlocker · XeMFG" : status.graphicsRoute.route.startsWith("anr") ? "ANR FG" : "Dlssg_for_sm86")
+    : protectedGame && mfg?.version ? "MFG Universal" : installed?.backend === "renodx-mfgunlock" ? "MFGAdaUnlock-RenoDX"
+    : installed?.backend === "mfg-unlocker-asi" ? "MFG-Unlocker ASI" : undefined;
+  const providerVersion = status.graphicsRoute ? status.graphicsRoute.providerVersion : mfg?.version || installed?.version;
+  mfgFacts.splice(1,0,[status.graphicsRoute?.route === "optifg" ? "已识别宿主" : "已部署的补帧插件",provider ? provider + " · " + (providerVersion || t("版本未知")) : t("未检测到")]);
   const nrModes: ModeOption[] = copy ? [
     ["off", "Off", "关闭神经渲染"], ["legacy", "Legacy Model", "310.8.0-RTX40 基线"], ["latest_compatible", "Latest Compatible", "最新全兼容模型"],
   ] : [
@@ -203,35 +231,40 @@ export function GraphicsPanels({ status, exePath, draft, onChange, onApply, onBr
   if (protectedGame && ["x5", "x6", "follow"].includes(draft.mfgMode))
     mfgModes.push([draft.mfgMode, draft.mfgMode === "follow" ? t("跟随游戏") : draft.mfgMode.slice(1) + "×", "由游戏面板设置 · 实际支持以运行库为准"]);
   const modelLabel = "神经渲染模型";
-  if (showGameDetails && copy) {
+  if (copy) {
     neuralFacts.push(
       ["本地推荐模型", recommended?.name || recommended?.id || t("未找到本地兼容模型")],
-      ["已保存运行库组合", protectedGame ? undefined : savedStack ? stackVersions(savedStack) : t("未记录")],
+      ["已保存运行库组合", protectedGame || hostStack ? undefined : savedStack ? stackVersions(savedStack) : t("未记录")],
       ["GPU 兼容性", t(gpuCheck?.reason || "尚未检测")],
     );
     mfgFacts.push(
-      ["已保存倍率", savedModeLabel],
+      savedModeFact,
       ["日志记录的生效倍率", mfg?.runtimeVerification?.effectiveMultiplier ? mfg.runtimeVerification.effectiveMultiplier + "×" : t("未记录")],
       ["目标程序", exePath || t("未识别")],
     );
   }
   const stackLabel = protectedGame || copy ? "运行时栈版本 (Streamline / DLSS / Feeder)" : "配套运行库";
   const inputLabel = copy ? "帧生成输入源策略 (QualityGuardMode)" : "帧生成输入源策略";
+  const showMfgControls = !noNativeDlss || (mfgSupported && !noNvidia) || (targetInspected && (installed?.installed || (installed?.mode && installed.mode !== "off") || draft.mfgMode !== "off"));
+  const showNrControls = !noNativeDlss || !noNvidia || (targetInspected && (nr?.installed || (nr?.mode && nr.mode !== "off") || draft.neuralMode !== "off"));
   return <div className="graphics-modules">
-    {protectedGame && status.standaloneProfile && <StandaloneStatus key={gameDir} dir={gameDir} profile={status.standaloneProfile} enabled={draft.neuralMode !== 'off'} active={active} onRuntime={onRuntime} />}
+    {protectedGame && status.standaloneProfile && <StandaloneStatus key={gameDir} dir={gameDir} exePath={exePath} profile={status.standaloneProfile} enabled={draft.neuralMode !== 'off'} active={active} onRuntime={onRuntime} />}
     <section className="graphics-module" data-module="neural" aria-label={t("神经渲染配置")}>
       <header className="module-heading"><div><span className="module-eyebrow">{copy ? t("模块 A · DLSS 5 神经渲染") : "DLSS 5 · NR"}</span>
         <h2>{copy ? "Neural Rendering Manager" : t("神经渲染")}</h2></div>
         <span className={`module-badge ${nr?.overallStatus === "verified" ? "ok" : nr?.overallStatus === "incompatible" ? "warn" : ""}`}>{t(nr?.overallBadge || "尚未测试")}</span>
       </header>
-      {copy && <p className="manager-description">{t(protectedGame ? "管理神经渲染模型与 CUDA 架构兼容性，读取鸣潮自带的运行库版本。" : "管理神经渲染模型、CUDA 架构校验与配套运行库。是否可用取决于模型、显卡和游戏安装路线。")}</p>}
-      <Facts rows={neuralFacts} />
+      {noNativeDlss && !alternative
+        ? <p className="manager-description">{t(noNvidia ? neuralGpuReason : nrRoute === "feeder" ? "此游戏没有原生 DLSS 超分，神经渲染通过 Feeder 获取画面输入。" : nrRoute === "optiscaler" ? "此游戏通过 OptiScaler 提供超分输入。" : "此游戏未检测到原生 DLSS 超分。")}</p>
+        : copy && <p className="manager-description">{t(protectedGame ? "管理神经渲染模型与 CUDA 架构兼容性，读取鸣潮自带的运行库版本。" : "管理神经渲染模型、CUDA 架构校验与配套运行库。是否可用取决于模型、显卡和游戏安装路线。")}</p>}
+      {targetInspected ? <Facts rows={neuralFacts}/> : <p className="module-note">{t("安装到所选程序后可读取其组件与运行状态。")}</p>}
+      {alternative ? <div className="module-fields">{alternative.neuralControl || <p className="module-note">{t("此安装方式仅管理帧生成。")}</p>}</div> : !showNrControls ? null : <>
       <div className="module-fields">
         <div className="module-field"><span className="mode-caption">{t(copy ? "DLSS 5 神经渲染模式选择" : "神经渲染模式")}<small>{t(copy ? "选中项仅代表待应用配置" : "选中项为待应用配置")}</small></span>
-          <Modes label="神经渲染" value={draft.neuralMode} onChange={v => onChange(neuralChoice(draft, v))} options={nrModes} />
+          <Modes label="神经渲染" value={draft.neuralMode} onChange={v => onChange(neuralChoice(draft, v))} options={noNvidia ? nrModes.slice(0,1) : nrModes} />
         </div>
         <div className="module-field"><span>{t(modelLabel)}</span>
-          <Select label={modelLabel} value={draft.neuralModelId} onChange={v => onChange({ neuralModelId: v, neuralMode: v === "310.8.0-RTX40" ? "legacy" : "latest_compatible" })} options={labeledModels} />
+          <Select label={modelLabel} value={draft.neuralModelId} disabled={noNvidia} onChange={v => onChange({ neuralModelId: v, neuralMode: v === "310.8.0-RTX40" ? "legacy" : "latest_compatible" })} options={labeledModels} />
         </div>
         {protectedGame ? <section className="module-field native-stack" aria-label={t(stackLabel)}>
           <h3 className="mode-caption">{t(stackLabel)}<small>{t("磁盘原版 · 只读，实际加载版本见运行状态")}</small></h3>
@@ -242,47 +275,57 @@ export function GraphicsPanels({ status, exePath, draft, onChange, onApply, onBr
             ["DLSS SR", nativeFileVersion(nativeStack.sr)], ["DLSS FG", nativeFileVersion(nativeStack.fg)],
             ["Feeder", t("此路线未使用")],
           ] : [["使用游戏原版运行库", nativeStackHint], ["Feeder", t("此路线未使用")]]} />
-        </section> : <div className="module-field"><span>{t(stackLabel)}</span>
+        </section> : hostStack ? <div className="module-field"><span>{t(stackLabel)}</span>
+          <Select label={stackLabel} value="optiscaler" disabled onChange={()=>{}}
+            options={[["optiscaler",t("使用 OptiScaler 的配套运行库")]]} />
+        </div> : <div className="module-field"><span>{t(stackLabel)}</span>
           <Select label={stackLabel} value={draft.runtimeStack} onChange={v => onChange({ runtimeStack: v })} options={stackOptions} />
         </div>}
-        {protectedGame ? <p className="module-note">{t("鸣潮保留启动器校验的 DLSS 文件。神经渲染与补帧使用主程序旁的 version.dll。")}</p> : profileNotes ? <p className="module-note"><b>{t("档位模型说明")}</b>{profileNotes.neural}</p>
+        {noNvidia ? <p className="module-note">{t(neuralGpuReason)}</p> : protectedGame ? <p className="module-note">{t("鸣潮保留启动器校验的 DLSS 文件。神经渲染与补帧使用主程序旁的 version.dll。")}</p> : profileNotes ? <p className="module-note"><b>{t("档位模型说明")}</b>{profileNotes.neural}</p>
           : <p className="module-note">{t("模型文件与配套运行库独立选择。选项是待应用配置，进入游戏后才能验证加载与效果。")}</p>}
         {neuralAdvanced}
-        {!protectedGame && onResetTuning && <details className="module-compat"><summary>{t("神经渲染调校")}</summary>
+        {!protectedGame && onResetTuning && <section className="module-compat"><h3>{t("神经渲染调校")}</h3>
           <p className="footnote">{t("重新应用模型会保留游戏内调整的外观参数。重置将恢复当前硬件档位的默认参数。")}</p>
-          <button disabled={draft.neuralMode === 'off' || resetPending} onClick={onResetTuning}>{t(resetPending ? "重置待应用" : "重置神经渲染调校")}</button>
-        </details>}
+          <button disabled={noNvidia || draft.neuralMode === 'off' || resetPending} onClick={onResetTuning}>{t(resetPending ? "重置待应用" : "重置神经渲染调校")}</button>
+        </section>}
       </div>
       <div className="module-actions">
-        <button className="module-command" onClick={() => onApply("neural")}>{t("仅应用神经渲染设置")}</button>
+        <button className="module-command" disabled={(noNativeDlss && setupPending) || (noNvidia && draft.neuralMode !== "off")} onClick={() => onApply("neural")}>{t("仅应用神经渲染设置")}</button>
         <button onClick={onBrowseModels}><Download size={15} />{t("管理模型")}</button>
+        {noNativeDlss && setupPending && <small>{t("请先预览并应用安装方式，再应用该路线的参数。")}</small>}
       </div>
+      </>}
     </section>
     <section className="graphics-module" data-module="mfg" aria-label={t("多帧生成配置")}>
       <header className="module-heading"><div><span className="module-eyebrow">{copy ? t("模块 B · 多帧生成") : "DLSS-G · MFG"}</span>
         <h2>{copy ? "Multi Frame Generation Manager" : t("多帧生成")}</h2></div>
-        <span className={`module-badge ${mfg?.status === "verified" ? "ok" : mfg?.status === "incompatible" ? "warn" : ""}`}>{t(mfg?.statusBadge || "尚未测试")}</span>
+        <span className={`module-badge ${mfg?.status === "verified" ? "ok" : mfg?.status === "incompatible" ? "warn" : ""}`}>{t(noNativeDlss && !alternative && !showMfgControls ? "当前引擎不可用" : mfg?.statusBadge || "尚未测试")}</span>
       </header>
       {copy && <p className="manager-description">{t("RTX 50 使用原生多帧生成控制，无需解锁；RTX 20 / 30 / 40 使用对应社区方案，支持范围以组件、游戏与运行库要求为准。")}</p>}
-      <Facts rows={mfgFacts} />
+      {engineChoice}
+      {targetInspected && <Facts rows={mfgFacts}/>}
+      {alternative ? <><div className="module-fields">{alternative.fields}</div>
+        <div className="module-actions"><button disabled={alternative.blocked} className="module-command" onClick={()=>onApply("mfg")}>{t("预览帧生成设置")}</button></div></> : !showMfgControls ? <p className="module-note">{t(noNvidia ? mfgGpuReason : mfgIssue || "多帧生成需要 64 位 DirectX 12 或 Vulkan 游戏。")}</p> : <>
       <div className="module-fields">
         {engineControl}
         <div className="module-field"><span className="mode-caption">{t(copy ? "Multi Frame Generation 补帧倍率选择" : "补帧倍率")}
-          {copy && <small>{t(protectedGame ? "动态与固定倍率独立选择，不把动态倍率当作固定输出" : blackwell ? "RTX 50 原生支持，无需解锁；实际倍率需游戏验证" : "档位决定参考参数，支持能力以实际显卡和游戏为准")}</small>}</span>
-          <Modes label="补帧倍率" value={draft.mfgMode} onChange={v => onChange({ mfgMode: v })} options={mfgModes} />
+          {copy && mfgSupported && !noNvidia && <small>{t(protectedGame ? "动态与固定倍率独立选择，不把动态倍率当作固定输出" : blackwell ? "RTX 50 原生支持，无需解锁；实际倍率需游戏验证" : "档位决定参考参数，支持能力以实际显卡和游戏为准")}</small>}</span>
+          <Modes label="补帧倍率" value={draft.mfgMode} onChange={v => onChange({ mfgMode: v })} options={mfgSupported && !noNvidia ? mfgModes : mfgModes.slice(0,1)} />
         </div>
-        <div className="module-field"><span>{t(inputLabel)}</span>
+        {!mfgSupported && <p className="module-note">{t(mfgIssue || "多帧生成需要 64 位 DirectX 12 或 Vulkan 游戏。")}</p>}
+        {mfgSupported && !noNvidia && !hostStack && <div className="module-field"><span>{t(inputLabel)}</span>
           <Select label={inputLabel} value={String(draft.hdrCompatibility)} onChange={v => onChange({ hdrCompatibility: v === "true" })}
             disabled={protectedGame} options={protectedGame ? [[String(draft.hdrCompatibility), t("使用游戏原生输入")]] : copy ? originalInputs : [["false", "原生输入 · QualityGuardMode 0"], ["true", "HDR UI 保护 · QualityGuardMode 2"]]} />
-        </div>
-        {protectedGame ? <p className="module-note">{t("应用后在游戏中开启 DLSS 帧生成。实际倍率可在运行诊断中查看。")}</p> : profileNotes ? <p className="module-note"><b>{t("档位补帧说明：")}</b>{profileNotes.mfg}</p> : <>
+        </div>}
+        {noNvidia ? <p className="module-note">{t(mfgGpuReason)}</p> : !mfgSupported || hostStack ? null : protectedGame ? <p className="module-note">{t("应用后在游戏中开启 DLSS 帧生成。实际倍率可在运行诊断中查看。")}</p> : profileNotes ? <p className="module-note"><b>{t("档位补帧说明：")}</b>{profileNotes.mfg}</p> : <>
           <p className="module-note">{t("默认使用原生输入。仅在开启 HDR 后出现 UI 闪烁等问题时尝试 HDR UI 保护。实际倍率请查看运行诊断。")}</p>
-          <details className="module-compat"><summary>{t("当前游戏兼容说明")}</summary><p>{gameCompatibility}</p><p className="path">{exePath || t("未识别")}</p></details>
+          <section className="module-compat"><h3>{t("当前游戏兼容说明")}</h3><p>{gameCompatibility}</p><p className="path">{exePath || t("未识别")}</p></section>
         </>}
       </div>
       <div className="module-actions">
-        <button className="module-command" onClick={() => onApply("mfg")}>{t("仅应用补帧设置")}</button>
+        <button className="module-command" disabled={(noNativeDlss && setupPending) || ((!mfgSupported || noNvidia) && draft.mfgMode !== "off")} onClick={() => onApply("mfg")}>{t("仅应用补帧设置")}</button>
       </div>
+      </>}
     </section>
   </div>;
 }

@@ -26,7 +26,7 @@ test('Vulkan Feeder install/reinstall/restore keeps DXVK files intact for x86 an
     put(`vulkan/ReShade${bits}.json`, JSON.stringify({ layer: { name: 'VK_LAYER_reshade', library_path: `ReShade${bits}.dll` } }));
   }
   const source = { hasNeuralRendering: true,
-    payload: ['nvngx_dlss.dll', 'nvngx_dlssnr.dll'].map(name => ({ name, path: put(name) })),
+    payload: ['nvngx_dlss.dll', 'nvngx_dlssnr.dll'].map(name => ({ name, path: writePe(path.join(root, 'payload', name)) })),
     feeder: { ok32: true, ok64: true, vulkanOk: true, vulkanLayerDir: layerDir,
       addon32: put('dlss5-feed.addon32'), addon64: put('dlss5-feed.addon64'),
       host64: put('host64/dlss5-feed-host64.exe'), hostAddon: put('host64/renodx-dlss5.addon64'),

@@ -19,15 +19,18 @@ import {
   FolderPlus,
   CheckCircle2,
   AlertCircle,
+  ScanSearch,
 } from "lucide-react";
 import { getBridge } from "./bridge";
 import { Loading } from "./components";
 import { retryMissingArtwork } from "./useArtwork";
 import { GameCard, showGameMenu, type CardAction, type GameMenuHandler } from "./GameCard";
-import { HomeIntake, HomeActivity, HomeShelf } from "./features/Home";
+import { HomeIntake, HomeActivity, HomeShelf, HomeDownloadSummary } from "./features/Home";
 import { errorText, groupByLauncher } from "./domain";
 import { useOperation } from "./useOperation";
 import { DownloadContext } from "./features/DownloadAction";
+import {DownloadQueuePanel, QueueLauncher} from "./features/DownloadQueuePanel";
+import {BatchScan} from "./features/BatchScan";
 import type { Draft, Game, UpdateInfo } from "./types";
 import type { Run } from "./features/Games";
 import mark from "../../assets/neuralframe/mark-ui.png";
@@ -107,16 +110,19 @@ export default function App() {
   }, []);
   const [page, setPage] = useState("home"),
     [modelLibraryOrigin, setModelLibraryOrigin] = useState(""),
-    [importTarget, setImportTarget] = useState<string>(),
     [visited, setVisited] = useState(() => new Set(["home"])),
     [refreshToken, setRefreshToken] = useState(0),
     [games, setGames] = useState<Game[]>([]),
     [selected, setSelected] = useState(""),
+    [monitorTarget, setMonitorTarget] = useState<{dir:string;path:string} | null>(null),
     [loading, setLoading] = useState(true),
     [notice, setNoticeState] = useState<Notice | null>(null),
     [noticeHeld, setNoticeHeld] = useState(false),
     [launchRelease, setLaunchRelease] = useState<UpdateInfo>(),
     [cardBusy, setCardBusy] = useState(""),
+    [fontScale,setFontScale] = useState(()=>Math.max(12,Math.min(18,Number(localStorage.getItem("neuralframe.fontScale"))||14))),
+    [queueOpen,setQueueOpen] = useState(false),
+    [batchOpen,setBatchOpen] = useState(false),
     [libraryRevision, setLibraryRevision] = useState(0),
     [groupGames, setGroupGames] = useState(false),
     [theme, setTheme] = useState(() =>
@@ -147,8 +153,7 @@ export default function App() {
     setRefreshToken(++revisionClock.current),
   );
 
-  const navigate = (id: string, modelOrigin = "", modelToImport?: string) => {
-    setImportTarget(modelToImport);
+  const navigate = (id: string, modelOrigin = "") => {
     setModelLibraryOrigin(modelOrigin);
     setVisited((previous) =>
       previous.has(id) ? previous : new Set([...previous, id]),
@@ -219,6 +224,10 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+  useEffect(()=>{
+    document.documentElement.style.setProperty("--user-font-size",`${fontScale}px`);
+    localStorage.setItem("neuralframe.fontScale",String(fontScale));
+  },[fontScale]);
   const add = async (open = false) => {
     try {
       const picked = await getBridge().addGame();
@@ -336,7 +345,7 @@ export default function App() {
   const renderNavItem = ({ id, label, icon: Icon }: (typeof nav)[number]) => {
     const current = page === id ? "page" : page === "about" && id === "settings" ? "location" : undefined;
     return (
-      <button key={id} className={current ? "nav-item active" : "nav-item"}
+      <button key={id} className={current ? "nav-item active" : "nav-item"} title={t(label)}
         aria-current={current} onClick={() => navigate(id)}
         onPointerEnter={() => {
           if (id === "games") void import("./features/Games");
@@ -365,6 +374,7 @@ export default function App() {
           onDoubleClick={event => event.stopPropagation()}>
           {t("发现新版本 {0}", [launchRelease.latest])}
         </button>}
+        <QueueLauncher open={queueOpen} onOpen={()=>setQueueOpen(value=>!value)} />
         <div className="window-controls">
           <button
             aria-label={t("最小化")}
@@ -403,6 +413,9 @@ export default function App() {
               )}
               {page === "games" && (
                 <>
+                  <button disabled={operation.busy || !games.length} onClick={()=>setBatchOpen(true)}>
+                    <ScanSearch size={16}/>{t("批量扫描")}
+                  </button>
                   <button disabled={operation.busy} onClick={() => void add()}>
                     <Plus size={17} />{t("添加游戏")}
                   </button>
@@ -439,8 +452,7 @@ export default function App() {
                     ) : (
                       <Games
                         onBrowseModels={() => navigate("library", "games")}
-                      onImportModel={id => navigate("library", "games", id)}
-                        onDownloadModel={operation.downloadVersion}
+                        onBrowseEngines={() => navigate("library")}
                         games={games}
                         grouped={groupGames}
                         openMenu={openMenu}
@@ -458,49 +470,24 @@ export default function App() {
                     ))}
                   {id === "home" && (
                     <div className="page-scroll home-page">
-                      <HomeIntake games={games} active={page === "home"} refreshToken={refreshToken} disabled={loading || operation.busy}
+                      <HomeIntake games={games} active={page === "home"} refreshToken={refreshToken} loading={loading} disabled={loading || operation.busy}
                         browse={() => void add(true)} drop={dropGame} select={select} message={setNotice}/>
-                      <div className="section-toolbar">
-                        <h2 className="library-heading">{t("游戏库")} <small>{games.length}</small></h2>
-                        <button onClick={() => navigate("games")}>
-                          {t("查看全部")}
-                          <ArrowRight size={16} />
-                        </button>
-                      </div>
-                      {homeGroups.map((group) => (
-                        <section
-                          key={group.name}
-                          className={group.name ? "home-group" : ""}
-                        >
-                          {group.name && (
-                            <h2>
-                              {group.name === "Added by hand"
-                                ? t("手动添加")
-                                : group.name}{" "}
-                              <small>{group.games.length}</small>
-                            </h2>
-                          )}
-                          <HomeShelf label={group.name || t("游戏库")} count={group.games.length}>
-                            {group.games.map((g) => (
-                              <GameCard
-                                openMenu={openMenu}
-                                key={g.key}
-                                game={g}
-                                busy={Boolean(cardBusy) || operation.busy}
-                                onSelect={select}
-                                onAction={(game, action) => {
-                                  void cardAction(game, action);
-                                }}
-                              />
-                            ))}
-                          </HomeShelf>
-                        </section>
-                      ))}
-                      {!games.length && (
-                        <p className="muted">
-                          {t("添加一款游戏，开始配置神经渲染与帧生成。")}
-                        </p>
-                      )}
+                      <HomeDownloadSummary onOpen={()=>setQueueOpen(true)}/>
+                      {!loading&&games.length>0&&<>
+                        <div className="section-toolbar">
+                          <h2 className="library-heading">{t("游戏库")} <small>{games.length}</small></h2>
+                          <button onClick={() => navigate("games")}>{t("查看全部")}<ArrowRight size={16} /></button>
+                        </div>
+                        {homeGroups.map((group) => (
+                          <section key={group.name} className={group.name ? "home-group" : ""}>
+                            {group.name && <h2>{group.name === "Added by hand" ? t("手动添加") : group.name}{" "}<small>{group.games.length}</small></h2>}
+                            <HomeShelf label={group.name || t("游戏库")} count={group.games.length}>
+                              {group.games.map((g) => <GameCard openMenu={openMenu} key={g.key} game={g} busy={Boolean(cardBusy) || operation.busy}
+                                onSelect={select} onAction={(game, action) => { void cardAction(game, action); }}/>) }
+                            </HomeShelf>
+                          </section>
+                        ))}
+                      </>}
                       <HomeActivity message={setNotice} />
                     </div>
                   )}
@@ -509,7 +496,6 @@ export default function App() {
                       downloadVersion={operation.downloadVersion}
                       modelsOnly={!!modelLibraryOrigin}
                       onBack={() => navigate(modelLibraryOrigin)}
-                      importTarget={importTarget} onImportClosed={() => setImportTarget(undefined)}
                       active={page === "library"}
                       run={operation.run}
                       busy={operation.busy}
@@ -517,8 +503,10 @@ export default function App() {
                       refreshToken={refreshToken}
                     />
                   )}{" "}
-                  {id === "addons" && <Addons message={setNotice} active={page === "addons"} refreshToken={refreshToken} />}{" "}
-                  {id === "overlay" && <Overlay message={setNotice} active={page === "overlay"} refreshToken={refreshToken} />}{" "}
+                  {id === "addons" && <Addons message={setNotice} active={page === "addons"} refreshToken={refreshToken}/>}
+                  {id === "overlay" && <Overlay message={setNotice} active={page === "overlay"} refreshToken={refreshToken}
+                    monitor={{games,dir:selected,onGame:setSelected,target:monitorTarget,onTarget:setMonitorTarget,
+                      run:operation.run,busy:operation.busy}}/>}
                   {id === "history" && (
                     <History
                       message={setNotice}
@@ -546,6 +534,8 @@ export default function App() {
                         await load();
                       }}
                       onGroupingChange={setGroupGames}
+                      fontScale={fontScale}
+                      onFontScale={setFontScale}
                       ask={operation.ask}
                     />
                   )}
@@ -581,6 +571,8 @@ export default function App() {
           </button>
         </div>
       )}
+      {queueOpen && <DownloadQueuePanel onClose={()=>setQueueOpen(false)}/>}
+      {batchOpen && <BatchScan games={games} onClose={()=>setBatchOpen(false)} message={setNotice}/>}
       {operation.dialog}
     </div></DownloadContext.Provider>
   );

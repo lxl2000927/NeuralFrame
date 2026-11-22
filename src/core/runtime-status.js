@@ -191,7 +191,8 @@ class RuntimeStatus {
   async probe(dir) {
     let scan=this.scans.get(key(dir));
     if(!scan || this.clock()-scan.at>30000){scan={value:await this.scan(dir),at:this.clock()};this.scans.set(key(dir),scan);if(this.scans.size>32)this.scans.delete(this.scans.keys().next().value);}
-    const candidates=[scan.value.chosen,...(scan.value.exeCandidates||[])].filter(Boolean).filter(x=>!/(?:crash|launcher|unins|helper|dlss5-feed-host)/i.test(path.basename(x.path)));
+    const helper = /crash(?:report|handler|pad_handler)|(?:launcher|helper)(?:32|64)?\.exe$|^(?:unins|dlss5-feed-host)/i;
+    const candidates=[scan.value.chosen,...(scan.value.exeCandidates||[])].filter(x=>x && !helper.test(path.basename(x.path)));
     const executables=[...new Set(candidates.map(x=>x.path))];
     if(!executables.length)return this.empty('unreadable','未定位游戏可执行文件','请检查所选游戏目录或手动指定实际游戏 EXE；启动器不用于判断游戏运行状态。');
     let answer;try{answer=await this.query(executables);}catch{return this.empty('unreadable','进程检测失败','进程查询超时或被系统拒绝；可稍后刷新。');}
@@ -214,8 +215,19 @@ class RuntimeStatus {
     if (this.ambiguousLogs.get(root) === null) this.ambiguousLogs.set(root, now);
     const logCutoff = this.ambiguousLogs.get(root) || 0;
     if (ms(proc.startedAt) > logCutoff) this.ambiguousLogs.delete(root);
-    const folders=[path.dirname(proc.exe),dir,path.join(path.dirname(proc.exe),'host64')];
-    const files=new Map();for(const folder of folders)for(const name of [...logs,'RTXMFG-Universal.status.json'])files.set(key(path.join(folder,name)),path.join(folder,name));
+    const bin = path.dirname(proc.exe);
+    const folders = new Set([bin]);
+    // Untagged log lines in another executable's folder cannot be attributed to this process.
+    if (executables.every(exe => key(exe) === key(proc.exe))) folders.add(dir);
+    if (candidates.find(exe => key(exe.path) === key(proc.exe))?.bitness === 32) folders.add(path.join(bin,'host64'));
+    const files = new Map();
+    for (const folder of folders) for (const name of [...logs,'RTXMFG-Universal.status.json']) {
+      const file = path.join(folder,name);
+      files.set(key(file),file);
+    }
+    // A shared status file carries a PID and is checked against the live session below.
+    const rootStatus = path.join(dir,'RTXMFG-Universal.status.json');
+    files.set(key(rootStatus),rootStatus);
     // RTXMFG 1.7 may publish diagnostics in per-executable temporary folders.
     // Only status files with the exact PID (and process birth when provided)
     // are accepted. No recursive disk scan and no arbitrary log paths followed.

@@ -2,6 +2,11 @@
 // Component identities are independent of app versions and file version resources.
 // Native panel adapters remain pinned until their ABI has been checked.
 const DEFINITIONS = Object.freeze({
+  anr: {name:'ANR FG', files:[], online:'anr', managedRoute:true},
+  'xemfg-intel': {name:'Intel XeSS 帧生成与 XeLL', files:['libxess_fg.dll','libxell.dll','LICENSE.txt','third-party-programs.txt'], online:'intel-xefg', managedRoute:true},
+  'anr-addon': {name:'ANR FG · OptiScaler Add-on', files:[], online:'anr-addon', managedRoute:true},
+  sm86: {name:'Dlssg_for_sm86', files:[], online:'sm86', additionalOnline:['sm86-complete'], managedRoute:true},
+  'sm86-delta': {name:'Dlssg_for_sm86 · 三角洲 DX12 / Vulkan', files:[], online:'sm86-delta', managedRoute:true},
   encore: {name:'RTX Encore', files:['rtx-encore.dll'], optionalFiles:['THIRD-PARTY-NOTICES.md'], online:'encore', managedRoute:true},
   'dlss-sr': {name:'DLSS 超分辨率', files:['nvngx_dlss.dll'], online:'rhi-sr'},
   'dlss-fg': {name:'DLSS 帧生成运行库', files:['nvngx_dlssg.dll'], online:'rhi-fg'},
@@ -30,8 +35,23 @@ const PROVIDERS = Object.freeze({
   'rhi-sr':{repo:'RankFTW/rhi-repo',asset:/^nvngx_dlss_[\w.-]+\.zip$/i},
   'rhi-fg':{repo:'RankFTW/rhi-repo',asset:/^nvngx_dlssg_[\w.-]+\.zip$/i},
   feeder:{repo:'jlrouzies-fr/DLSS5-Feeder',asset:/^DLSS5-Feeder-[\w.-]+\.zip$/i},
-  optiscaler:{repo:'Dagherbou/OptiScaler_DLSSNR',asset:/^OptiScaler.*\.zip$/i}
+  optiscaler:{repo:'Dagherbou/OptiScaler_DLSSNR',asset:/^OptiScaler.*\.zip$/i, includePrerelease:true},
+  anr:{repo:'apex-compute/ANR',asset:/^anr-fg-V\.B\d+-full\.zip$/i, keepArchive:true},
+  'anr-addon':{repo:'apex-compute/ANR',asset:/^anr-fg-V\.B\d+-addon\.zip$/i, keepArchive:true},
+  'intel-xefg':{repo:'intel/xess',asset:/^XeSS_SDK[_-](?:[2-9]|[1-9]\d+)\.\d+\.\d+\.zip$/i},
+  sm86:{repo:'sdli1995/dlssg_for_sm86',asset:/^dlssg-release-[\d.]+-x64\.zip$/i, keepArchive:true, includePrerelease:true, recordTag:/^\d+\.\d+\.\d+$/},
+  'sm86-complete':{repo:'pandaligx/RTX-FG-Manager',releaseTag:'payloads',asset:/^dlssg-(\d+\.\d+\.\d+)-complete-[a-f\d]+\.zip$/i, keepArchive:true},
+  'sm86-delta':{repo:'pandaligx/RTX-FG-Manager',releaseTag:'payloads',asset:/^rtxfg-(\d+\.\d+\.\d+)-dx12-vulkan(?:-r(\d+))?(?:-hf(\d+))?-complete-[a-f\d]+\.zip$/i, keepArchive:true}
 });
+function requiredPackageFiles(component, names) {
+  // Universal releases through v1.4.x used this DLL name. Preserve it in the
+  // library so the pinned adapter still identifies only its supported binaries.
+  if (component === 'mfg-universal') {
+    const available = new Set(names.map(name => name.toLowerCase()));
+    if (available.has('rtxmfg.dll') && !available.has('mfgunlocker.dll')) return ['RTXMFG.dll'];
+  }
+  return DEFINITIONS[component].files;
+}
 // The release ZIP and the model DLL inside it have distinct fingerprints.
 function rankFtwModel(version, integrity) {
   const repo = PROVIDERS['rhi-nr'].repo;
@@ -95,8 +115,16 @@ function builtins(payload, overlayDir) {
     const version = digest === current.sha256 ? '2.3.1-nf.1' : digest === 'd46783325e8c834bad740e1dc4b0296caabb9d193a9203905b2f52308c5660fa' ? 'bb72b7c' : 'local';
     add('preloader',version,{'winmm.dll':preloaderPath});
   }
-  add('localization','zh1.10',Object.fromEntries(DEFINITIONS.localization.files.map(n=>[n,path.join(payload,'enhanced/zh-cn',n)])));
+  const localization = require('./runtime-catalog.json').packs.find(p=>p.id==='localization');
+  const localizedFiles = Object.fromEntries(DEFINITIONS.localization.files.map(n=>[n,path.join(payload,'enhanced/zh-cn',n)]));
+  if (Object.values(localizedFiles).every(f=>fs.existsSync(f))) {
+    const current = Object.entries(localizedFiles).every(([name,file])=>{
+      const sha = require('crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+      return localization.files.some(entry=>path.basename(entry.path)===name && entry.sha256===sha);
+    });
+    add('localization',current ? localization.version : 'local',localizedFiles);
+  }
   if(overlayDir)add('overlay','zh1.10',{'dlss5-lab-overlay.addon64':path.join(overlayDir,'dlss5-lab-overlay.addon64')});
   return result;
 }
-module.exports={DEFINITIONS,PROVIDERS,RANKFTW_NR_SFV2,RANKFTW_NR_310916,builtins};
+module.exports={DEFINITIONS,PROVIDERS,RANKFTW_NR_SFV2,RANKFTW_NR_310916,builtins,requiredPackageFiles};

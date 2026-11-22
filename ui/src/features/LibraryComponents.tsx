@@ -6,16 +6,19 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  Package,
   Search,
   SlidersHorizontal,
   X,
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { t, dateTime } from "../i18n";
 import { size } from "../domain";
 import { getBridge } from "../bridge";
@@ -28,6 +31,7 @@ import {
   filterLibrary,
   groupLibrary,
   localState,
+  pairedXeMfgEngine,
   versionLabel,
   versionAcquisition,
   versionSourceDetails,
@@ -54,6 +58,7 @@ const purposes: Record<string, string> = {
     "RenoDX 多帧生成插件；支持条件内为 RTX 20–40 提供解锁，为 RTX 50 提供原生多帧生成控制。",
   "mfg-universal":
     "独立加载器，提供多帧生成与神经渲染控制；RTX 50 使用原生多帧生成。",
+  "xemfg-intel": "Intel XeFG 帧生成与 XeLL 低延迟运行库，为 XeMFG 提供配套文件。",
   "dlss-fg":
     "帧生成运行库；需游戏或渲染后端提供对应输入。RTX 50 原生支持多帧生成。",
   "dlss-sr": "DLSS 超分辨率运行库；用于游戏已支持的超分链路。",
@@ -85,6 +90,7 @@ const dependencies: Record<string, string> = {
     "DLSS-G 路线需要对应的原生帧生成链路和 ReShade / RenoDX 加载环境；其他后端按对应版本的项目说明检查。",
   "mfg-universal":
     "独立加载器与运行库按路线配套；鸣潮可在已适配引擎版本中选择，保留启动器校验文件。",
+  "xemfg-intel": "独立 XeMFG 路线使用 Intel XeSS SDK 3.0.2 与 MFG Unlocker 1.7.1。OptiScaler 插件路线会校验游戏已有的宿主和 Intel 运行库。",
   "dlss-fg":
     "需要游戏或已适配后端提供帧生成输入；只替换这个 DLL 不会为游戏新增补帧链路。",
   "dlss-sr":
@@ -101,6 +107,11 @@ const dependencies: Record<string, string> = {
   overlay:
     "NeuralFrame 面板需要支持插件的 ReShade；主题与快捷键在叠加层页设置。",
 };
+function componentPurpose(component: string, name: string, row: LibraryVersion) {
+  return pairedXeMfgEngine(row)
+    ? "MFG Unlocker 1.7.1 提供实验性 XeMFG，可用于符合条件的 AMD、Intel 和 NVIDIA 显卡。DLSS-G 与 DLSS 神经渲染需要兼容的 NVIDIA 显卡。"
+    : purposes[component] || name;
+}
 
 function verdict(row: LibraryVersion, gpuSm: string | null) {
   const result = applicationVerdict(row, gpuSm);
@@ -152,14 +163,18 @@ function VersionAction({
           id={pack.id}
           cached={pack.downloaded}
           disabled={busy || checking}
+          blocked={checking}
           label={info.downloadLabel}
         />
+      ) : candidate?.releaseOnly ? (
+        <span className="muted">{t("仅发布记录")}</span>
       ) : candidate ? (
         <DownloadAction
           id={candidate.downloadId || candidate.id}
           cached={cached}
           label={info.downloadLabel}
           disabled={busy || checking || acquisition.disabled}
+          blocked={checking || acquisition.disabled}
           onStart={() =>
             void downloadVersion(candidate.downloadId || candidate.id, cached)
           }
@@ -221,48 +236,19 @@ function VersionDetails({
   onPaired?: () => void;
 } & Actions) {
   const [closing, setClosing] = useState(false);
-  const drawer = useRef<HTMLElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   useLayoutEffect(() => {
     closeButton.current?.focus({ preventScroll: true });
-    const element = drawer.current;
-    const scroller = element?.closest(".page-scroll");
-    if (!element || !scroller) return;
-    const appbar = document.querySelector(".appbar");
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      if (appbar)
-        element.style.setProperty(
-          "--component-drawer-inset",
-          `${appbar.getBoundingClientRect().bottom + 8}px`,
-        );
-      // The toolbar and active filters change the panel's starting position.
-      // Bound its body to the actual viewport so footer actions stay reachable.
-      const height = Math.max(
-        0,
-        window.innerHeight - element.getBoundingClientRect().top - 16,
-      );
-      element.style.setProperty("--component-drawer-height", `${height}px`);
-    };
-    const schedule = () => {
-      if (!frame) frame = window.requestAnimationFrame(measure);
-    };
-    const observer = new ResizeObserver(schedule);
-    observer.observe(scroller);
-    const catalog = element.closest(".component-catalog");
-    if (catalog) observer.observe(catalog);
-    scroller.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule);
-    measure();
-    return () => {
-      observer.disconnect();
-      scroller.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", schedule);
-      window.cancelAnimationFrame(frame);
-    };
+    const list = panel.current?.closest(".page-slot")?.querySelector<HTMLElement>(".library-page");
+    const background = [
+      ...document.querySelectorAll<HTMLElement>(".titlebar, .sidebar, .appbar"),
+      ...(list ? [list] : []),
+    ];
+    const previous = background.map((element) => element.inert);
+    background.forEach((element) => { element.inert = true; });
+    return () => background.forEach((element, index) => { element.inert = previous[index]; });
   }, []);
   useEffect(() => {
     setClosing(false);
@@ -296,6 +282,32 @@ function VersionDetails({
     document.addEventListener("keydown", escape);
     return () => document.removeEventListener("keydown", escape);
   }, [close]);
+  const trapFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Tab") return;
+    const root = panel.current?.closest<HTMLElement>(".component-drawer");
+    if (!root) return;
+    const items = [...root.querySelectorAll<HTMLElement>(
+      'button, a[href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])',
+    )].filter((element) =>
+      !element.hasAttribute("disabled") &&
+      element.tabIndex >= 0 &&
+      element.getClientRects().length > 0 &&
+      !element.closest("[inert]"));
+    if (!items.length) {
+      event.preventDefault();
+      root.focus();
+      return;
+    }
+    const first = items[0], last = items[items.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || !root.contains(active))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !root.contains(active))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
   const info = verdict(row, actions.gpuSm);
   const acquisition = versionAcquisition(row);
   const candidate = acquisition.candidate;
@@ -303,28 +315,35 @@ function VersionDetails({
   const sources = versionSourceDetails(row);
   const project = versionProjectEvidence(row);
   return (
+    <div className="component-sheet">
+      <div className="component-scrim" aria-hidden="true" onClick={close}/>
     <aside
-      ref={drawer}
       className={`component-drawer${closing ? " is-closing" : ""}`}
+      role="dialog"
+      aria-modal="true"
       aria-labelledby={titleId}
+      tabIndex={-1}
+      onKeyDown={trapFocus}
     >
       <header>
-        <div>
-          <small className="muted">{t("组件详情")}</small>
+        <div className="component-drawer-heading">
+          <small><Package size={13} aria-hidden="true" />{t("组件详情")}</small>
           <h2 id={titleId}>{t(name)}</h2>
         </div>
         <button
           ref={closeButton}
-          className="icon-button"
+          type="button"
+          className="component-drawer-close"
           aria-label={t("关闭详情")}
+          title={`${t("关闭详情")} (Esc)`}
           onClick={close}
         >
-          <X size={18} />
+          <X size={16} aria-hidden="true" />
         </button>
       </header>
       <div className="component-drawer-body" ref={panel}>
         <p className="component-detail-purpose">
-          {t(purposes[component] || name)}
+          {t(componentPurpose(component,name,row))}
         </p>
         <dl className="component-detail-meta">
           <div>
@@ -432,7 +451,7 @@ function VersionDetails({
           <h3>{t("配套依赖与适用路线")}</h3>
           <p>
             {t(
-              dependencies[component] ||
+              (pairedXeMfgEngine(row) ? "独立 XeMFG 配套使用 Intel XeFG 和 XeLL 3.0.2。插件版需游戏中已有适配的 OptiScaler 10 宿主及 Intel 运行库。鸣潮沿用独立加载器和游戏原版 DLSS 文件。" : dependencies[component]) ||
                 "随软件或所选安装路线维护，无需手动组合。",
             )}
           </p>
@@ -453,10 +472,10 @@ function VersionDetails({
                 <dt>{t("发布标签")}</dt>
                 <dd>{release.tag}</dd>
               </div>
-              <div>
+              {!release.releaseOnly && <div>
                 <dt>{t("下载文件")}</dt>
                 <dd>{release.name}</dd>
-              </div>
+              </div>}
               {release.catalogModelId && (
                 <div>
                   <dt>{t("模型标识")}</dt>
@@ -551,6 +570,7 @@ function VersionDetails({
         </div>
       </footer>
     </aside>
+    </div>
   );
 }
 
@@ -572,7 +592,7 @@ export function LibraryComponents({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [showInternal, setShowInternal] = useState(false);
   const catalog = useRef<HTMLDivElement>(null);
-  const opener = useRef<HTMLElement | null>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
   const [selected, setSelected] = useState<{
     component: string;
     id: string;
@@ -586,27 +606,25 @@ export function LibraryComponents({
         page.scrollTop = top;
       });
   }, []);
-  const openDetails = (component: string, id: string) => {
-    opener.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
+  const openDetails = (component: string, id: string, trigger: HTMLButtonElement) => {
+    opener.current = trigger;
     preserveScroll(() => setSelected({ component, id }));
   };
   const closeDetails = useCallback(() => {
     preserveScroll(() => setSelected(null));
-    window.requestAnimationFrame(() => {
-      if (opener.current?.isConnected)
-        opener.current.focus({ preventScroll: true });
-    });
   }, [preserveScroll]);
+  useLayoutEffect(() => {
+    if (selected) return;
+    if (opener.current?.isConnected) opener.current.focus({ preventScroll: true });
+    opener.current = null;
+  }, [selected]);
   const groups = useMemo(
     () => groupLibrary(data, candidates, modelsOnly),
     [data, candidates, modelsOnly],
   );
-  const effectiveFilters = modelsOnly
+  const effectiveFilters = useMemo(() => modelsOnly
     ? { ...filters, category: "all" }
-    : filters;
+    : filters, [modelsOnly, filters]);
   const filtering =
     !!effectiveFilters.query.trim() ||
     [
@@ -614,7 +632,8 @@ export function LibraryComponents({
       effectiveFilters.application,
       effectiveFilters.source,
     ].some((value) => value !== "all");
-  const filtered = filterLibrary(groups, data, effectiveFilters, actions.gpuSm);
+  const filtered = useMemo(() => filterLibrary(groups, data, effectiveFilters, actions.gpuSm),
+    [groups, data, effectiveFilters, actions.gpuSm]);
   const visible = filtered.filter(
     (g) =>
       !data.definitions[g.component]?.internal ||
@@ -622,9 +641,9 @@ export function LibraryComponents({
       filtering ||
       filters.category === "internal",
   );
-  const sources = [
+  const sources = useMemo(() => [
     ...new Set(groups.flatMap((g) => g.versions.flatMap(versionSources))),
-  ].sort();
+  ].sort(), [groups]);
   const patch = (value: Partial<CatalogFilters>) =>
     setFilters((current) => ({ ...current, ...value }));
   const selectedGroup =
@@ -799,9 +818,7 @@ export function LibraryComponents({
           </button>
         </div>
       )}
-      <div
-        className={`component-workspace${selectedRow ? " has-details" : ""}`}
-      >
+      <div className="component-workspace">
         <div className="component-list-area">
           <div className="component-list">
             <table>
@@ -829,6 +846,7 @@ export function LibraryComponents({
                     const source = versionSources(row)
                       .map((s) => t(s))
                       .join(" · ");
+                    const purpose = t(componentPurpose(group.component,name,row));
                     return (
                       <tr
                         key={row.id}
@@ -842,8 +860,8 @@ export function LibraryComponents({
                               <div className="component-heading">
                                 <button
                                   className="component-text-button component-name"
-                                  onClick={() =>
-                                    openDetails(group.component, row.id)
+                                  onClick={(event) =>
+                                    openDetails(group.component, row.id, event.currentTarget)
                                   }
                                 >
                                   {name}
@@ -852,24 +870,25 @@ export function LibraryComponents({
                               </div>
                               <div className="component-description">
                                 <span
-                                  title={t(purposes[group.component] || name)}
+                                  title={purpose}
                                 >
-                                  {t(purposes[group.component] || name)}
+                                  {purpose}
                                 </span>
                               </div>
                             </>
                           ) : (
                             <button
                               className="component-text-button component-name component-history-name"
-                              aria-label={t("查看版本：{0}", [
+                              aria-label={t("查看 {0} 版本：{1}", [
+                                name,
                                 versionLabel(row),
                               ])}
-                              onClick={() =>
-                                openDetails(group.component, row.id)
+                              onClick={(event) =>
+                                openDetails(group.component, row.id, event.currentTarget)
                               }
                             >
                               <span aria-hidden="true">↳</span>
-                              {t("版本详情")}
+                              <span>{name}</span>
                               <ChevronRight size={14} />
                             </button>
                           )}
@@ -879,6 +898,7 @@ export function LibraryComponents({
                             <strong title={versionLabel(row)}>
                               {versionLabel(row)}
                             </strong>
+                            {row.releases[0]?.prerelease && <small>{t("预发布")}</small>}
                             {row.pack && (
                               <span className="component-paired">
                                 {t("配套")}
@@ -911,20 +931,14 @@ export function LibraryComponents({
                               className="component-text-button component-status"
                               data-state={info.state}
                               title={info.availability}
-                              onClick={() =>
-                                openDetails(group.component, row.id)
+                              onClick={(event) =>
+                                openDetails(group.component, row.id, event.currentTarget)
                               }
                             >
                               {info.label}
                               <ChevronRight size={12} />
                             </button>
                           </div>
-                          <small
-                            className="component-condition"
-                            title={info.reason}
-                          >
-                            {info.shortReason}
-                          </small>
                         </td>
                         <td>
                           <div className="component-row-actions">
@@ -951,13 +965,7 @@ export function LibraryComponents({
                                     })
                                   }
                                 >
-                                  <span>
-                                    {t(
-                                      expanded.has(group.component)
-                                        ? "收起历史版本"
-                                        : "展开历史版本",
-                                    )}
-                                  </span>
+                                  <span>{t("历史版本")}</span>
                                   <span className="component-history-count">
                                     {group.versions.length - 1}
                                   </span>
@@ -997,7 +1005,7 @@ export function LibraryComponents({
               </button>
             )}
         </div>
-        {selectedRow && selected && (
+        {selectedRow && selected && catalog.current?.closest(".page-slot") && createPortal(
           <VersionDetails
             row={selectedRow}
             component={selected.component}
@@ -1009,7 +1017,7 @@ export function LibraryComponents({
                 ? () => setSelected({ ...selected, id: paired.id })
                 : undefined
             }
-          />
+          />, catalog.current.closest(".page-slot")!
         )}
       </div>
     </div>

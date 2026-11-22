@@ -14,11 +14,14 @@ const installRoutes = require('../shared/install-routes');
 
 const SKIP_DIRS = new Set([
   '_dlss5_backup', 'reshade-shaders', 'host64', 'node_modules', '.git',
+  // Private component folders can also ship helper EXEs and render libraries.
+  'dlssg_sm86', 'optiscaler', 'rtx-encore-runtimes', 'rtxmfg-xess',
+  '.rtx-fg-nr', '.rtx-fg-runtimes', '.rtx-fg-v3', 'apex neural rendering fg',
   // Asset trees contain tens of thousands of files but never the runtime DLL
   // or executable we need. Skipping them lets packaged Unreal games be scanned
   // deeper without making every library refresh slower.
   'paks', 'movies', 'screenshots', 'saved', 'logs',
-  'mods', 'downloads', 'overwrite', 'profiles',
+  'mods', 'bepinex', 'melonloader', 'downloads', 'overwrite', 'profiles',
   '_redist', 'prerequisites', 'directx', 'redist', 'redistributable',
   'redistributables', '_commonredist', 'dotnet',
   // Shipped installers and vendor helpers keep their own executables around.
@@ -28,13 +31,30 @@ const SKIP_DIRS = new Set([
   'backup', 'backups', '_backup', 'bak', 'old', 'original', 'originals'
 ]);
 const MAX_SCAN_DEPTH = 12;
+const bundledUtilities = new Set([
+  'unrealcefsubprocess.exe','qtwebengineprocess.exe','msedgewebview2.exe','elevated_tracing_service.exe','notification_helper.exe',
+  'krwebview.exe','krwebclient.exe','krwebrender.exe','krinstallexternal.exe','clearthirdparty.exe','hpatchz.exe',
+  'redprelauncher.exe','d3d12stateobjectcompiler.exe','d3dconfig.exe','7za.exe','createdump.exe','crashpad_handler.exe',
+  'unitycrashhandler32.exe','unitycrashhandler64.exe','ace-service64.exe','ace-setup64.exe','start_protected_game.exe'
+]);
 
 // Installers, launchers, crack loader stubs and anti-cheat helpers are never the game itself.
 const NOT_A_GAME = /^(unins|setup|install|vcredist|vc_redist|dxsetup|dxwebsetup|oalinst|uninstall|crashreport|crashhandler|bugreport|testapp|easyanticheat|eac|battleye|be_service|launcher|activation|patch|update|revupdat|dotnetfx|touchup|rapidcrc|autorun|autoplay|quicksfv|readme|config|benchmark|report|helper|service|cleanup|modorganizer|redlauncher|skse\d*_loader|hlds\b|hltv\b|srcds\b|steamerrorreporter|dgvoodoocpl|reshade_setup|steamclient_loader|smartsteamloader|epic_emu_launcher|language_?changer|language_?selector)/i;
 
 const DLSS_FILE = /^(nvngx_dlss[a-z_]*\.dll|nvngx\.dll|_nvngx\.dll)$/i;
 const STREAMLINE_FILE = /^sl\.[a-z_]+\.dll$/i;
-const UPSCALER_FILE = /^(libxess(?:_dx11|_fg)?\.dll|amd_fidelityfx_[a-z0-9_]+\.dll|ffx_fsr[23][a-z0-9_]*\.dll)$/i;
+const UPSCALER_FILE = /^(libxess(?:_dx11|_fg)?\.dll|amd_fidelityfx_[a-z0-9_]+\.dll|ffx_fsr[23][a-z0-9_]*\.dll|ffx_(?:backend_dx12|frameinterpolation)_x64\.dll)$/i;
+// Both supported OptiScaler builds look up the legacy upscaler context in
+// one module and its DirectX interface in a separate named backend.
+const optiFgLegacy = new Map([
+  ['ffx_fsr2_api_x64.dll', {kind:'fsr2', context:'ffxFsr2Context',
+    backend:'ffx_fsr2_api_dx12_x64.dll', dx12:'ffxFsr2GetInterfaceDX12'}],
+  ['ffx_fsr3upscaler_x64.dll', {kind:'fsr3', context:'ffxFsr3UpscalerContext',
+    backend:'ffx_backend_dx12_x64.dll', dx12:'ffxGetInterfaceDX12'}],
+]);
+const ngxLifecycle = ['CreateFeature','EvaluateFeature','ReleaseFeature'];
+const ngxDx12 = ngxLifecycle.map(fn => 'NVSDK_NGX_D3D12_' + fn);
+const ngxVk = ngxLifecycle.map(fn => 'NVSDK_NGX_VULKAN_' + fn);
 const RESHADE_HOOKS = ['dxgi.dll', 'd3d12.dll', 'd3d11.dll', 'd3d9.dll', 'opengl32.dll', 'dinput8.dll'];
 
 function isDlss1xVersion(version) {
@@ -82,12 +102,15 @@ function hasAddonSupport(file) {
 // to the game is either ReShade or something else entirely — the version
 // resource is what tells them apart. Modded games (GTA V with an ASI loader)
 // instead run it as ReShade.asi, which must not be doubled up with a proxy.
-function inspectReShade(exeDir) {
-  let names = [...RESHADE_HOOKS];
-  try {
-    names = names.concat(fs.readdirSync(exeDir).filter((f) => /\.asi$/i.test(f)));
-  } catch {}
-  names.push('ReShade32.dll', 'ReShade64.dll');
+function inspectReShade(exeDir, candidates) {
+  let names = candidates;
+  if (!names) {
+    names = [...RESHADE_HOOKS];
+    try {
+      names.push(...fs.readdirSync(exeDir).filter((f) => /\.asi$/i.test(f)));
+    } catch {}
+    names.push('ReShade32.dll', 'ReShade64.dll');
+  }
 
   for (const name of names) {
     const file = path.join(exeDir, name);
@@ -124,7 +147,7 @@ const API_MARKERS = [
 // installer already refused to overwrite such a file, while the scanner
 // still called the game DirectX and offered a route that could not work.
 function isVulkanWrapper(file, bitness) {
-  if (pe.getBitness(file) !== bitness || pe.versionMentions(file, 'ReShade')) return false;
+  if (!bitness || pe.getBitness(file, { dllOnly:true }) !== bitness || pe.versionMentions(file, 'ReShade')) return false;
   if (pe.versionMentions(file, 'DXVK') || pe.versionMentions(file, 'vkd3d')) return true;
   const markers = pe.findMarkers(file, ['DXVK', 'vkd3d', 'vkGetInstanceProcAddr', 'ReShade']);
   return !markers.has('ReShade') && markers.has('vkGetInstanceProcAddr') &&
@@ -140,13 +163,31 @@ const WRAPPED_BY_API = {
   d3d8: ['d3d8.dll'],
   ddraw: ['ddraw.dll']
 };
-function vulkanWrapperBeside(file, api, bitness) {
+function vulkanWrapperBeside(file, api, bitness, label) {
   const dir = path.dirname(file);
-  for (const name of WRAPPED_BY_API[api] || []) {
+  const wrapped = name => {
     const candidate = findCaseInsensitive(dir, name);
-    try { if (candidate && isVulkanWrapper(candidate, bitness)) return true; } catch { /* unreadable is not a wrapper */ }
+    try { return !!candidate && isVulkanWrapper(candidate, bitness); } catch { return false; }
+  };
+  if (api === 'dxgi' && label === 'DirectX 11/12') {
+    return wrapped('dxgi.dll') || (wrapped('d3d11.dll') && wrapped('d3d12.dll'));
   }
-  return false;
+  const names = api === 'dxgi' && label === 'DirectX 11' ? ['d3d11.dll', 'dxgi.dll']
+    : api === 'dxgi' && label === 'DirectX 12' ? ['d3d12.dll', 'dxgi.dll'] : WRAPPED_BY_API[api] || [];
+  return names.some(wrapped);
+}
+
+function rendererFields(file, bitness, detected, choices) {
+  const native = { api:detected.api, label:detected.label };
+  const wrapped = !choices && detected.api !== 'vulkan' &&
+    vulkanWrapperBeside(file, detected.api, bitness, detected.label);
+  return {
+    api: wrapped ? 'vulkan' : detected.api,
+    apiLabel: wrapped ? 'Vulkan' : detected.label,
+    via: wrapped ? 'vulkan-wrapper' : detected.via,
+    dx12: !wrapped && detected.label === 'DirectX 12',
+    apiChoices: choices || (wrapped ? [{api:'vulkan',label:'Vulkan'},native] : [native])
+  };
 }
 function apiFromNames(imports) {
   const has = (n) => imports.includes(n);
@@ -165,8 +206,7 @@ function apiFromNames(imports) {
   return null;
 }
 
-function apiFromMarkers(file) {
-  const markers = pe.findMarkers(file, API_MARKERS);
+function apiFromMarkers(file, markers = pe.findMarkers(file, API_MARKERS)) {
   if (markers.has('D3D12CreateDevice') || markers.has('D3D12SDKPath') || markers.has('D3D12SDKVersion')) {
     return { api: 'dxgi', label: 'DirectX 12' };
   }
@@ -301,6 +341,16 @@ function gameApiProfile(file, renderer = rdr2Renderer) {
 //      the entry-point names survive as strings (GTA V Enhanced);
 //   3. the renderer lives in one of the game's own DLLs and the executable just
 //      imports that (Control ships d3d_rmdwin10_f.dll, which imports d3d12).
+function unityPlayerApi(file, imports) {
+  const markers = pe.findMarkers(file, API_MARKERS);
+  const dx11 = imports.includes('d3d11.dll') || markers.has('D3D11CreateDevice');
+  const dx12 = imports.includes('d3d12.dll') || markers.has('D3D12CreateDevice');
+  // The shared Unity player can ship both backends regardless of which one
+  // the title uses. Both use DXGI, but only DX12 qualifies for native FG.
+  if (dx11 && dx12) return {api:'dxgi',label:'DirectX 11/12'};
+  return apiFromMarkers(file,markers) || apiFromNames(imports);
+}
+
 function detectApi(file, imports) {
   const direct = apiFromNames(imports);
   if (direct) return { ...direct, via: 'imports' };
@@ -312,16 +362,17 @@ function detectApi(file, imports) {
   if (dynamic) return { ...dynamic, via: 'strings' };
 
   const dir = path.dirname(file);
+  const bitness = imports.length ? pe.getBitness(file, { exeOnly:true }) : null;
   for (const name of imports.slice(0, 80)) {
     if (path.basename(name) !== name || /[\\/:]/.test(name)) continue;
     if (NOT_A_RENDERER.test(name) || NOT_OFFERED.test(name)) continue;
     const sibling = findCaseInsensitive(dir, name);
     // System DLLs live in System32; only the game's own modules sit here.
-    if (!sibling || pe.getBitness(sibling) !== pe.getBitness(file)) continue;
+    if (!sibling || !bitness || pe.getBitness(sibling, { dllOnly:true }) !== bitness) continue;
     // UnityPlayer.dll statically imports opengl32.dll for legacy fallback while
     // resolving D3D11CreateDevice / D3D12CreateDevice dynamically at runtime.
     const inner = /^unityplayer\.dll$/i.test(name)
-      ? (apiFromMarkers(sibling) || apiFromNames(pe.getImports(sibling)))
+      ? unityPlayerApi(sibling,pe.getImports(sibling))
       : (apiFromNames(pe.getImports(sibling)) || apiFromMarkers(sibling));
     if (inner) return { ...inner, via: 'module:' + name };
   }
@@ -368,7 +419,7 @@ function detectEngineApi(file) {
         module = findCaseInsensitive(module, part);
         if (!module) break;
       }
-      if (!module || pe.getBitness(module) !== bitness) continue;
+      if (!module || !bitness || pe.getBitness(module, { dllOnly:true }) !== bitness) continue;
       const api = apiFromNames(pe.getImports(module)) || apiFromMarkers(module) || apiFromFileName(module);
       if (api) return { ...api, via: 'engine-module:' + rel };
     }
@@ -385,7 +436,7 @@ function detectEngineApi(file) {
       const namedApi = apiFromFileName(entry);
       if (!namedApi) continue;
       const full = path.join(subDir, entry);
-      if (pe.getBitness(full) !== bitness) continue;
+      if (!bitness || pe.getBitness(full, { dllOnly:true }) !== bitness) continue;
       const verified = apiFromNames(pe.getImports(full)) || apiFromMarkers(full);
       if (verified && verified.api === namedApi.api) {
         return { ...verified, via: `engine-module:${subName}/${entry}` };
@@ -403,6 +454,9 @@ const NOT_A_RENDERER = /^(?:libglesv2|libegl|libcef|chrome_elf|cef|sciter.*|cohe
 // Source 2 loads rendersystemdx11.dll itself, and installing into Dota 2 broke
 // it (#199). Its renderer is named so the reason is honest, but never offered.
 const NOT_OFFERED = /^rendersystem/i;
+function mayBeRenderer(name) {
+  return /\.dll$/i.test(name) && !NOT_A_RENDERER.test(name) && !/^(?:_nvngx|libxess(?:_\w+)?|libxell)\.dll$/i.test(name);
+}
 
 function scoreRendererModuleCandidate(name, api, fromImports, size = 0, exeNames = []) {
   let score = fromImports ? 2000 : 200;
@@ -433,16 +487,18 @@ function rendererEvidence(gameDir, budget = 60) {
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       // Prey keeps its renderer four folders down: Binaries/Danielle/x64/Release.
-      if (entry.isDirectory()) { if (depth < 4) queue.push([full, depth + 1]); continue; }
-      if (!/\.dll$/i.test(entry.name) || NOT_A_RENDERER.test(entry.name) || budget-- <= 0) continue;
+      if (entry.isDirectory()) { if (depth < 4 && !SKIP_DIRS.has(entry.name.toLowerCase())) queue.push([full, depth + 1]); continue; }
+      if (!mayBeRenderer(entry.name) || budget-- <= 0) continue;
       try {
+        const bitness = pe.getBitness(full, { dllOnly:true });
+        if (!bitness) continue;
         const impApi = apiFromNames(pe.getImports(full));
         const api = impApi || apiFromMarkers(full);
         if (!api) continue;
         let size = 0;
         try { size = fs.statSync(full).size; } catch {}
         const score = scoreRendererModuleCandidate(entry.name, api, Boolean(impApi), size);
-        const candidate = { file: full, name: entry.name, api: api.api, label: api.label, bitness: pe.getBitness(full), score };
+        const candidate = { file: full, name: entry.name, api: api.api, label: api.label, bitness, score };
         if (!best || candidate.score > best.score) best = candidate;
       } catch { /* an unreadable module is not evidence */ }
     }
@@ -464,35 +520,38 @@ function rendererBeside(exes, budget = 60) {
     const dir = path.dirname(exe.path);
     byDir.set(dir, [...(byDir.get(dir) || []), exe]);
   }
-  let bestMatch = null;
+  const matches = new Map();
   for (const [dir, here] of byDir) {
+    if (budget <= 0) break;
     let names = [];
     try { names = fs.readdirSync(dir); } catch { continue; }
     const exeNames = here.map((e) => e.name || path.basename(e.path));
     for (const name of names) {
-      if (!/\.dll$/i.test(name) || NOT_A_RENDERER.test(name) || NOT_OFFERED.test(name) || budget-- <= 0) continue;
+      if (!mayBeRenderer(name) || NOT_OFFERED.test(name) || budget-- <= 0) continue;
       const file = path.join(dir, name);
+      const bitness = pe.getBitness(file, { dllOnly:true });
+      if (!bitness) continue;
       let impApi = null;
       let api = null;
       try {
-        impApi = apiFromNames(pe.getImports(file));
-        api = impApi || apiFromMarkers(file);
+        const imports = pe.getImports(file);
+        impApi = apiFromNames(imports);
+        api = name.toLowerCase() === 'unityplayer.dll' ? unityPlayerApi(file,imports) : impApi || apiFromMarkers(file);
       } catch { continue; }
       if (!api) continue;
-      const bitness = pe.getBitness(file);
       const exe = here.filter((item) => item.bitness === bitness)
         .sort((a, b) => (playableRoleScore(b) - playableRoleScore(a)) || (b.size - a.size))[0];
       if (exe) {
         let size = 0;
         try { size = fs.statSync(file).size; } catch {}
         const score = scoreRendererModuleCandidate(name, api, Boolean(impApi), size, exeNames);
-        if (!bestMatch || score > bestMatch.score) {
-          bestMatch = { exe, evidence: { file, name, api: api.api, label: api.label, bitness }, score };
-        }
+        const previous = matches.get(exe);
+        if (!previous || score > previous.score)
+          matches.set(exe, { exe, detected:{...api, via:'renderer-module:' + name}, score });
       }
     }
   }
-  return bestMatch ? { exe: bestMatch.exe, evidence: bestMatch.evidence } : null;
+  return [...matches.values()].sort((a,b) => b.score - a.score);
 }
 
 function pathDistance(a, b) {
@@ -504,9 +563,11 @@ function pathDistance(a, b) {
 }
 
 function selectPrimaryDlss(files, chosen) {
-  const exact = files.filter((file) => /^nvngx_dlss\.dll$/i.test(file.name));
-  const legacy = files.filter((file) => /^_?nvngx\.dll$/i.test(file.name));
-  const candidates = exact.length ? exact : legacy;
+  const compatible = files.filter(file => !file.featureMismatch && file.bitness !== null &&
+    (!chosen?.bitness || file.bitness === undefined || file.bitness === chosen.bitness));
+  // nvngx.dll and _nvngx.dll supply the NGX core and can be present for
+  // other features. Only the SR feature runtime belongs in the SR slot.
+  const candidates = compatible.filter((file) => /^nvngx_dlss\.dll$/i.test(file.name));
   if (!candidates.length) return null;
   const exeDir = chosen ? path.dirname(chosen.path) : null;
   return [...candidates].sort((a, b) => {
@@ -552,9 +613,9 @@ async function scanGame(gameDir, preferredExe) {
   // Executables that are real PE binaries but name no rendering API. Kept
   // aside rather than thrown away: see the fallback below.
   const undetectedExes = [];
-  const dlssFiles = [];
-  const streamlineFiles = [];
-  const upscalerFiles = [];
+  let dlssFiles = [];
+  let streamlineFiles = [];
+  let upscalerFiles = [];
   const addonPaths = [];
   const xboxDeclared = xboxExecutables(gameDir);
   const xboxLayout = xboxDeclared.length > 0 || /(?:^|[\\/])xboxgames(?:[\\/]|$)/i.test(path.resolve(gameDir));
@@ -562,10 +623,10 @@ async function scanGame(gameDir, preferredExe) {
   await walk(gameDir, async (full, name, depth) => {
     const lower = name.toLowerCase();
     if (lower.endsWith('.exe')) {
-      if (NOT_A_GAME.test(lower)) return;
+      if (NOT_A_GAME.test(lower) || bundledUtilities.has(lower)) return;
       let size = 0;
       try { size = (await fs.promises.stat(full)).size; } catch { return; }
-      const bitness = pe.getBitness(full);
+      const bitness = pe.getBitness(full, { exeOnly: true });
       if (!bitness) return;
       let emulator = emulators.profileFor(full);
       let observedApi;
@@ -585,8 +646,7 @@ async function scanGame(gameDir, preferredExe) {
       }
       // DXVK and vkd3d present the frame with Vulkan even though the game asks
       // for Direct3D, so that is the renderer to report and to install for.
-      const wrapped = !emulator && !gameProfile && detected.api !== 'vulkan' &&
-        vulkanWrapperBeside(full, detected.api, bitness);
+      const choices = emulator ? emulators.apiChoices(emulator) : gameProfile?.choices;
       // File size is not a game classifier. Genuine engine dispatchers can be
       // only a few KB; retain them when PE/API evidence above is available.
       exeCandidates.push({
@@ -595,21 +655,13 @@ async function scanGame(gameDir, preferredExe) {
         name,
         size,
         depth,
-        api: wrapped ? 'vulkan' : detected.api,
-        apiLabel: wrapped ? 'Vulkan' : detected.label,
-        via: wrapped ? 'vulkan-wrapper' : detected.via,
+        ...rendererFields(full, bitness, detected, choices),
         dynamic: detected.via !== 'imports',
         bitness,
-        dx12: !wrapped && detected.label === 'DirectX 12',
         emulator: emulator ? {
           key: emulator.key, name: emulator.name, system: emulator.system,
           hint: emulator.hint
-        } : null,
-        apiChoices: emulator
-          ? emulators.apiChoices(emulator)
-          : gameProfile ? gameProfile.choices
-            : wrapped ? [{ api: 'vulkan', label: 'Vulkan' }, { api: detected.api, label: detected.label }]
-              : [{ api: detected.api, label: detected.label }]
+        } : null
       });
     } else if (DLSS_FILE.test(name) || STREAMLINE_FILE.test(name)) {
       const item = {
@@ -617,26 +669,78 @@ async function scanGame(gameDir, preferredExe) {
         rel: path.relative(gameDir, full),
         name,
         version: pe.getFileVersion(full),
-        bitness: pe.getBitness(full),
+        bitness: pe.getBitness(full, { dllOnly: true }),
         depth
       };
+      const feature = pe.nvidiaFeatureForName(lower);
+      if (feature && !pe.matchesNvidiaFeature(full, feature)) item.featureMismatch = true;
+      if (item.bitness === 64 && !item.featureMismatch && !isDlss1xVersion(item.version) && ['nvngx_dlss.dll','nvngx_dlssd.dll'].includes(lower)) {
+        const kind = lower === 'nvngx_dlss.dll' ? 'sr' : 'rr';
+        if (pe.hasExports(full,ngxDx12)) {
+          item.xeMfgNgxDx12 = kind;
+          if (kind === 'sr') item.optiFgDx12Input = 'dlss';
+        }
+        if (pe.hasExports(full,ngxVk)) item.xeMfgNgxVk = kind;
+      }
+      if (item.bitness === 64 && !item.featureMismatch && lower === 'nvngx_dlssg.dll' && pe.hasExports(full,ngxDx12)) item.xeMfgNgxDx12 = 'fg';
+      if (item.bitness === 64 && !item.featureMismatch && lower === 'sl.dlss_g.dll' && pe.hasExports(full,['slGetPluginFunction']) &&
+          pe.findMarkers(full,['slDLSSGGetState','slDLSSGSetOptions']).size === 2)
+        item.xeMfgNgxDx12 = 'fg';
       (STREAMLINE_FILE.test(name) ? streamlineFiles : dlssFiles).push(item);
     } else if (UPSCALER_FILE.test(name)) {
       const rel = path.relative(gameDir, full);
-      if (!/(?:^|[\\/])optiscaler(?:[\\/]|$)/i.test(rel)) {
-        upscalerFiles.push({
-          path: full,
-          rel,
-          name,
-          version: pe.getFileVersion(full),
-          bitness: pe.getBitness(full),
-          depth
-        });
-      }
+      const bitness = pe.getBitness(full, { dllOnly: true });
+      const xess = /^libxess\.dll$/i.test(name);
+      const fidelity = /^amd_fidelityfx_(?:upscaler_)?(dx12|vk)\.dll$/i.exec(lower)?.[1];
+      const matchesName = pe.matchesUpscalerName(full, lower);
+      const ffxInput = matchesName && bitness === 64 && fidelity && pe.hasExports(full, ['ffxCreateContext','ffxDestroyContext','ffxConfigure','ffxDispatch']);
+      const genericFfx = /^amd_fidelityfx_(?:dx12|vk)\.dll$/.test(lower);
+      const xeMfgDx12Input = !!(ffxInput && fidelity === 'dx12') || (matchesName && bitness === 64 && xess && pe.hasExports(full, ['xessD3D12Execute','xessGetVersion']));
+      let optiFgDx12Input = null;
+      if (xeMfgDx12Input && xess && pe.hasExports(full,['xessD3D12CreateContext','xessD3D12Init','xessDestroyContext']))
+        optiFgDx12Input = 'xess';
+      if (xeMfgDx12Input && fidelity && pe.hasExports(full,['ffxQuery'])) optiFgDx12Input = 'ffx';
+      upscalerFiles.push({
+        path: full, rel, name, depth,
+        ...(!matchesName || (genericFfx && !ffxInput) ? {featureMismatch:true} : {}),
+        version: pe.getFileVersion(full),
+        bitness,
+        xeMfgDx12Input, optiFgDx12Input,
+        ...(matchesName && bitness === 64 && lower === 'amd_fidelityfx_framegeneration_dx12.dll' &&
+          pe.hasExports(full,['ffxCreateContext','ffxDestroyContext','ffxConfigure','ffxDispatch']) ? {classicFgInput:'fsrfg'} : {}),
+        ...(matchesName && bitness === 64 && lower === 'libxess_fg.dll' &&
+          pe.hasExports(full,['xefgSwapChainD3D12TagFrameResource','xefgSwapChainSetEnabled','xefgSwapChainGetVersion']) ? {classicFgInput:'xefg'} : {}),
+        xeMfgVkInput: !!(ffxInput && fidelity === 'vk') || (matchesName && bitness === 64 && xess && pe.hasExports(full, ['xessVKExecute','xessGetVersion']))
+      });
     } else if (lower.endsWith('.addon64') || lower.endsWith('.addon32') || lower.endsWith('.addon')) {
       addonPaths.push(full);
     }
   }, MAX_SCAN_DEPTH, { includeContent: xboxLayout });
+
+  // A relocated OptiScaler runtime is still private. Its copy of Streamline
+  // must not become a game's native FG input or a destination for DLL updates.
+  const privateFolders = new Set();
+  const dirKey = file => process.platform === 'win32' ? file.toLowerCase() : file;
+  for (const dir of new Set(exeCandidates.map(exe => path.dirname(exe.path)))) {
+    const ini = path.join(dir,'OptiScaler.ini');
+    if (!fs.existsSync(ini)) continue;
+    try {
+      const text = require('./xemfg-optiscaler').configText(ini,{libraries:['optidllpath']});
+      const configured = text && require('./feeder-config').getIni(text,'Libraries','OptiDllPath');
+      if (configured == null || configured.toLowerCase() === 'auto') continue;
+      if (!exeCandidates.some(exe => path.dirname(exe.path) === dir &&
+          (require('./anr').hasReShadeHost(exe.path) || require('./anr').hasMfgAsiHost(exe.path,exe.api)))) continue;
+      const root = path.resolve(dir,configured.replace(/[\\/]/g,path.sep));
+      if (path.relative(root,dir)) privateFolders.add(dirKey(root));
+      privateFolders.add(dirKey(path.join(root,'streamline')));
+    } catch { /* Invalid settings cannot establish an alternate private directory. */ }
+  }
+  if (privateFolders.size) {
+    const gameRuntime = file => !privateFolders.has(dirKey(path.dirname(file.path)));
+    dlssFiles = dlssFiles.filter(gameRuntime);
+    streamlineFiles = streamlineFiles.filter(gameRuntime);
+    upscalerFiles = upscalerFiles.filter(gameRuntime);
+  }
 
   // Add manifest-declared executables that could not be inspected as PE files.
   // DXGI is the safe fallback for a GDK PC title when no readable module gives
@@ -650,6 +754,10 @@ async function scanGame(gameDir, preferredExe) {
     }
     let size = 0;
     try { size = fs.statSync(declared.path).size; } catch {}
+    const bitness = pe.getBitness(declared.path, { exeOnly: true });
+    // Only unreadable/encrypted headers need the manifest fallback. A readable
+    // DLL or ARM executable cannot load our x86/x64 runtime.
+    if (!bitness && pe.getBitness(declared.path)) continue;
     const detected = detectApi(declared.path, pe.getImports(declared.path)) || {
       api: 'dxgi', label: 'DirectX 11/12', via: 'MicrosoftGame.config'
     };
@@ -661,13 +769,30 @@ async function scanGame(gameDir, preferredExe) {
       apiLabel: detected.label,
       via: detected.via,
       dynamic: true,
-      bitness: pe.getBitness(declared.path) || declared.bitness || 64,
+      bitness: bitness || declared.bitness || 64,
       declared: true,
-      encrypted: pe.getBitness(declared.path) === null,
+      encrypted: bitness === null,
       dx12: detected.label === 'DirectX 12'
     });
   }
 
+  // Phantom Blade Zero ships two PBZ.exe files. The shallow Steam binary
+  // launches the renderer. An old manifest can still restore that directory.
+  if (path.basename(gameDir).toLowerCase() === 'pbz' && fs.existsSync(path.join(gameDir, 'Engine')) && fs.statSync(path.join(gameDir, 'Engine')).isDirectory()) {
+    const rel = exe => exe.rel.replace(/\\/g, '/').toLowerCase();
+    const renderer = [...exeCandidates, ...undetectedExes].find(exe =>
+      exe.bitness === 64 && rel(exe) === 'platform/steam/pbz.exe');
+    if (renderer) {
+      if (undetectedExes.includes(renderer)) {
+        undetectedExes.splice(undetectedExes.indexOf(renderer),1);
+        exeCandidates.push({...renderer,api:null,apiLabel:null,via:'pbz-layout',apiChoices:[],dynamic:true,dx12:false});
+      }
+      for (const list of [exeCandidates, undetectedExes]) {
+        const index = list.findIndex(exe => rel(exe) === 'steam/pbz.exe');
+        if (index >= 0) list.splice(index, 1);
+      }
+    }
+  }
   // A DX12 binary beats DX11, a shallow one beats a buried one, and a bigger
   // one beats a smaller one. Copies of the same executable that a crack or a
   // backup folder left behind are dropped, keeping the shallowest.
@@ -706,17 +831,15 @@ async function scanGame(gameDir, preferredExe) {
   // nothing above names an API and the folder read as having no game in it
   // (#259, #249). When a library in the executable's own folder names one, at
   // the same bitness, that executable is offered with that API.
-  if (!exeCandidates.length && undetectedExes.length) {
-    const beside = rendererBeside(undetectedExes);
-    const evidence = beside && beside.evidence;
-    const fitting = beside && beside.exe;
-    if (fitting) {
+  if (undetectedExes.length) {
+    // A renderer can establish another build's API in its own directory.
+    // In a directory already identified, it could instead belong to the known game.
+    const buildDir = exe => path.dirname(exe.path) + '|' + exe.bitness;
+    const classified = new Set([...exeCandidates, ...hiddenCopies].map(buildDir));
+    for (const {exe, detected} of rendererBeside(undetectedExes.filter(item => !classified.has(buildDir(item))))) {
       exeCandidates.push({
-        ...fitting, api: evidence.api, apiLabel: evidence.label, via: 'renderer-module:' + evidence.name,
-        dynamic: true, dx12: evidence.label === 'DirectX 12', emulator: null,
-        apiChoices: [{ api: evidence.api, label: evidence.label }]
+        ...exe, ...rendererFields(exe.path, exe.bitness, detected), dynamic:true, emulator:null
       });
-      seenNames.add(fitting.name.toLowerCase());
     }
   }
 
@@ -726,21 +849,34 @@ async function scanGame(gameDir, preferredExe) {
   // "no 3D executable" and "my game's exe is not in the list" come from.
   //
   // They are offered only once the folder is already known to be a game -
-  // either something else named an API, or the folder ships DLSS/Streamline -
+  // either something else named an API, or the folder ships a graphics feature
+  // for one of the executables' architectures -
   // so an ordinary folder of tools is still not a game. The renderer is left
   // unknown rather than guessed; the person picks it with the API override.
-  const isGameFolder = exeCandidates.length > 0 || dlssFiles.length > 0 || streamlineFiles.length > 0;
-  if (isGameFolder && undetectedExes.length) {
+  if (undetectedExes.length) {
+    const bits = new Set(undetectedExes.map(exe => exe.bitness));
+    const features = [
+      ...dlssFiles.filter(file => pe.nvidiaFeatureForName(file.name)),
+      ...streamlineFiles,
+      ...upscalerFiles.filter(file => file.xeMfgDx12Input || file.xeMfgVkInput ||
+        (file.name.toLowerCase() === 'libxess_fg.dll' && pe.hasExports(file.path,['xefgSwapChainGetVersion','xefgSwapChainDestroy'])))
+    ].filter(file => !file.featureMismatch && bits.has(file.bitness));
+    const binsWithFeatures = new Set(features.map(file => path.dirname(file.path) + '|' + file.bitness));
+    const besideFeature = exe => binsWithFeatures.has(path.dirname(exe.path) + '|' + exe.bitness);
     const offered = [];
-    for (const exe of [...undetectedExes].sort((a, b) =>
-      (playableRoleScore(b) - playableRoleScore(a)) || (a.depth - b.depth) || (b.size - a.size))) {
-      const key = exe.name.toLowerCase();
-      if (seenNames.has(key) || offered.length >= UNDETECTED_LIMIT) continue;
-      seenNames.add(key);
-      offered.push({
+    const classified = new Set([...exeCandidates, ...hiddenCopies].map(exe => exe.path));
+    const silentVariants = new Set();
+    const candidates = exeCandidates.length || features.length ? [...undetectedExes] : [];
+    for (const exe of candidates.sort((a, b) =>
+      (playableRoleScore(b) - playableRoleScore(a)) || (besideFeature(b) - besideFeature(a)) || (a.depth - b.depth) || (b.size - a.size))) {
+      const key = exe.name.toLowerCase() + '|' + exe.bitness;
+      if (classified.has(exe.path)) continue;
+      const silent = {
         ...exe, api: null, apiLabel: null, via: 'undetected',
         dynamic: true, dx12: false, emulator: null, apiChoices: []
-      });
+      };
+      if (silentVariants.has(key) || offered.length >= UNDETECTED_LIMIT) hiddenCopies.push(silent);
+      else { silentVariants.add(key); offered.push(silent); }
     }
     // Always after the ones that did name an API, so the automatic choice is
     // never taken away from a game that was being detected correctly.
@@ -784,37 +920,60 @@ async function scanGame(gameDir, preferredExe) {
           typeof data.game?.exe === 'string' && !path.isAbsolute(data.game.exe)) {
         installedExe = retainTarget(path.resolve(gameDir, data.game.exe));
       }
+      const replaced = new Set((Array.isArray(data.replaced) ? data.replaced : [])
+        .filter(entry => typeof entry?.rel === 'string').map(entry => entry.rel.replace(/\\/g,'/').toLowerCase()));
       install = {
         route: data.route || (data.game && data.game.bitness === 32 ? 'feeder' : 'native'),
         api: data.game && data.game.api,
         exe: data.game && data.game.exe,
         previousReShadeRoute: data.previousReShadeRoute || null,
         optiscaler: data.route === 'optiscaler' ? data.optiscaler : null,
-        added: Array.isArray(data.added) ? data.added.filter(item => typeof item === 'string') : [],
+        added: Array.isArray(data.added) ? data.added.filter(item => typeof item === 'string' &&
+          !replaced.has(item.replace(/\\/g,'/').toLowerCase())) : [],
         vulkanLayer: data.vulkanLayer || null
       };
       if (install.optiscaler) {
-        const exeDir = path.dirname(safePath(gameDir, data.game.exe));
-        const hook = safePath(gameDir, path.relative(gameDir, path.join(exeDir, install.optiscaler.hook)));
-        // What counts as installed depends on which build the manifest names:
-        // one of them reaches the neural runtime through a forwarder DLL, and
-        // the pre-SR fork opens it directly and has none. Requiring a forwarder
-        // from every build reported the fork's own install as absent.
-        const layout = require('./optiscaler').releaseFor(install.optiscaler.version).layout;
-        const needed = ['nvngx_dlssnr.dll', 'OptiScaler.ini', layout.forwarder].filter(Boolean);
-        install.optiscaler.installed = pe.versionMentions(hook, 'OptiScaler') &&
-          needed.every(name => fs.existsSync(path.join(exeDir, name)));
+        install.optiscaler.installed = installedExe?.bitness === 64 &&
+          require('./optiscaler').installed(installedExe.path, install.api, install.optiscaler);
       }
     } catch {}
+  }
+  const fileKey = rel => rel.replace(/\\/g,'/').toLowerCase();
+  const managerFiles = new Set((install?.added || []).map(fileKey));
+  const byPath = new Map(upscalerFiles.map(file => [fileKey(file.rel),file]));
+  for (const file of upscalerFiles) {
+    if (file.featureMismatch || managerFiles.has(fileKey(file.rel))) { file.optiFgDx12Input = null; continue; }
+    if (file.bitness === 64 && file.name.toLowerCase() === 'ffx_frameinterpolation_x64.dll') {
+      const backend = byPath.get(fileKey(path.join(path.dirname(file.rel),'ffx_backend_dx12_x64.dll')));
+      if (backend?.bitness === 64 && !backend.featureMismatch && !managerFiles.has(fileKey(backend.rel)) &&
+          pe.hasExports(backend.path,['ffxReplaceSwapchainForFrameinterpolationDX12','ffxSetFrameGenerationConfigToSwapchainDX12']) &&
+          pe.hasExports(file.path,['ffxFrameInterpolationContextCreate','ffxFrameInterpolationDispatch','ffxFrameInterpolationContextDestroy']))
+        file.classicFgInput = 'fsrfg30';
+    }
+    const spec = optiFgLegacy.get(file.name.toLowerCase());
+    if (!spec || file.bitness !== 64) continue;
+    const backend = byPath.get(fileKey(path.join(path.dirname(file.rel), spec.backend)));
+    if (!backend || backend.featureMismatch || backend.bitness !== 64 || managerFiles.has(fileKey(backend.rel))) continue;
+    if (pe.hasExports(file.path,['Create','Dispatch','Destroy'].map(suffix => spec.context + suffix)) &&
+        pe.hasExports(backend.path,[spec.dx12])) file.optiFgDx12Input = spec.kind;
   }
   let recoverable = null;
   if (!fs.existsSync(activeManifest)) {
     try { recoverable = require('./apply').recoverableManifest(gameDir); } catch {}
   }
   const chosen = retainTarget(preferredExe) || installedExe || exeCandidates[0] || null;
-  // Leave shared engine/plugin directories available. DLLs beside a
-  // different executable, or under its independent subtree, belong to it.
-  const candidateDirs = [...new Set([...exeCandidates, ...hiddenCopies].map(exe => path.dirname(exe.path)))].sort((a, b) => b.length - a.length);
+  // A game's Engine/Plugins can be a sibling of its Binaries/Win64. Keep
+  // that subtree with its own renderers, while allowing shared root plugins.
+  const candidateDirs = new Set([...exeCandidates, ...hiddenCopies].map(exe => path.dirname(exe.path)));
+  const scopes = new Set();
+  for (let dir of candidateDirs) {
+    while (!scopes.has(dir)) {
+      scopes.add(dir);
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
   const chosenDir = chosen && path.dirname(chosen.path);
   const inside = (folder, file) => {
     const rel = path.relative(folder, file);
@@ -822,11 +981,20 @@ async function scanGame(gameDir, preferredExe) {
   };
   const owners = new Map();
   const belongsTo = (file, targetDir) => {
-    if (candidateDirs.length < 2) return true;
+    if (candidateDirs.size < 2) return true;
     const parent = path.dirname(file);
-    if (!owners.has(parent)) owners.set(parent, candidateDirs.find(dir => inside(dir, parent)));
-    const owner = owners.get(parent);
-    return !owner || owner === targetDir || (owner !== parent && inside(owner, targetDir));
+    if (candidateDirs.has(parent)) return parent === targetDir;
+    if (!owners.has(parent)) {
+      let scope = parent;
+      // In a packaged Unreal game Engine/Plugins serves the project beside
+      // Engine, even when Engine/Binaries also contains an executable.
+      const folders = path.relative(gameDir,parent).split(path.sep);
+      const engine = folders.findLastIndex((name,i) => name.toLowerCase() === 'engine' && folders[i+1]?.toLowerCase() === 'plugins');
+      if (engine >= 0) scope = path.resolve(gameDir,...folders.slice(0,engine));
+      else while (!scopes.has(scope) && path.dirname(scope) !== scope) scope = path.dirname(scope);
+      owners.set(parent, scope);
+    }
+    return inside(owners.get(parent), targetDir);
   };
   const forChosen = file => belongsTo(file, chosenDir);
   const localDlss = dlssFiles.filter(file => forChosen(file.path));
@@ -835,25 +1003,55 @@ async function scanGame(gameDir, preferredExe) {
   const capabilities = new Map();
   const routeCandidates = exeCandidates.map(exe => {
     const dir = path.dirname(exe.path);
-    if (!capabilities.has(dir)) {
+    const key = exe.bitness + ':' + dir;
+    if (!capabilities.has(key)) {
       const runtimes = dir === chosenDir ? localDlss : dlssFiles.filter(file => belongsTo(file.path, dir));
       const target = {
+        chosen: exe,
         primaryDlss: selectPrimaryDlss(runtimes, exe),
         dlssFiles: runtimes,
         streamlineFiles: dir === chosenDir ? localStreamline : streamlineFiles.filter(file => belongsTo(file.path, dir)),
         upscalerFiles: dir === chosenDir ? localUpscalers : upscalerFiles.filter(file => belongsTo(file.path, dir)),
         install,
       };
-      capabilities.set(dir, {
+      const optiFgInputs = exe.bitness === 64 ? [...new Set([...runtimes, ...target.upscalerFiles]
+        .filter(file => file.optiFgDx12Input && !managerFiles.has(fileKey(file.rel)))
+        .map(file => file.optiFgDx12Input))] : [];
+      const gameNgx = exe.bitness === 64 ? [...runtimes,...target.streamlineFiles].filter(file => !managerFiles.has(fileKey(file.rel))) : [];
+      const gameUpscalers = target.upscalerFiles.filter(file => exe.bitness === 64 && !managerFiles.has(fileKey(file.rel)));
+      const hasNativeDlssFg = installRoutes.nativeFgPresent(target, 'dlss');
+      const nativeFsrFg = installRoutes.nativeFgPresent(target, 'fsr');
+      const nativeXessFg = installRoutes.nativeFgPresent(target, 'xess');
+      capabilities.set(key, {
         hasNativeDlss: installRoutes.nativeDlssPresent(target),
         hasNativeUpscaler: installRoutes.nativeUpscalerPresent(target),
-        hasNativeFg: installRoutes.nativeFgPresent(target),
+        hasXeMfgDx12Upscaler: installRoutes.nativeXeMfgDx12UpscalerPresent(target),
+        hasOptiFgDx12Upscaler: optiFgInputs.length > 0,
+        optiFgInputs,
+        hasGameStreamlineFg:gameNgx.some(file => file.name.toLowerCase() === 'sl.dlss_g.dll' && file.xeMfgNgxDx12 === 'fg'),
+        classicFgInputs:[...new Set(gameUpscalers.map(file => file.classicFgInput).filter(Boolean))],
+        classicVkUpscalerInputs:[...new Set(gameUpscalers.filter(file => file.xeMfgVkInput).map(file => /^libxess/i.test(file.name) ? 'xess' : 'ffx'))],
+        gameDlssgProviders:runtimes.filter(file => file.name.toLowerCase() === 'nvngx_dlssg.dll').map(file => file.path),
+        hasXeMfgDlssSrDx12: gameNgx.some(file => file.xeMfgNgxDx12 === 'sr'),
+        hasXeMfgDlssSrVk: gameNgx.some(file => file.xeMfgNgxVk === 'sr'),
+        hasXeMfgDlssRrDx12: gameNgx.some(file => file.xeMfgNgxDx12 === 'rr'),
+        hasXeMfgDlssRrVk: gameNgx.some(file => file.xeMfgNgxVk === 'rr'),
+        hasXeMfgDlssFgDx12: gameNgx.some(file => file.xeMfgNgxDx12 === 'fg'),
+        hasXeMfgVkUpscaler: installRoutes.nativeXeMfgVkUpscalerPresent(target),
+        hasNativeFg: hasNativeDlssFg || nativeFsrFg || nativeXessFg || installRoutes.nativeFgPresent(target, 'fsr-combined'),
+        hasNativeDlssFg, nativeFsrFg, nativeXessFg,
       });
     }
-    return { ...exe, ...capabilities.get(dir) };
+    // Two renderers in one directory can import different OptiScaler proxies.
+    const rootOptiConfig = fs.existsSync(path.join(dir,'OptiScaler.ini'));
+    const hasOptiScalerConfig = rootOptiConfig || fs.existsSync(path.join(dir,'OptiScaler','OptiScaler.ini'));
+    const examineHost = exe.bitness === 64 && rootOptiConfig;
+    const xeMfgOptiHost = examineHost ? require('./xemfg-optiscaler').detectHost(exe.path) : null;
+    const optiFgHost = examineHost && !xeMfgOptiHost && require('./optifg').detectHost(exe.path);
+    return { ...exe, ...capabilities.get(key), hasOptiScalerConfig, xeMfgOptiHost, optiFgHost };
   });
   let reshade = chosen ? inspectReShade(path.dirname(chosen.path)) : inspectReShade(gameDir);
-  if (!reshade.installed && install && install.vulkanLayer &&
+  if (!reshade.installed && chosen && installedExe?.path === chosen.path && install?.vulkanLayer &&
       fs.existsSync(install.vulkanLayer.manifest || '')) {
     reshade = {
       installed: true, file: 'Vulkan layer', kind: 'vulkan-layer',
@@ -967,6 +1165,7 @@ function scanSource(sourceDir) {
     ok: payload.length > 0,
     reason: payload.length ? null : 'sourceEmpty',
     dir: streamlineDir,
+    payloadRoot:sourceDir,
     addon,
     payload,
     // The add-on refuses to run without nvngx_dlssnr.dll beside it.

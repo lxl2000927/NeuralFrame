@@ -77,6 +77,11 @@ test('GPU requirements and process guards reject known unsupported/running targe
   const rows = [{ Name: 'Game.exe', ExecutablePath: game, ProcessId: -1 }, { Name: 'Game.exe', ExecutablePath: null, ProcessId: -2 }, { Name: 'Other.exe', ExecutablePath: path.resolve('elsewhere', 'Other.exe'), ProcessId: -3 }];
   assert.equal(guards.matchingProcesses(rows, root, game).length, 2);
   await assert.rejects(guards.assertGameClosed(root, game, async () => JSON.stringify(rows)), { code: 'errGameRunning' });
+  const helper = path.join(root,'host64','dlss5-feed-host64.exe');
+  const unnamed = async () => JSON.stringify([{Name:path.basename(helper),ExecutablePath:null,ProcessId:-4}]);
+  await guards.assertGameClosed(root,game,unnamed,() => false);
+  await assert.rejects(guards.assertGameClosed(root,game,unnamed,file => file === helper),{code:'errGameRunning'});
+  await assert.rejects(guards.assertGameClosed(root,game,async () => { throw Error('unavailable'); },file => file === helper),{code:'errGameRunning'});
   // When the process list cannot be read - PowerShell restricted, a cold WMI
   // call past its timeout - the executable itself is asked instead. A file
   // that opens for writing is not a running game, and the install proceeds;

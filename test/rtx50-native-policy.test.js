@@ -10,6 +10,27 @@ const {getIni} = require('../src/core/feeder-config');
 const {writePe} = require('./fixtures/pe');
 const payloadDir = require('./fixtures/payload').root;
 
+test('a confirmed non-NVIDIA system cannot deploy classic DLSS-G and can still turn it off', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(),'nf-classic-no-nvidia-'));
+  t.after(() => fs.rmSync(root,{recursive:true,force:true}));
+  const exePath = writePe(path.join(root,'Game.exe'),{text:'D3D12CreateDevice'});
+  const host = path.join(root,'OptiScaler.ini');
+  const original = '[FrameGen]\nFGInput=upscaler\nFGOutput=XeFG\n';
+  fs.writeFileSync(host,original);
+  const config = {exePath,gpuName:'AMD Radeon RX 7800 XT',nvidiaPresent:false,payloadDir};
+  for (const backend of ['renodx-mfgunlock','mfg-unlocker-asi']) {
+    await assert.rejects(() => mfg.applyMfgConfiguration(root,{...config, mode:'x3',backend}), {code:'errMfgNvidiaRequired'});
+  }
+  assert.deepEqual(fs.readdirSync(root).sort(),['Game.exe','OptiScaler.ini']);
+  const status = await mfg.inspectGameMfgStatus(root,config);
+  assert.equal(status.status,'incompatible');
+  assert.equal(status.gpuSupport.modeBadges.x3.status,'incompatible');
+  const unknown = await mfg.inspectGameMfgStatus(root,{...config,nvidiaPresent:null,gpuName:''});
+  assert.equal(unknown.gpuSupport.modeBadges.x3.status,'untested');
+  await mfg.applyMfgConfiguration(root,{...config,mode:'off'});
+  assert.equal(fs.readFileSync(host,'utf8'),original);
+});
+
 test('RTX 50 desktop and laptop advertise native capability, never runtime success or unlocking', () => {
   for (const gpuName of ['NVIDIA GeForce RTX 5090 D', 'NVIDIA GeForce RTX 5070 Laptop GPU']) {
     for (const hardwareProfile of ['rtx40_laptop', 'rtx40_desktop', 'rtx50_desktop']) {
@@ -122,15 +143,25 @@ for (const backend of ['renodx-mfgunlock', 'mfg-unlocker-asi']) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-rtx50-policy-'));
     t.after(() => fs.rmSync(root, {recursive:true, force:true}));
     writePe(path.join(root, 'Game.exe'), {text:'D3D12CreateDevice'});
+    fs.copyFileSync(path.join(payloadDir,'streamline','sl.dlss_g.dll'),path.join(root,'sl.dlss_g.dll'));
+    if (backend === 'mfg-unlocker-asi') {
+      fs.copyFileSync(path.join(payloadDir,'enhanced','anr','dxgi.dll'),path.join(root,'dxgi.dll'));
+      require('./fixtures/optiscaler-streamline').addPrivateStreamline(root);
+    }
     const reshadePath = path.join(root, 'ReShade.ini'), optiPath = path.join(root, 'OptiScaler.ini');
     fs.writeFileSync(reshadePath, '[RenoDX.DLSS5]\nNRResolutionScale=0.65\nNRStructureIntensity=0.73\n[Other]\nCustom=keep\n');
-    fs.writeFileSync(optiPath, '[Other]\nCustom=keep\n');
+    fs.writeFileSync(optiPath, '[FrameGen]\nFGInput=dlssg\nFGOutput=dlssg\n[Other]\nCustom=keep\n');
+    const universalJson = path.join(root, 'RTXMFG-Universal.json');
+    const originalControl = '{"mode":"follow","multiplier":2,"temporalFix":true}';
+    fs.writeFileSync(universalJson, originalControl);
     // Change GPUs/presets repeatedly to catch stale Ada flags on native hardware.
     const cases = [
       {gpuName:'NVIDIA GeForce RTX 4070', hardwareProfile:'rtx40_desktop', ada:true, native:false},
       {gpuName:'NVIDIA GeForce RTX 5090', hardwareProfile:'rtx40_laptop', ada:false, native:true},
       {gpuName:'NVIDIA GeForce RTX 5070 Laptop GPU', hardwareProfile:'rtx40_desktop', ada:false, native:true},
       {gpuName:'NVIDIA GeForce RTX 4070', hardwareProfile:'rtx50_desktop', ada:true, native:false},
+      {gpuName:'NVIDIA GeForce RTX 2070', hardwareProfile:'rtx40_laptop', ada:false, native:false},
+      {gpuName:'NVIDIA GeForce RTX 3080', hardwareProfile:'rtx50_desktop', ada:false, native:false},
       {gpuName:'', hardwareProfile:'rtx50_desktop', ada:false, native:false},
       {gpuName:'', hardwareProfile:'rtx40_desktop', ada:false, native:false},
     ];
@@ -158,12 +189,13 @@ for (const backend of ['renodx-mfgunlock', 'mfg-unlocker-asi']) {
           assert.equal(getIni(reshade, 'RenoDX.MFGUnlock', key), '0', key);
         }
       } else {
-        const json = JSON.parse(fs.readFileSync(path.join(root, 'RTXMFG-Universal.json'), 'utf8'));
-        assert.equal(json.blackwellNative, config.native);
-        assert.equal(json.temporalFix, config.ada);
-        assert.equal(json.multiplier, 4);
+        assert.equal(fs.readFileSync(universalJson, 'utf8'), originalControl);
         const opti = fs.readFileSync(optiPath, 'utf8');
-        assert.equal(getIni(opti, 'MfgUnlock', 'TemporalFix'), String(config.ada));
+        assert.equal(getIni(opti, 'MfgUnlock', 'TemporalFix'), null);
+        assert.equal(getIni(opti, 'DLSSG', 'InterpolationCount'), '3');
+        assert.equal(getIni(opti, 'DLSSG', 'OverrideInterpolationCount'), '3');
+        assert.equal(getIni(opti, 'Plugins', 'LoadAsiPlugins'), 'true');
+        assert.equal(mfg.readCurrentMfgConfiguration(root).mode, 'x4');
         assert.equal(getIni(opti, 'Other', 'Custom'), 'keep');
       }
     }

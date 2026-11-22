@@ -1,17 +1,30 @@
 import { t } from "./i18n";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Gamepad2, X, LoaderCircle } from "lucide-react";
 import type { Game } from "./types";
 import { useArtwork } from "./useArtwork";
 export { Select } from "./Select";
+export function navigateRadioGroup(event: KeyboardEvent<HTMLDivElement>) {
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+  const radios = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="radio"]:enabled')];
+  const current = radios.indexOf(event.target as HTMLButtonElement);
+  if (current < 0) return;
+  event.preventDefault();
+  const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+  const next = event.key === "Home" ? 0 : event.key === "End" ? radios.length - 1 : (current + step + radios.length) % radios.length;
+  radios[next].focus();
+  radios[next].click();
+}
 export function Artwork({
   game,
   large = false,
   layout = "thumbnail",
+  onImageReady,
 }: {
   game: Game;
   large?: boolean;
   layout?: "thumbnail" | "cover" | "banner";
+  onImageReady?: (image: HTMLImageElement | null) => void;
 }) {
   const [backdropSource, setBackdropSource] = useState<string>();
   const {ref, url, tile, hero, custom, failed} = useArtwork(game, layout);
@@ -19,6 +32,17 @@ export function Artwork({
     ? [url, hero, tile]
     : custom ? [url, tile, hero] : [tile, hero, url];
   const source = candidates.find(Boolean);
+  const imageRef = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    if (!onImageReady) return;
+    const image = imageRef.current;
+    if (!image) { onImageReady(null); return; }
+    const loaded = () => onImageReady(image.naturalWidth ? image : null);
+    if (image.complete) loaded();
+    else onImageReady(null);
+    image.addEventListener("load", loaded);
+    return () => image.removeEventListener("load", loaded);
+  }, [source, onImageReady]);
   return (
     <span
       ref={ref}
@@ -34,6 +58,7 @@ export function Artwork({
             />
           )}
           <img
+            ref={onImageReady ? imageRef : undefined}
             src={source}
             alt=""
             loading="lazy"

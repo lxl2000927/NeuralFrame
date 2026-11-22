@@ -28,6 +28,8 @@ export function Settings({
   onLibraryReset,
   onSettingsReset,
   onGroupingChange,
+  fontScale,
+  onFontScale,
   ask,
 }: {
   active: boolean;
@@ -40,6 +42,8 @@ export function Settings({
   onLibraryReset: () => Promise<void>;
   onSettingsReset: () => Promise<void>;
   onGroupingChange: (on: boolean) => void;
+  fontScale: number;
+  onFontScale: (value:number) => void;
   ask: (title: string, body: string, confirm?: string) => Promise<boolean>;
 } & Message) {
   const language = useLanguage();
@@ -122,6 +126,10 @@ export function Settings({
                   ["light", t("浅色")],
                 ]}
               />
+            </Row>
+            <Row label={t("界面字体大小")} hint={t("调整正文字号，范围为 12–18px。")}>
+              <div className="font-scale-control"><input aria-label={t("界面字体大小")} type="range" min={12} max={18} step={1} value={fontScale}
+                onChange={event=>onFontScale(Number(event.target.value))}/><output>{fontScale}px</output></div>
             </Row>
             <Row label={t("关闭窗口时保留托盘")}>
               <input

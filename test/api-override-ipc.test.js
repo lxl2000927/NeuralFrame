@@ -16,13 +16,15 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
     api: 'opengl', apiLabel: 'OpenGL', apiChoices: [{ api: 'opengl', label: 'OpenGL' }] }));
   const scan = { chosen: exes[0], exeCandidates: exes, dlssFiles: [], streamlineFiles: [],
     primaryDlss: { rel: 'native/nvngx_dlss.dll' }, reshade: { installed: false } };
-  let old = null, failOpen = false;
+  let old = null, failOpen = false, nvidiaPresent = null;
   const installs = [], opened = [];
   const main = path.resolve(__dirname, '../main.js');
   const realRequire = createRequire(main);
-  function load() {
+  function load(platform = process.platform) {
     const handlers = new Map();
     const stubs = {
+      './src/core/combined-manager': {...realRequire('./src/core/combined-manager'),
+        detectHardwareEnvironment:async () => ({gpu:{nvidiaPresent}})},
       './src/overlay-preferences': { read: () => ({enabled:false}) },
       // This unit isolates route choice; preview/token behavior has its own
       // real-installer coverage in component-review.test.js.
@@ -41,9 +43,11 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
           game: { dir: game, exe: path.basename(config.exePath), api: config.api }, replaced: [], added: [] };
       } }
     };
-    const context = vm.createContext({ require: name => stubs[name] || realRequire(name), __dirname: path.dirname(main), process: require('./fixtures/offline-process')(), Buffer, console });
+    const fixtureProcess = Object.create(require('./fixtures/offline-process')(),{platform:{value:platform}});
+    const context = vm.createContext({ require: name => stubs[name] || realRequire(name), __dirname: path.dirname(main), process: fixtureProcess, Buffer, console });
     vm.runInContext(fs.readFileSync(main, 'utf8'), context, { filename: main });
     vm.runInContext('payload = () => ({ source: { feeder: { ok32: true, ok64: true } } }); companionAddons = () => [];', context);
+    if (platform === 'linux') vm.runInContext('requireProtonContext = () => ({prefix:"/test/pfx"});',context);
     return handlers;
   }
   let handlers = load();
@@ -62,6 +66,26 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   assert.equal(d.exes[0].apiOverride, 'd3d11');
   assert.equal(d.exes[1].apiOverride, 'auto');
   assert.equal(d.exes[0].apiLabel, 'OpenGL', 'detection is still visible');
+  assert.ok(d.exes[0].routes.includes('renodx'), 'DX11 override offers the DXGI routes');
+  assert.ok(!d.exes[1].routes.includes('renodx'), 'the other executable still uses OpenGL');
+  assert.equal(d.exes[0].recommendedRoute, 'feeder');
+  assert.equal((await choose('d3d12')).ok, true);
+  d = await details();
+  assert.equal(d.recommendedRoute, 'native');
+  assert.match(d.exes[0].classicMfgIssue,/DLSS-G 输入/);
+  assert.equal(d.exes[0].hasAnrAddonHost,false);
+  const otherSdk = {name:'libxess_fg.dll',rel:'bin/libxess_fg.dll',version:'2.0.0.0',featureMismatch:true};
+  scan.upscalerFiles = [otherSdk];
+  assert.equal((await details()).files.find(f=>f.rel===otherSdk.rel)?.featureMismatch,true);
+  scan.upscalerFiles = [];
+  assert.equal(d.exes[0].recommendedRoute, 'native');
+  assert.equal(d.exes[1].recommendedRoute, 'feeder');
+  nvidiaPresent = false;
+  for (const route of ['native','feeder','renodx','optiscaler'])
+    assert.equal((await install('d3d12',route)).code,'errNeuralGpuUnsupported');
+  assert.equal(installs.length,0);
+  nvidiaPresent = null;
+  assert.equal((await choose('d3d11')).ok, true);
   assert.equal((await install(null)).ok, true);
   assert.equal(installs.at(-1).api, 'dxgi');
   assert.equal(installs.at(-1).apiLabel, 'DirectX 11');
@@ -78,9 +102,19 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   assert.equal((await install('opengl', 'optiscaler')).code, 'optiUnsupported');
   const nativeDll = scan.primaryDlss;
   scan.primaryDlss = null;
+  const noInput = await install('d3d12', 'native');
+  assert.equal(noInput.code, 'errSelectedRouteUnavailable');
   assert.equal((await install('d3d12', 'optiscaler')).code, 'optiNeedsDlss');
   scan.primaryDlss = nativeDll;
   assert.equal(installs.length, applied, 'an unavailable explicit route must never reach deployment');
+  handlers = load('linux');
+  assert.equal((await install('vulkan','feeder')).code,'errLinuxVulkanUnsupported');
+  const vulkanGame = path.join(root,'LinuxVk');
+  const vkExe = require('./fixtures/pe').writePe(path.join(vulkanGame,'Game.exe'),{text:'vkCreateInstance'});
+  const hud = await handlers.get('enhanced-apply')(event,vulkanGame,{exePath:vkExe,apiOverride:'vulkan',performanceMonitor:{install:true}});
+  assert.equal(hud.code,'errLinuxVulkanUnsupported');
+  assert.deepEqual(fs.readdirSync(vulkanGame),['Game.exe']);
+  handlers = load();
   // Older callers may leave the route unset. An empty selection also uses the recommendation.
   for (const route of [null, '', 'feeder']) assert.equal((await install('vulkan', route)).ok, true);
   assert.equal(installs.at(-1).api, 'vulkan');
@@ -100,6 +134,16 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   assert.equal((await install('auto')).ok, true);
   assert.equal(installs.at(-1).api, 'opengl');
   assert.deepEqual(fs.readdirSync(game), [], 'mock install never creates game files');
+  const client = path.join(game, 'Client/Binaries/Win64/Client-Win64-Shipping.exe');
+  fs.mkdirSync(path.dirname(client), {recursive:true});
+  fs.writeFileSync(client, 'fixture');
+  fs.writeFileSync(path.join(game, 'Wuthering Waves.exe'), 'launcher');
+  const protectedDetails = await details();
+  assert.equal(protectedDetails.recommendedRoute, 'wuwa-proxy');
+  assert.deepEqual(Array.from(protectedDetails.exes[0].routes), ['wuwa-proxy']);
+  const beforeProtected = installs.length;
+  assert.equal((await install('d3d12', 'native')).code, 'errWutheringWaves');
+  assert.equal(installs.length, beforeProtected);
   for (const destination of ['github', 'releases']) assert.equal(await handlers.get('open-project')(event, destination), true);
   assert.equal(opened.length, 2);
   assert.equal(await handlers.get('open-project')(event, 'https://example.com'), false);

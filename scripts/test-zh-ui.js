@@ -2,7 +2,8 @@
 // Hidden Electron window, synthetic game data, isolated profile, network denied.
 const {app,BrowserWindow}=require('electron');
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const root=path.join(__dirname,'..'),out=path.resolve(root,'../validation/ui-zh');
+const root=path.join(__dirname,'..');
+const out=process.env.NEURALFRAME_QA_OUT || fs.mkdtempSync(path.join(require('node:os').tmpdir(),'neuralframe-legacy-zh-'));
 fs.mkdirSync(out,{recursive:true});app.setPath('userData',path.join(out,'profile'));
 const extra=`
  enhancedHardware:async()=>({hardwareProfile:'rtx40_laptop',hardware:{gpu:{name:'NVIDIA GeForce RTX 4070 Laptop GPU',driver:'621.01',vramTotalMB:8188,powerDefaultW:100,powerMaxW:140}}}),
@@ -66,6 +67,6 @@ app.whenReady().then(async()=>{
  assert.equal(await run(`fixtureCommands.length`),0);
  await run(`$('fixtureLive')._overlayDispose();$('fixtureLive').remove()`);
  assert.deepEqual(errors,[]);clearTimeout(timeout);
- console.log('PASS: Chinese home, games, enhanced panels, overlays, settings, hotkey dialog and language switching');
+ console.log('PASS: Chinese home, games, enhanced panels, overlays, settings, hotkey dialog and language switching. Output:',out);
  app.exit(0);
 }).catch(err=>{console.error(err);clearTimeout(timeout);app.exit(1);});

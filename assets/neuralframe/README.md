@@ -5,8 +5,9 @@ then refine the flat fills and negative spaces. The user requested a simple
 technological style; the earlier metallic concept was discarded.
 
 `mark.png` is the selected transparent master. `mark-ui.png` is the 128px UI
-export. `app.ico` contains 16, 24, 32, 48, 64, 128 and 256px images. The existing
-Electron icon exporter performs trimming, sizing and format conversion.
+export used by React, the desktop window and the Windows tray. Linux packaging
+uses the master PNG. `app.ico` contains 16, 24, 32, 48, 64, 128 and 256px
+images for Windows. Run `npm run icon` to regenerate both exports from the master.
 
 ## Generation prompt
 

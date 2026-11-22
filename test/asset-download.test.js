@@ -118,6 +118,26 @@ test('a partial left by a killed process still resumes at the saved offset', asy
   await assert.rejects(fs.stat(parts), 'a finished download leaves no partial ranges');
 });
 
+test('a healthy source can recover a resumed download containing corrupt ranges', async t => {
+  const cacheRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'asset-range-repair-'));
+  t.after(() => fs.rm(cacheRoot, {recursive:true, force:true}));
+  const parts = path.join(cacheRoot, 'partial-downloads', asset.sha256);
+  await fs.mkdir(parts, {recursive:true});
+  await fs.writeFile(path.join(parts, `0-${MiB - 1}.part`), Buffer.alloc(MiB));
+  const destination = path.join(cacheRoot, 'stage'), starts = [];
+  await downloadAsset(asset, {
+    cacheRoot, destination, signal:new AbortController().signal, onProgress:() => {},
+    fetcher:async (_url, {headers}) => {
+      const [start, end] = offsets(headers);
+      starts.push(start);
+      return rangeResponse(start, end);
+    },
+  });
+  assert.equal(starts[0], MiB);
+  assert.ok(starts.includes(0));
+  assert.deepEqual(await fs.readFile(destination), payload);
+});
+
 test('sweeping drops abandoned partials and keeps the fresh ones', async t => {
   const cacheRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'asset-sweep-'));
   t.after(() => fs.rm(cacheRoot, { recursive: true, force: true }));

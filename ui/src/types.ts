@@ -83,12 +83,18 @@ type NativeRuntimeFile = { rel: string; version: string | null };
 export type EngineInfo = {
   version?: string; packageId?: string | null; recommended?: boolean; recommendedVersion?: string;
   verified?: boolean; compatible?: boolean; reason?: string; sha256?: string;
-  capabilities?: { diagnosticLogging?: boolean; nrPassPlacement?: boolean; dlssCustomScaleMin?: number; [key: string]: unknown };
+  capabilities?: { diagnosticLogging?: boolean; nrPassPlacement?: boolean; dlssCustomScaleMin?: number; spatialUpscaling?:boolean; [key: string]: unknown };
 };
 export type MfgAdvanced = {
   model?: number; structure?: number; tone?: number; characterMask?: boolean; character?: number; diagnosticLogging?: boolean;
 };
+export type GraphicsRouteSettings = {neural?:boolean; multiplier?:number; sceneCut?:boolean; engine?:"DLSS"|"XeSS"};
+export type GraphicsRouteStatus = Omit<GraphicsRouteSettings,"multiplier"|"engine"> & {
+  route:string; exePath:string; filesPresent:boolean; error?:string; providerVersion?:string;
+  multiplier?:number|null; enabled?:boolean|null; dynamic?:boolean|null; engine?:"DLSS"|"XeSS"|"FSR FG";
+};
 export type Status = {
+  graphicsRoute?: GraphicsRouteStatus | null;
   installedRoute?: string | null;
   encore?: {available:boolean; reason?:string | null; version:string; installed:boolean; filesPresent?:boolean;
     exePath?:string; proxy?:string; error?:string; hasNativeDlss:boolean; settings:EncoreSettings;
@@ -114,13 +120,13 @@ export type Status = {
   gameName?: string;
   bitness?: number;
   diagnostics?: StatusDiagnostics;
-  hardware?: { gpu?: { name?: string; architecture?: { family?: string; sm?: string | null } } };
+  hardware?: { os?:string; gpu?: { name?: string; nvidiaPresent?: boolean | null; architecture?: { family?: string; sm?: string | null } } };
   neural?: {
     installed?: boolean;
     runtimeVersion?: string;
     overallStatus?: string;
     overallBadge?: string;
-    dependencies?: { hasNeuralDll?: boolean };
+    dependencies?: { hasNeuralDll?: boolean; hasConsumer?: boolean };
     gpuCompatibility?: { compatible?: boolean; status?: string; reason?: string; badge?: string };
     mode?: string;
     currentModel?: Model;
@@ -139,7 +145,7 @@ export type Status = {
     knownGame?: { title?: string; notes?: string };
     gpuSupport?: { nativeX2?: boolean; nativeX3X4?: boolean; unlockRequiredForX3X4?: boolean; modeBadges?: Record<string, { status: string; badge: string }> };
     runtimeVerification?: { effectiveMultiplier?: number | null };
-    currentConfig?: { mode?: string; settings?: { qualityGuardMode?: number } };
+    currentConfig?: { installed?:boolean; backend?:string; version?:string; mode?: string; settings?: { qualityGuardMode?: number } };
   };
 };
 export type Details = {
@@ -154,7 +160,7 @@ export type Details = {
   exePath?: string;
   api?: string;
   hasBackup?: boolean;
-  files?: { name: string; version?: string; rel: string }[];
+  files?: { name: string; version?: string; rel: string; featureMismatch?:boolean }[];
   exes?: GameExecutable[];
   recommendedRoute?: string;
   installedRoute?: string;
@@ -164,9 +170,21 @@ export type Details = {
   antiCheatComponents?: string[];
 };
 export type GameExecutable = {
+  performanceMonitor?: {installed:boolean; mode?:number; corner?:number};
   path: string; rel: string; api: string; apiLabel: string; bitness: number; size: number;
+  recommendedRoute?: string | null; launcherProtected?: boolean;
   apiOverride?: string; reshadeProxy?: string; hasNativeDlss?: boolean; hasNativeUpscaler?: boolean;
+  hasXeMfgDx12Upscaler?: boolean;
+  hasXeMfgVkUpscaler?: boolean;
+  hasXeMfgDlssSrDx12?: boolean; hasXeMfgDlssSrVk?: boolean; hasXeMfgDlssFgDx12?: boolean;
+  hasXeMfgDlssRrDx12?: boolean; hasXeMfgDlssRrVk?: boolean;
+  xeMfgOptiHost?: "dx12"|"dx12-vulkan"|null;
+  optiFgHost?:boolean; hasOptiFgDx12Upscaler?:boolean; optiFgInputs?:string[];
+  hasOptiScalerConfig?:boolean;
   hasNativeFg?: boolean;
+  hasNativeDlssFg?: boolean;
+  hasAnrAddonHost?: boolean;
+  classicMfgIssue?: string | null;
   emulator?: { name: string; system?: string; hint?: string }; installIssue?: string;
   antiCheatWarning?: boolean;
   antiCheatComponents?: string[];
@@ -184,6 +202,7 @@ export type EncoreSettings = {
   nrResolution:string; nrScale:number; nrPasses:number;
   nrPass1Placement?:string; nrPass2Placement?:string; nrPass3Placement?:string; nrPass4Placement?:string;
   dlssRenderScale?:string; dlssCustomScale?:number;
+  spatialSharpness?:number; spatialAa?:string; spatialAaPlacement?:string; spatialAaQuality?:string;
 };
 export type RuntimeItem = {
   requestedMode?: string;
@@ -213,6 +232,7 @@ export type Runtime = {
   message?: string;
   checkedAt: number;
   processState: string;
+  process?: {exe: string} | null;
   nr: RuntimeItem;
   mfg: RuntimeItem;
   warnings?: string[];
@@ -220,6 +240,12 @@ export type Runtime = {
 };
 export type ProxySettings = Record<string, number | boolean | string>;
 export type FileRow = {
+  scope?: 'game' | 'shared';
+  selectionTarget?: boolean;
+  featureMismatch?: boolean;
+  bitness?: number | null;
+  routeSha256?: string;
+  recordedVersion?: string;
   name: string;
   rel: string;
   version?: string;
@@ -263,6 +289,37 @@ export type Result = {
   recordWarning?: string;
   mfgResult?: { skipped?: boolean } | null;
 };
+export type CompatibilityReport = {
+  schema:"neuralframe-compatibility-report";version:1;generatedAt:string;readOnly:true;complete?:boolean;total?:number;
+  scanStatus?:"stopped"|"error";
+  rows:{name:string;exe?:string;candidateCount?:number;driverHint?:"afmf"|"afmf-fullscreen"|null;status:"supported"|"verify"|"unsupported"|"error";api:string;bitness:32|64|null;
+    nativeDlss:boolean;nativeFg:boolean;nativeDlssFg:boolean;antiCheat:boolean;routes:string[];recommendedRoute:string;message:string}[];
+};
+export type BatchScanTaskStatus = "running"|"done"|"stopped"|"error";
+export type BatchScanTask = {
+  id:string;
+  status:BatchScanTaskStatus;
+  total:number;
+  startedAt:string;
+  finishedAt:string|null;
+  currentGame:string|null;
+  rows:CompatibilityReport["rows"];
+  report?:CompatibilityReport;
+  message?:string;
+};
+export type BatchScanProgress =
+  | {taskId:string;status:"running";total:number;index:number;currentGame:string|null;row?:CompatibilityReport["rows"][number]}
+  | {taskId:string;status:Exclude<BatchScanTaskStatus, "running">;task:BatchScanTask};
+export type GamePreset = {
+  schema: "neuralframe-game-preset";
+  version: 1;
+  name: string;
+  gameName: string;
+  route: string;
+  createdAt: string;
+  settings: Record<string, unknown>;
+};
+export type DownloadSourceOptions = {mirror:string;priority:"mirror"|"official"};
 export type Progress = {
   name: string;
   stage: string;
@@ -270,6 +327,11 @@ export type Progress = {
   total?: number;
   index?: number;
   count?: number;
+  overallLoaded?: number;
+  overallTotal?: number;
+  source?: string;
+  sourceReason?: string;
+  connections?: number;
   id?: string;
 };
 export type ComponentCompatibility = {
@@ -291,7 +353,7 @@ export type Library = {
     version: string;
     source: string;
     releaseUrl?: string | null;
-    files?: {rel: string; sha256: string; size: number; version?: string | null}[];
+    files?: {rel: string; sha256: string; size: number; version?: string | null; bitness?: number | null}[];
     present: boolean;
     engine?: EngineInfo;
     compatibility: ComponentCompatibility;
@@ -320,8 +382,15 @@ export type Library = {
   inventory?: Inventory;
   rollback?: { id: string } | null;
   updates?: Updates;
+  cache?: {
+    totalBytes: number;
+    removableBytes: number;
+    partialBytes: number;
+    packages: {id:string;component:string;version:string;source:string;at?:string|null;lastUsedAt?:string|null;size:number;removable:boolean;selected:boolean;bundled:boolean;protectedReason:string}[];
+  };
 };
 export type Updates = {
+  publishedCheck?: {at:string;checked:number;total:number};
   checkedAt: string | null;
   nextCheckAt?: number;
   cached?: boolean;
@@ -332,6 +401,9 @@ export type Updates = {
     name: string;
     size: number;
     repo: string;
+    version?: string;
+    releaseOnly?: boolean;
+    prerelease?: boolean;
     releaseUrl?: string;
     publishedAt?: string;
     provider?: string;
@@ -411,24 +483,23 @@ export interface Lab {
   enhancedStatus(dir: string, profileId?: string, priority?: "selection"): Promise<Status>;
   enhancedApply(
     dir: string,
-    config: Partial<Draft> & {route?: "encore"; exePath?: string; apiOverride?: string; encore?: Partial<EncoreSettings>;
+    config: Partial<Draft> & {route?: "encore" | import("../../src/shared/install-routes.js").ComponentRoute; performanceMonitor?:number | {install?:true;mode?:number;corner?:number}; graphics?:GraphicsRouteSettings; exePath?: string; apiOverride?: string; encore?: Partial<EncoreSettings>;
       encorePackageId?:string; mfgPackageId?:string; mfgAdvanced?:MfgAdvanced; resetNeuralTuning?:boolean},
     token?: string,
   ): Promise<Result>;
-  enhancedImportModel(filePath?: string, meta?: {expectedModelId: string}): Promise<Result & {model?: Model & {compatibility?: {status: string}}}>;
   componentInventory(dir: string): Promise<Inventory>;
   componentRuntime(dir: string): Promise<Runtime>;
   componentLock(dir: string, on: boolean): Promise<Result>;
-  componentPrepare(ids: string[]): Promise<Result>;
-  componentCancelPrepare(): Promise<void>;
+  componentPrepare(ids: string[], source?: DownloadSourceOptions | string): Promise<Result>;
+  componentCancelPrepare(options?:{discard?:boolean}): Promise<void>;
   onComponentProgress(fn: (p: Progress) => void): () => void;
   onJob(fn: (event: { dir?: string; code: string; params?: unknown; data?: unknown }) => void): () => void;
   restoreGame(dir: string, token?: string): Promise<Result>;
   restoreStatus(dir: string): Promise<{ canRestore: boolean }>;
   libraryComponents(dir?: string): Promise<Library>;
-  libraryCheck(): Promise<Updates & Result>;
-  libraryDownload(id: string): Promise<Result>;
-  libraryCancel(): Promise<unknown>;
+  libraryCheck(manual?:boolean): Promise<Updates & Result>;
+  libraryDownload(id: string, source?: DownloadSourceOptions | string): Promise<Result>;
+  libraryCancel(options?:{discard?:boolean}): Promise<unknown>;
   onLibraryProgress(fn: (p: Progress) => void): () => void;
   librarySelect(
     dir: string,
@@ -438,6 +509,7 @@ export interface Lab {
   libraryCheckRuntime(id: string): Promise<Result>;
   libraryRollback(dir: string, id: string, token?: string): Promise<Result>;
   libraryImport(component: string): Promise<Result>;
+  libraryCleanCache(options?:{component?:string;olderThanDays?:number}): Promise<Result & {removedPackages?:number;removedBytes?:number;warning?:string;cache?:Library["cache"]}>;
   addGame(): Promise<{ dir?: string; ok?: boolean } | string | null>;
   addFolder(): Promise<unknown>;
   setPoster(dir: string): Promise<string | null>;
@@ -446,6 +518,7 @@ export interface Lab {
   removeFolder(dir: string): Promise<unknown>;
   launchGame(dir: string): Promise<Result>;
   open(dir: string): Promise<unknown>;
+  openComponentFolder(dir: string, rel: string, scope: 'game' | 'shared'): Promise<Result>;
   openProject(dest: string | {componentSource: string}): Promise<unknown>;
   settings(): Promise<Settings>;
   setTheme(theme: string): Promise<unknown>;
@@ -477,17 +550,28 @@ export interface Lab {
   overlayInstall(id: string): Promise<OverlayResult<OverlayInstallation | null>>;
   overlayUninstall(id: string): Promise<OverlayResult<void>>;
   saveDiagnostics(dir: string, activity: string): Promise<Result>;
+  presetExport(preset: GamePreset): Promise<Result & {file?:string}>;
+  presetImport(): Promise<Result & {preset?:GamePreset}>;
+  gamesBatchScan(dirs:string[]):Promise<Result & {task?:BatchScanTask;report?:CompatibilityReport}>;
+  gamesBatchScanState():Promise<Result & {task?:BatchScanTask|null}>;
+  gamesBatchScanStop(taskId:string):Promise<Result & {stopping?:boolean}>;
+  onBatchScanProgress(callback:(progress:BatchScanProgress)=>void):()=>void;
+  gamesExportScan(report:CompatibilityReport,format:"json"|"csv"):Promise<Result & {file?:string}>;
   /* ---- 补齐：preload 已暴露、UI 此前未声明的接口 ---- */
   checkUpdate(refresh?: boolean): Promise<UpdateInfo>;
+  downloadUpdate():Promise<UpdateInfo & Result>;
+  applyUpdate():Promise<Result>;
+  rollbackUpdate():Promise<Result>;
+  onUpdateProgress(callback:(progress:{phase:string;received:number;total:number})=>void):()=>void;
   copyText(text: string): Promise<boolean>;
   enhancedHardware(forceRefresh?: boolean, includeDisplay?: boolean): Promise<HardwareResult>;
-  enhancedModels(profileId?: string): Promise<Result & { models: Model[]; runtimeStacks: RuntimeStack[] }>;
   install(dir: string, exePath: string, route: string, api: string, token?: string): Promise<Result>;
   setApiOverride(dir: string, exePath: string, value: string): Promise<Result>;
   setReshadeProxy(dir: string, exePath: string, value: string): Promise<Result>;
   optiscalerBuilds(dir: string): Promise<{ builds: { version: string; label: string }[]; current: string }>;
   setOptiscalerBuild(dir: string, version: string): Promise<string | null>;
   addons(): Promise<AddonRow[]>;
+  saveMonitorAddon(bitness: number): Promise<Result>;
   addonToggle(file: string, on: boolean): Promise<Result & { replaced?: string }>;
   addonPick(): Promise<AddonPick | { error: string } | null>;
   addonRemove(file: string): Promise<boolean>;
@@ -510,6 +594,8 @@ export type UpdateInfo = {
   title?: string;
   publishedAt?: string;
   channel?: string;
+  platform?:string;canInstall?:boolean;assetName?:string;size?:number;staged?:boolean;
+  rollbackAvailable?:boolean;updateMessage?:string;
 };
 
 export type HardwareProfile = {

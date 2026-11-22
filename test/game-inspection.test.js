@@ -66,6 +66,10 @@ test('background inspection shares pending reads but refresh sees changed files'
   const [early, {status: afterRefresh, newDlss, scan}] = await Promise.all([details, full]);
   assert.deepEqual(order, ['details', 'status']);
   assert.equal(early.scan, scan, 'the early details and final status share one scan');
+  const evidence = early.setupTargets[scan.chosen.path];
+  assert.equal(evidence.apiOverride,'auto');
+  assert.equal(evidence.target.hasAnrAddonHost,false);
+  assert.match(evidence.target.classicMfgIssue,/DLSS-G 输入/);
   assert.equal(early.newDlss, newDlss);
   assert.equal(early.status, undefined);
   assert.equal(newDlss, '310.9.1.0');

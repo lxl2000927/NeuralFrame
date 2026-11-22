@@ -75,20 +75,67 @@ test('each build is installed by its own plan, and the fork brings no forwarder'
   assert.match(from(presr, 'OptiScaler/licenses/LICENSE.GPL-3.0.txt'), /LICENSE$/);
 });
 
-test('an installed fork is reported as installed, and its manifest names it', () => {
-  const root = path.join(__dirname, '..');
-  const scan = fs.readFileSync(path.join(root, 'src', 'core', 'scan.js'), 'utf8');
-  // Requiring a forwarder from every build reported the fork as absent.
-  assert.match(scan, /releaseFor\(install\.optiscaler\.version\)\.layout/);
-  assert.match(scan, /\['nvngx_dlssnr\.dll', 'OptiScaler\.ini', layout\.forwarder\]\.filter\(Boolean\)/);
-  const opticore = fs.readFileSync(path.join(root, 'src', 'core', 'optiscaler.js'), 'utf8');
-  // The manifest used to record the default build whatever was installed.
-  assert.match(opticore, /manifest\.optiscaler = \{ version: release\.version/);
-  assert.match(opticore, /const release = releaseFor\(config\.optiVersion\)/);
-  assert.match(opticore, /if \(!release\.layout\.forwarder\) await retireForwarder\(/);
-  // And the main process passes the build the game asked for.
-  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
-  assert.match(main, /optiVersion = release\.version;/);
-  assert.match(main, /^\s+optiVersion,$/m);
-  assert.match(main, /label: r\.label \|\| r\.version/);
+const {writeNr,writePe} = require('./fixtures/pe');
+const scanGame = require('../src/core/scan').scanGame;
+const payload = version => path.join(__dirname,'../vendor/runtime-tests/components/OptiScaler-' + version);
+function scratch(t) {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(),'nf-opti-proof-'));
+  t.after(() => fs.rmSync(dir,{recursive:true,force:true}));
+  return dir;
+}
+test('installed status matches the real build, forwarder, INI, and selected NR model', async t => {
+  for (const version of ['0.2.0-patch1','0.8.92-presr']) {
+    const game = scratch(t), local = name => path.join(game,name), dir = payload(version);
+    const release = opti.releaseFor(version);
+    writePe(local('Game.exe'),{text:'D3D12CreateDevice'});
+    fs.copyFileSync(path.join(dir,'OptiScaler.dll'),local('dxgi.dll'));
+    const forward = local('nvngx.dll_dlssnr.dll');
+    if (release.layout.forwarder) fs.copyFileSync(path.join(dir,release.layout.forwarder),forward);
+    const ini = local('OptiScaler.ini'), model = writeNr(local('nvngx_dlssnr.dll'));
+    const cfg = on => fs.writeFileSync(ini,'[DlssNr]\nEnabled='+on+'\n[ProcessFilter]\nTargetProcessName=Game.exe\n');
+    cfg('true');
+    const mf = local('_DLSS5_Backup/manifest.json');
+    fs.mkdirSync(path.dirname(mf));
+    const receipt = v => fs.writeFileSync(mf,JSON.stringify({version:1,route:'optiscaler',game:{exe:'Game.exe',api:'dxgi'},
+      added:[],replaced:[],optiscaler:{version:v,hook:'dxgi.dll',installed:true}}));
+    const installed = async () => (await scanGame(game)).install.optiscaler.installed;
+    for (const v of [version,undefined]) {receipt(v);assert.equal(await installed(),true);}
+    receipt('0.99-future');assert.equal(await installed(),false);
+    receipt(version);
+    for (const bits of [64,32]) {
+      writePe(model,{bitness:bits});
+      assert.equal(await installed(),false,version+' unrelated runtime');
+    }
+    fs.unlinkSync(model);fs.mkdirSync(model);
+    assert.equal(await installed(),false);
+    fs.rmdirSync(model);
+    for (const on of ['false','auto']) {cfg(on);assert.equal(await installed(),true,'disabled feature keeps its host');}
+    fs.writeFileSync(ini,'[Upscalers]\nDx12Upscaler=auto\n');
+    assert.equal(await installed(),true,'all three pinned hosts default a missing NR switch to off');
+    cfg('true');writeNr(model);
+    fs.writeFileSync(ini,'[unrelated]\nsetting=1');assert.equal(await installed(),false);
+    fs.unlinkSync(ini);fs.mkdirSync(ini);assert.equal(await installed(),false);
+    fs.rmdirSync(ini);cfg('true');
+    fs.writeFileSync(forward,'unrelated');assert.equal(await installed(),false,'wrong or unexpected forwarder');
+  }
+});
+
+test('an invalid existing NR model or source is rejected before creating a receipt or replacing player files', async t => {
+  const root = scratch(t), gameDir = path.join(root,'game'), model = path.join(gameDir,'nvngx_dlssnr.dll');
+  const exePath = writePe(path.join(gameDir,'Game.exe'),{text:'D3D12CreateDevice'});
+  const pathToModel = writeNr(path.join(root,'source/nvngx_dlssnr.dll'));
+  const options = {gameDir,exePath,api:'dxgi',optiRoot:payload(opti.RELEASE.version),source:{payload:[{name:'nvngx_dlssnr.dll',path:pathToModel}]}};
+  for (const bits of [64,32]) {
+    writePe(model,{bitness:bits});
+    const before = fs.readFileSync(model);
+    await assert.rejects(opti.install(options,()=>{}),{code:'errInvalidNeuralModel'});
+    assert.deepEqual(fs.readFileSync(model),before);
+    fs.unlinkSync(model);
+  }
+  fs.mkdirSync(model);
+  await assert.rejects(opti.install(options,()=>{}),{code:'errInvalidNeuralModel'});
+  fs.rmdirSync(model);
+  writePe(pathToModel,{bitness:64});
+  await assert.rejects(opti.install(options,()=>{}),{code:'errInvalidNeuralModel'});
+  assert.deepEqual(fs.readdirSync(gameDir),['Game.exe']);
 });

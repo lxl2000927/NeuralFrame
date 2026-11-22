@@ -7,14 +7,21 @@ function run(file, args) {
   return new Promise((resolve, reject) => execFile(file, args, { windowsHide: true, timeout: 20000, maxBuffer: 4 * 1024 * 1024 },
     (error, stdout) => error ? reject(error) : resolve(stdout)));
 }
-function matchingProcesses(processes, gameDir, exePath) {
+function helperLocked(gameDir, exePath, locked) {
+  const dir = exePath ? path.dirname(exePath) : gameDir;
+  const name = 'dlss5-feed-host64.exe';
+  return [path.join(dir,'host64',name),path.join(dir,name)].some(file => locked(file));
+}
+function matchingProcesses(processes, gameDir, exePath, locked = executableLocked) {
   const root = path.resolve(gameDir).toLowerCase() + path.sep;
   return processes.filter(p => {
     if (p.ProcessId === process.pid) return false;
     if (p.ExecutablePath) return path.resolve(p.ExecutablePath).toLowerCase().startsWith(root);
-    // Protected processes may omit their path. Fail conservatively for a
-    // matching executable/helper name, but not unrelated system processes.
-    return [exePath ? path.basename(exePath).toLowerCase() : null, 'dlss5-feed-host64.exe'].includes(String(p.Name).toLowerCase());
+    const name = String(p.Name).toLowerCase();
+    if (exePath && name === path.basename(exePath).toLowerCase()) return true;
+    // Every Feeder install uses the same helper name. When Windows omits the
+    // path, check the target game's own helper before blocking a change.
+    return name === 'dlss5-feed-host64.exe' && helperLocked(gameDir,exePath,locked);
   });
 }
 // Windows keeps a running executable open for writing, so a file that can be
@@ -51,12 +58,12 @@ async function assertGameClosed(gameDir, exePath, runner = run, locked = executa
     // to refuse the install outright, which is a diagnostic becoming a wall -
     // people with a closed game could not install at all. Fall back to asking
     // the executable itself.
-    if (exePath && locked(exePath)) {
-      throw Object.assign(new Error('Close the game first: its executable is in use.'), { code: 'errGameRunning' });
+    if ((exePath && locked(exePath)) || helperLocked(gameDir,exePath,locked)) {
+      throw Object.assign(new Error('Close the game and helper first: an executable is in use.'), { code: 'errGameRunning' });
     }
     return;
   }
-  const matches = matchingProcesses(Array.isArray(data) ? data : [data], gameDir, exePath);
+  const matches = matchingProcesses(Array.isArray(data) ? data : [data], gameDir, exePath, locked);
   if (matches.length) throw Object.assign(new Error(`Close the game and helper first: ${matches.map(p => p.Name).join(', ')}`), { code: 'errGameRunning' });
 }
 // Two separate questions, because only one of them is a hard requirement.
@@ -95,9 +102,46 @@ function driverNames(rows) { return (rows || []).map(row => `${row.name} - ${row
 function gpuModelSupported(rows) { return rows.some(blackwell); }
 function driverSupported(rows) { return rows.some(row => blackwell(row) && driverNumber(row) >= OPTI_DRIVER); }
 function gpuSupported(rows) { return gpuModelSupported(rows) && driverSupported(rows); }
+function queryNvidiaSmi(args, runner = run) {
+  return runner(process.platform === 'win32' ? 'nvidia-smi.exe' : 'nvidia-smi', args);
+}
+// Enumerate all display controllers only when NVIDIA telemetry is unavailable.
+// An unidentified controller may be a discrete GPU without its vendor driver.
+async function displayAdapters(runner = run, platform = process.platform) {
+  let rows = [];
+  try {
+    if (platform === 'win32') {
+      const powershell = path.join(process.env.SystemRoot || 'C:\\Windows','System32/WindowsPowerShell/v1.0/powershell.exe');
+      const data = JSON.parse(await runner(powershell,['-NoProfile','-NonInteractive','-Command',
+        "$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_VideoController -Property Name,PNPDeviceID | Select-Object Name,PNPDeviceID) | ConvertTo-Json -Compress"], 4000));
+      rows = (Array.isArray(data) ? data : [data]).map(row => ({
+        name: String(row?.Name || '').trim(), vendor: /^PCI\\VEN_([0-9a-f]{4})/i.exec(row?.PNPDeviceID)?.[1].toLowerCase()
+      }));
+    } else if (platform === 'linux') {
+      const pci = await runner('lspci',['-Dnn'],4000);
+      rows = pci.split(/\r?\n/).filter(line => /\[03[0-9a-f]{2}\]:/i.test(line)).map(line => {
+        const card = /\[03[0-9a-f]{2}\]:\s*(.*?)\s+\[([0-9a-f]{4}):[0-9a-f]{4}\]/i.exec(line);
+        return {name:card?.[1] || '',vendor:card?.[2]?.toLowerCase()};
+      });
+    }
+  } catch { /* Driver and system inventory can both be unavailable. */ }
+  const nvidia = rows.find(row => row.vendor === '10de' && /\bRTX\b/i.test(row.name)) ||
+    rows.find(row => row.vendor === '10de');
+  const knownOther = rows.length > 0 && rows.every(row => ['1002','8086'].includes(row.vendor));
+  const primary = nvidia || rows.find(row => row.vendor === '1002' && /\bRX\s*(?:[5-9]\d{3}|\d{5})/i.test(row.name)) ||
+    rows.find(row => row.vendor === '1002' && /\bRX\s*\d/i.test(row.name)) ||
+    rows.find(row => row.vendor === '8086' && /\bArc\b/i.test(row.name)) ||
+    rows.find(row => row.vendor === '1002') || rows[0];
+  return {name:primary?.name || '', nvidiaPresent:nvidia ? true : knownOther ? false : null};
+}
+function assertNeuralGpu(nvidiaPresent) {
+  if (nvidiaPresent === false) throw Object.assign(
+    new Error('此安装方式需要 NVIDIA 显卡运行 DLSS 神经渲染。已检测到的显示适配器均非 NVIDIA。'),
+    {code:'errNeuralGpuUnsupported'});
+}
 async function gpuInfo(runner = run) {
   try {
-    const output = await runner('nvidia-smi.exe', ['--query-gpu=name,driver_version', '--format=csv,noheader']);
+    const output = await queryNvidiaSmi(['--query-gpu=name,driver_version', '--format=csv,noheader'], runner);
     return output.trim().split(/\r?\n/).filter(Boolean).map(line => {
       const [name, driver] = line.split(',').map(s => s.trim());
       return { name, driver };
@@ -133,4 +177,4 @@ function antiCheatComponents(gameDir) {
 function antiCheatPresent(gameDir) {
   return antiCheatComponents(gameDir).length > 0;
 }
-module.exports = { assertGameClosed, executableLocked, matchingProcesses, gpuInfo, gpuSupported, gpuModelSupported, driverSupported, driverNeuralFault, driverNames, antiCheatComponents, antiCheatPresent };
+module.exports = { assertGameClosed, executableLocked, matchingProcesses, queryNvidiaSmi, displayAdapters, assertNeuralGpu, gpuInfo, gpuSupported, gpuModelSupported, driverSupported, driverNeuralFault, driverNames, antiCheatComponents, antiCheatPresent };

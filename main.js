@@ -23,14 +23,15 @@ async function requireRuntime(options) {
 }
 function components() {
   return unifiedComponents ||= new (require('./src/core/component-library').ComponentLibrary)(app.getPath('userData'), {
-    payloadDir: resolvePayloadRoot(), overlayDir: app.isPackaged ? path.join(process.resourcesPath, 'overlay') : path.join(__dirname, 'dist/overlay')
+    payloadDir: resolvePayloadRoot(), overlayDir: app.isPackaged ? path.join(process.resourcesPath, 'overlay') : path.join(__dirname, 'dist/overlay'),
+    gameDirectories: () => knownFolders(loadState(), lastGames).map(game => game.dir)
   });
 }
 function updates() { return componentUpdates ||= new (require('./src/core/component-updates').ComponentUpdates)(components(),{fetcher:(...args)=>require('electron').net.fetch(...args)}); }
 async function managedReview(event, dir, request, work, token) {
   const library = components();
   const componentDeploy = require('./src/core/component-deploy');
-  if (request.kind === 'enhanced' && !request.config?.route && backends.readManifest(dir)?.route === 'encore')
+  if (request.kind === 'enhanced' && request.config?.performanceMonitor === undefined && !request.config?.route && backends.readManifest(dir)?.route === 'encore')
     request = {...request,config:{...request.config,route:'encore'}};
   const resolved = componentDeploy.resolveManagedSelection(library, library.profile(dir).selected, request);
   const selected = resolved.selection;
@@ -301,11 +302,13 @@ const stateFile = () => path.join(app.getPath('userData'), 'library.json');
 const posterDir = () => path.join(app.getPath('userData'), 'posters');
 const keyFor = (dir) => crypto.createHash('sha1').update(path.resolve(dir).toLowerCase()).digest('hex').slice(0, 16);
 const tileFile = dir => path.join(app.getPath('userData'), 'art', keyFor(dir) + '-tile.jpg');
-function cachedTile(record) { return onDisk(record?.tile) ? record.tile : null; }
+const witcherArt = appid => String(appid) === '292030';
+function legacyCatalogTile(record, appid) { return witcherArt(appid || record?.appid) && !!record?.tile && !record.tileSource; }
+function cachedTile(record, appid) { return !legacyCatalogTile(record, appid) && onDisk(record?.tile) ? record.tile : null; }
 const localArtworkUrl = file => typeof file === 'string' && fs.existsSync(file) ? pathToFileURL(file).href : null;
 // Bump when scan metadata or detection changes so an old wrong result is not
 // kept forever merely because the folder was scanned by an earlier release.
-const SCAN_RULES = 10;
+const SCAN_RULES = 12;
 
 // One live object, not a fresh snapshot per call. Every handler used to parse
 // the file, hold that copy across an await, and write the whole thing back:
@@ -367,10 +370,25 @@ function saveState(state) {
 }
 
 // A choice belongs to one executable, not every launcher in the same folder.
-const { apiPreferenceKey } = require('./src/core/game-api');
+const { apiPreferenceKey, setupTarget } = require('./src/core/game-api');
 function apiPreference(state, dir, exe) {
   const value = state.apiOverrides?.[apiPreferenceKey(dir, exe)];
   return renderingApi.valid(value) ? value : 'auto';
+}
+function setupRoutes(target) {
+  return [...installRoutes.routesFor(target), ...installRoutes.componentRoutesFor(target)];
+}
+function requireProtonContext(dir) {
+  const context = contextForSteamGame(steam().find(game => path.resolve(game.dir) === path.resolve(dir)));
+  if (!context) throw Object.assign(new Error('This installer supports Windows games launched through Steam Proton. Launch the game once with Proton, then try again.'), {code:'errProtonRequired'});
+  return context;
+}
+function installPlatformContext(dir, api, route) {
+  if (process.platform !== 'linux') return null;
+  const context = requireProtonContext(dir);
+  if (api === 'vulkan' && !['xemfg','xemfg-optiscaler'].includes(route))
+    throw Object.assign(new Error('The ReShade Vulkan layer requires Windows. Select a DirectX renderer for this Proton game.'), {code:'errLinuxVulkanUnsupported'});
+  return context;
 }
 // #328: which file ReShade goes in as, per executable. dxgi.dll unless the
 // person chose d3d11.dll for a DirectX 11 game that never loads dxgi.dll.
@@ -389,10 +407,11 @@ function posterUrl(game, state) {
   const identity = artCache.sourceIdentity(game.name, game.launcher === 'Steam' ? game.id : null);
   const record = artCache.matchesIdentity(candidate, identity) ? candidate : null;
   const saved = artCache.usable(record, onDisk);
+  const local = game.poster && fs.existsSync(game.poster.file) ? game.poster : null;
+  if (identity === 'steam:292030' && local?.tall) return {url:pathToFileURL(local.file).href,tall:true,custom:false};
   if (saved.cover) return { url: saved.cover, tall: true, custom: false };
   // Prefer a Steam portrait already on disk over an older cached wide fallback;
   // otherwise a perfectly usable local cover would trigger a new CDN request.
-  const local = game.poster && fs.existsSync(game.poster.file) ? game.poster : null;
   if (local?.tall) return {url:pathToFileURL(local.file).href,tall:true,custom:false};
   // A game too new for a portrait capsule still has a banner. The grid knows
   // how to show a wide image, which beats falling back to two initials.
@@ -407,6 +426,7 @@ function uiText(zh, en) { return desktopLanguage() === 'en' ? en : zh; }
 // is what #255 asked for: people close a window out of habit and then wonder
 // why the overlay stopped answering in the game they are still playing.
 let tray = null;
+const desktopIcon = path.join(__dirname, 'assets', 'neuralframe', 'mark-ui.png');
 // The main process has no translations of its own, so the renderer hands these
 // over the way it already does for the game context menu.
 let trayLabels = { show: 'Open NeuralFrame', quit: 'Quit' };
@@ -430,7 +450,7 @@ function buildTrayMenu() {
 
 function ensureTray() {
   if (tray && !tray.isDestroyed()) return tray;
-  const source = nativeImage.createFromPath(path.join(__dirname, 'src', 'renderer', 'icon.png'));
+  const source = nativeImage.createFromPath(desktopIcon);
   // A 16px tray icon on Windows; an empty image would throw, so a full-size
   // fallback is better than no tray at all.
   const icon = source.isEmpty() ? source : source.resize({ width: 16, height: 16, quality: 'good' });
@@ -476,7 +496,7 @@ function createWindow() {
     minWidth: Math.min(960, saved?.width || 960),
     minHeight: Math.min(640, saved?.height || 640),
     backgroundColor: '#191919',
-    icon: path.join(__dirname, 'src', 'renderer', 'icon.png'),
+    icon: desktopIcon,
     // The window draws its own title bar, so the frame comes off.
     frame: false,
     autoHideMenuBar: true,
@@ -761,6 +781,38 @@ ipcMain.handle('save-diagnostics', async (event, dir, activity) => {
   }
 });
 
+ipcMain.handle('preset-export', async (event, value) => {
+  try {
+    const preset = require('./src/core/preset-contract').parsePreset(JSON.stringify(value));
+    const safeName = preset.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, 60) || 'preset';
+    const picked = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
+      title:uiText('导出配置预设', 'Export configuration preset'),
+      defaultPath:path.join(app.getPath('documents'), `NeuralFrame-${safeName}.json`),
+      filters:[{name:'NeuralFrame preset', extensions:['json']}],
+    });
+    if (picked.canceled || !picked.filePath) return {ok:false, cancelled:true};
+    const temp = picked.filePath + '.' + crypto.randomUUID() + '.tmp';
+    try {
+      await fs.promises.writeFile(temp, JSON.stringify(preset, null, 2) + '\n', {flag:'wx'});
+      await fs.promises.rename(temp, picked.filePath);
+    } finally { await fs.promises.rm(temp, {force:true}); }
+    return {ok:true, file:picked.filePath};
+  } catch (error) { return {ok:false, message:error.message}; }
+});
+ipcMain.handle('preset-import', async event => {
+  try {
+    const picked = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+      title:uiText('导入配置预设', 'Import configuration preset'), properties:['openFile'],
+      filters:[{name:'NeuralFrame preset', extensions:['json']}],
+    });
+    if (picked.canceled || !picked.filePaths[0]) return {ok:false, cancelled:true};
+    const file = picked.filePaths[0], stat = await fs.promises.stat(file);
+    if (!stat.isFile() || stat.size > 160 * 1024) throw Error('预设文件超过大小限制');
+    const preset = require('./src/core/preset-contract').parsePreset(await fs.promises.readFile(file, 'utf8'));
+    return {ok:true, preset};
+  } catch (error) { return {ok:false, message:error.message}; }
+});
+
 ipcMain.handle('copy-text', (_event, text) => {
   if (typeof text !== 'string' || !text.trim() || Buffer.byteLength(text, 'utf8') > 16 * 1024 * 1024) return false;
   try { clipboard.writeText(text); return true; } catch { return false; }
@@ -912,16 +964,19 @@ ipcMain.handle('library', async () => {
     .map((g) => {
       const owner = claimArtwork(g.dir,g.name,g.launcher === 'Steam' ? g.id : null,true);
       const record = artworkRecord(owner);
+      const appid = g.launcher === 'Steam' ? g.id : null;
+      const localTile = localArtworkUrl(g.artwork?.tile), localHero = localArtworkUrl(g.artwork?.hero);
+      const tile = cachedTile(record,appid), hero = artCache.usable(record, onDisk).hero;
       return {
       key: keyFor(g.dir),
       launcher: g.launcher,
       // Steam records the app id, so its games never need a name search.
-      appid: g.launcher === 'Steam' ? g.id : null,
+      appid,
       name: g.name,
       dir: g.dir,
       poster: posterUrl(g, state),
-      tile: cachedTile(record) || localArtworkUrl(g.artwork?.tile),
-      hero: artCache.usable(record, onDisk).hero || localArtworkUrl(g.artwork?.hero),
+      tile: witcherArt(appid) ? localTile || tile : tile || localTile,
+      hero: witcherArt(appid) ? localHero || hero : hero || localHero,
       // Whatever the last scan found, so cards can render before rescanning.
       cached: state.scans[keyFor(g.dir)] && state.scans[keyFor(g.dir)].rules === SCAN_RULES
         ? state.scans[keyFor(g.dir)]
@@ -931,6 +986,147 @@ ipcMain.handle('library', async () => {
   return lastGames;
 });
 
+// A batch scan is one background task: the request returns the task at once,
+// rows stream in over 'batch-scan-progress', and a reload can reattach to the
+// running task instead of starting from nothing.
+const batchScanReport = require('./src/core/compatibility-report');
+const BATCH_SCAN_CHANNEL = 'batch-scan-progress';
+let batchScanTask = null;
+let batchScanControl = null;
+
+function batchScanSnapshot(task) {
+  return task ? {...task, rows: [...task.rows]} : null;
+}
+
+// The renderer can be destroyed between two rows, and a failed send must not
+// abort a scan that is still making progress.
+function sendBatchScanEvent(sender, payload) {
+  if (!sender) return;
+  try {
+    if (typeof sender.isDestroyed === 'function' && sender.isDestroyed()) return;
+    sender.send(BATCH_SCAN_CHANNEL, payload);
+  } catch { /* the window went away while scanning */ }
+}
+
+// Settles a running task exactly once: partial reports keep the expected total
+// so the UI can say how many games were skipped.
+function finishBatchScan(task, control, status, message) {
+  if (!task || task.status !== 'running') return task;
+  task.status = status;
+  task.currentGame = null;
+  task.finishedAt = new Date().toISOString();
+  if (message) task.message = message;
+  task.report = batchScanReport.createReport(task.rows, task.finishedAt,
+    status === 'done' ? {} : {complete:false, total:task.total, scanStatus:status});
+  if (control && control.task === task)
+    sendBatchScanEvent(control.sender, {taskId:task.id, status, task:batchScanSnapshot(task)});
+  return task;
+}
+
+async function runBatchScan(task, control, games) {
+  let hardware = null;
+  try { hardware = await combinedManager.detectHardwareEnvironment(); } catch { hardware = null; }
+  // A replacement task settles this one before it can publish anything else.
+  if (task !== batchScanTask || task.status !== 'running') return;
+  const state = loadState();
+  const linux = process.platform === 'linux';
+  const steamGames = linux && new Map(steam().map(game => [keyFor(game.dir), game]));
+  const userDataDir = app.getPath('userData');
+  for (const {name, dir} of games) {
+    if (control.stopped) break;
+    task.currentGame = name;
+    sendBatchScanEvent(control.sender, {
+      taskId:task.id, status:'running', total:task.total, index:task.rows.length, currentGame:name,
+    });
+    let row;
+    try {
+      const scan = await inspections().run('scan', dir, {userDataDir});
+      if (task !== batchScanTask || task.status !== 'running') return;
+      const warning = compatibility.antiCheatDetails(dir, scan.chosen?.path);
+      const target = scan.chosen && {
+        ...setupTarget(dir, scan, scan.chosen, apiPreference(state, dir, scan.chosen.path)), ...warning,
+      };
+      // Normalize once so streamed rows and the final report share one shape.
+      row = batchScanReport.createReport([batchScanReport.assess({
+        name, dir, scan, target, hardware, antiCheat:warning.antiCheatWarning,
+        installIssue:target && compatibility.targetIssue(dir, target.path),
+        linux, proton:linux && contextForSteamGame(steamGames.get(keyFor(dir))),
+      })]).rows[0];
+    } catch {
+      if (task !== batchScanTask || task.status !== 'running') return;
+      row = batchScanReport.createReport([
+        {name, status:'error', message:'扫描失败，请在游戏详情中重新检测。'},
+      ]).rows[0];
+    }
+    task.rows.push(row);
+    task.currentGame = null;
+    sendBatchScanEvent(control.sender, {
+      taskId:task.id, status:'running', total:task.total, index:task.rows.length, currentGame:null, row,
+    });
+    // A stop request is honoured between items; the one already in flight is
+    // still reported, then the task settles with the rows it actually finished.
+  }
+  if (task !== batchScanTask || task.status !== 'running') return;
+  finishBatchScan(task, control, control.stopped ? 'stopped' : 'done');
+}
+
+ipcMain.handle('games-batch-scan', (event, dirs) => {
+  if (!Array.isArray(dirs) || dirs.length > 500) return {ok:false, message:'批量扫描最多支持 500 个游戏'};
+  if (dirs.some(dir => typeof dir !== 'string' || !dir)) return {ok:false, message:'游戏库已变化，请刷新后重新扫描'};
+  const known = new Map(lastGames.map(game => [keyFor(game.dir), game]));
+  const games = [...new Set(dirs.map(keyFor))].map(key => known.get(key));
+  if (games.some(game => !game)) return {ok:false, message:'游戏库已变化，请刷新后重新扫描'};
+  // A replaced task is settled first, so its partial report is delivered before
+  // this task exists and late progress cannot be mixed in.
+  if (batchScanTask && batchScanTask.status === 'running' && batchScanControl) {
+    batchScanControl.stopped = true;
+    finishBatchScan(batchScanTask, batchScanControl, 'stopped');
+  }
+  const task = {
+    id:crypto.randomUUID(), status:'running', total:games.length,
+    startedAt:new Date().toISOString(), finishedAt:null, currentGame:null, rows:[],
+  };
+  const control = {task, sender:event?.sender, stopped:false};
+  batchScanTask = task;
+  batchScanControl = control;
+  if (games.length) {
+    runBatchScan(task, control, games).catch(() => {
+      if (task.status === 'running') finishBatchScan(task, control, 'error', '扫描任务失败，请重试。');
+    });
+  } else {
+    // An empty scan reports immediately and skips the hardware probe entirely.
+    finishBatchScan(task, control, 'done');
+  }
+  return {ok:true, task:batchScanSnapshot(task)};
+});
+ipcMain.handle('games-batch-scan-state', () => ({ok:true, task:batchScanSnapshot(batchScanTask)}));
+ipcMain.handle('games-batch-scan-stop', (_event, taskId) => {
+  if (!batchScanTask || batchScanTask.status !== 'running' || !batchScanControl || batchScanTask.id !== taskId)
+    return {ok:false, message:'没有正在运行的批量扫描'};
+  batchScanControl.stopped = true;
+  return {ok:true, stopping:true};
+});
+ipcMain.handle('games-export-scan', async (event, value, format) => {
+  try {
+    const contract=require('./src/core/compatibility-report'),report=contract.parseReport(value);
+    const csv=format==='csv',picked=await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender),{
+      title:uiText('导出只读兼容性报告','Export read-only compatibility report'),
+      defaultPath:path.join(app.getPath('documents'),`NeuralFrame-compatibility-${Date.now()}.${csv?'csv':'json'}`),
+      filters:[{name:csv?'CSV':'JSON',extensions:[csv?'csv':'json']}],
+    });
+    if(picked.canceled||!picked.filePath)return{ok:false,cancelled:true};
+    await fs.promises.writeFile(picked.filePath,csv?contract.csv(report):JSON.stringify(report,null,2)+'\n','utf8');
+    return{ok:true,file:picked.filePath};
+  }catch(error){return{ok:false,message:error.message};}
+});
+
+function feederHostRuntime(dir, exe, name) {
+  if (exe?.bitness !== 32) return null;
+  const file = path.join(path.dirname(exe.path), 'host64', name);
+  if (pe.getBitness(file, {dllOnly:true}) !== 64 || !pe.matchesNvidiaFeature(file,pe.nvidiaFeatureForName(name))) return null;
+  return {path:file, rel:path.relative(dir,file), name, version:pe.getFileVersion(file), bitness:64};
+}
+
 // Scanning 37 folders takes seconds, so each card asks for its own result and
 // the grid fills in as they land.
 ipcMain.handle('scan', async (_event, dir) => {
@@ -938,19 +1134,7 @@ ipcMain.handle('scan', async (_event, dir) => {
   const key = keyFor(dir);
   try {
     const scan = await inspections().run('scan', dir, { userDataDir: app.getPath('userData') });
-    let dlss = scan.primaryDlss;
-    if (!dlss && scan.chosen && scan.chosen.bitness === 32) {
-      const hostDlss = path.join(path.dirname(scan.chosen.path), 'host64', 'nvngx_dlss.dll');
-      if (fs.existsSync(hostDlss)) {
-        dlss = {
-          path: hostDlss,
-          rel: path.relative(dir, hostDlss),
-          name: 'nvngx_dlss.dll',
-          version: pe.getFileVersion(hostDlss),
-          bitness: 64
-        };
-      }
-    }
+    const dlss = scan.primaryDlss || feederHostRuntime(dir, scan.chosen, 'nvngx_dlss.dll');
     const result = {
       dir,
       ok: Boolean(scan.chosen),
@@ -1079,6 +1263,20 @@ ipcMain.handle('reset', () => {
 ipcMain.handle('open', async (_event, dir) => {
   if (dir === posterDir()) await fs.promises.mkdir(dir, { recursive: true });
   return shell.openPath(dir);
+});
+ipcMain.handle('open-component-folder', async (_event, dir, rel, scope) => {
+  try {
+    if (typeof dir !== 'string' || !lastGames.some(game => keyFor(game.dir) === keyFor(dir))) throw Error('无效的游戏目录');
+    const shared = path.join(app.getPath('userData'), 'reshade-vulkan');
+    let file;
+    if (scope === 'game') file = journal.safePath(dir, rel);
+    else if (scope === 'shared' && typeof rel === 'string' && path.resolve(path.dirname(rel)) === shared && /^ReShade(32|64)\.dll$/i.test(path.basename(rel))) {
+      file = journal.safePath(shared, path.basename(rel));
+    } else throw Error('无效的组件路径');
+    if (!(await fs.promises.stat(file)).isFile()) throw Error('文件缺失');
+    const message = await shell.openPath(path.dirname(file));
+    return {ok: !message, message};
+  } catch (error) { return {ok:false, message:error.code === 'ENOENT' ? '文件缺失' : error.message}; }
 });
 ipcMain.handle('open-project', async (_event, destination) => {
   const url = projectUrl(destination);
@@ -1221,6 +1419,27 @@ ipcMain.handle('set-optiscaler-build', (_event, dir, version) => {
 });
 
 ipcMain.handle('addons', () => addonLibrary());
+ipcMain.handle('save-monitor-addon', async (event, bitness) => {
+  if (![32,64].includes(bitness)) return {ok:false, message:'无效的插件位数。'};
+  const name = 'dlss5-zh-cn.addon' + bitness;
+  const item = runtimes().pack('localization').files.find(file => path.basename(file.path) === name);
+  try {
+    const picked = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
+      title:uiText('保存 F7 插件文件', 'Save F7 add-on'), defaultPath:path.join(app.getPath('downloads'), name),
+      filters:[{name:'ReShade add-on', extensions:['addon' + bitness]}]
+    });
+    if (picked.canceled || !picked.filePath) return {ok:false, cancelled:true};
+    const bytes = await fs.promises.readFile(path.join(runtimes().bundledRoot, item.path));
+    if (bytes.length !== item.size || crypto.createHash('sha256').update(bytes).digest('hex') !== item.sha256)
+      throw Error('内置 F7 插件校验失败。');
+    const temp = path.join(path.dirname(picked.filePath), '.neuralframe-' + crypto.randomUUID() + '.tmp');
+    try {
+      await fs.promises.writeFile(temp, bytes, {flag:'wx'});
+      await fs.promises.rename(temp, picked.filePath);
+    } finally { await fs.promises.rm(temp, {force:true}); }
+    return {ok:true};
+  } catch (error) { return {ok:false, message:error.message}; }
+});
 
 // Switching one on leaves the others alone. The single exception is a build
 // that would be written under a name another switched-on build already claims:
@@ -1422,11 +1641,10 @@ async function fetchArtworkPart(dir, name, appid, kind, owner, knownHit, options
 }
 async function fetchHomeTile(dir, name, appid, owner, options = {}) {
   if (!currentArtwork(owner)) return {};
-  const cached = artworkRecord(owner), existing = cachedTile(cached);
-  if (existing && reusableArtwork(cached,'tile',options)) return { tile: existing };
+  const cached = artworkRecord(owner), existing = cachedTile(cached,appid);
+  if (!legacyCatalogTile(cached,appid) && reusableArtwork(cached,'tile',options)) return existing ? {tile:existing} : {};
   const file = tileFile(dir), requestKey = artworkRequestKey(owner,'tile');
   if (artworkRequests.has(requestKey)) return artworkRequests.get(requestKey);
-  if (reusableArtwork(cached,'tile',options)) return {};
   const pending = (async () => {
     let hit;
     try {
@@ -1440,14 +1658,14 @@ async function fetchHomeTile(dir, name, appid, owner, options = {}) {
         try {
           const tile = await downloadArtwork(url,file,owner);
           if (tile) {
-            const record = rememberArtwork(owner,{...artworkMetadata(hit),tile},{tile:Date.now()});
-            const published = cachedTile(record);
+            const record = rememberArtwork(owner,{...artworkMetadata(hit),tile,tileSource:url},{tile:Date.now()});
+            const published = cachedTile(record,appid);
             return published ? {tile:published} : {};
           }
         } catch { /* Try the next official artwork source. */ }
       }
     } catch { /* A missing lookup should be cached just like a missing image. */ }
-    const previous = cachedTile(artworkRecord(owner));
+    const previous = cachedTile(artworkRecord(owner),appid);
     rememberArtwork(owner,{...artworkMetadata(hit),tile:previous},{tile:Date.now()});
     return previous ? {tile:previous} : {};
   })();
@@ -1494,6 +1712,9 @@ ipcMain.handle('art-fetch', async (_event, dir, name, appid, kind, options = {})
 // person may click. Any failure is silence - this must never delay a start.
 let updateAnswer = null;
 let updateInFlight = null;
+let updateTransfer = null;
+let updateCandidate = null;
+let updateSwitching = false;
 // Nothing wrote the app's own failures down anywhere, so a crash left the
 // person with nothing to report but a description. Keep the last few in
 // userData, bounded, and let the diagnostics file carry them.
@@ -1527,10 +1748,23 @@ function newerRelease(current, latest) {
 }
 async function checkRelease() {
   const current = app.getVersion();
+  const answer = {current, latest:null, newer:false};
+  const currentImage = process.platform === 'linux' && process.env.APPIMAGE ? path.resolve(process.env.APPIMAGE) : null;
+  const channel = currentImage && require('./src/core/appimage-update');
+  updateCandidate = null;
+  if (currentImage) {
+    answer.platform = 'linux-appimage';
+    try {
+      await channel.recoverInterrupted(currentImage);
+      answer.rollbackAvailable = fs.statSync(currentImage + '.previous', {throwIfNoEntry:false})?.isFile() === true;
+    } catch (error) {
+      answer.updateMessage = error.message;
+    }
+  }
   const distribution = require('./package.json').distribution;
   const repository = distribution?.channel === 'independent' ? distribution.releaseRepository : 'skyi7943-cmd/DLSS5-Swapper-Enhanced';
   if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository)) {
-    return { current, latest: null, newer: false, channel: 'independent', status: 'unconfigured',
+    return { ...answer, channel: 'independent', status: 'unconfigured',
       message: '独立分支尚未配置软件发布源；插件可在组件库中单独检查更新。' };
   }
   try {
@@ -1541,23 +1775,80 @@ async function checkRelease() {
     if (!response.ok) throw Error(String(response.status));
     const release = await response.json();
     const latest = String(release.tag_name || '').replace(/^v/, '');
-    const answer = { current, latest, newer: newerRelease(current, latest) };
+    answer.latest = latest;
+    answer.newer = newerRelease(current, latest);
+    if (currentImage && answer.newer && !answer.updateMessage) {
+      try {
+        const candidate = await channel.resolve(release, {repository, arch:process.arch,
+          fetchImpl:(url, options) => require('electron').net.fetch(url, options)});
+        answer.staged = await channel.isStaged(candidate, currentImage);
+        updateCandidate = candidate;
+        Object.assign(answer, {canInstall:true, assetName:candidate.name, size:candidate.size});
+      } catch (error) {
+        answer.canInstall = false;
+        answer.updateMessage = error.message;
+      }
+    }
     if (typeof release.body === 'string' && release.body.trim()) answer.notes = release.body.trim();
     if (typeof release.name === 'string' && release.name.trim()) answer.title = release.name.trim();
     if (typeof release.published_at === 'string' && release.published_at.trim()) answer.publishedAt = release.published_at.trim();
     return answer;
   } catch {
     // Offline, rate-limited or blocked: say nothing rather than worry anyone.
-    return { current, latest: null, newer: false };
+    return answer;
   }
 }
 ipcMain.handle('update-check', (_event, refresh) => {
   if (updateInFlight) return updateInFlight;
+  if (updateSwitching || updateTransfer) return updateAnswer || {current:app.getVersion(), latest:null, newer:false};
   if (!refresh && updateAnswer) return updateAnswer;
   updateInFlight = checkRelease().then(answer => (updateAnswer = answer))
     .finally(() => { updateInFlight = null; });
   return updateInFlight;
 });
+function currentAppImage(){
+  if(process.platform!=='linux'||!process.env.APPIMAGE)throw Error('仅 Linux AppImage 支持应用内更新');
+  return path.resolve(process.env.APPIMAGE);
+}
+ipcMain.handle('update-download',async(event)=>{
+  if(updateTransfer)return updateTransfer;
+  if(updateInFlight || updateSwitching)return {...updateAnswer,ok:false,message:'软件更新操作正在进行'};
+  if(!updateAnswer?.canInstall||!updateCandidate)return Promise.resolve({...updateAnswer,ok:false,message:updateAnswer?.updateMessage||'没有可下载的 AppImage 更新'});
+  const current=currentAppImage(),channel=require('./src/core/appimage-update');
+  updateTransfer=channel.download(updateCandidate,current,{fetchImpl:(url,options)=>require('electron').net.fetch(url,options),
+    onProgress:progress=>{if(!event.sender.isDestroyed())event.sender.send('update-progress',progress);},
+  }).then(()=>{updateAnswer={...updateAnswer,staged:true};return{...updateAnswer,ok:true};}).catch(error=>({...updateAnswer,ok:false,message:error.message}))
+    .finally(()=>{updateTransfer=null;});
+  return updateTransfer;
+});
+async function switchAppImage(rollback) {
+  if (updateSwitching || updateTransfer || updateInFlight) return {ok:false, message:'软件更新操作正在进行'};
+  updateSwitching = true;
+  let current, warning;
+  try {
+    current = currentAppImage();
+    const channel = require('./src/core/appimage-update');
+    if (rollback) {
+      await channel.rollback(current);
+    } else {
+      if (!updateAnswer?.staged || !updateCandidate) throw Error('请先下载并校验 AppImage 更新');
+      await channel.apply(updateCandidate, current, channel.stagedPath(updateCandidate, current));
+    }
+  } catch (error) {
+    if (!error.appImageSwitched) {
+      updateSwitching = false;
+      if (error.code === 'INVALID_STAGED') updateAnswer = {...updateAnswer, staged:false};
+      return {ok:false, message:error.message};
+    }
+    recordCrash('AppImage backup finalization', error);
+    warning = uiText('正在重启，备份收尾将在下次启动时重试。', 'Restarting. Backup finalization will be retried on launch.');
+  }
+  // Keep the switch reserved during the interval before the old process exits.
+  setTimeout(() => { app.relaunch({execPath:current, args:[]}); app.exit(0); }, 250);
+  return {ok:true, message:warning};
+}
+ipcMain.handle('update-apply', () => switchAppImage(false));
+ipcMain.handle('update-rollback', () => switchAppImage(true));
 ipcMain.handle('details', async (_event, dir, priority) => {
   let inspection;
   try {
@@ -1566,33 +1857,42 @@ ipcMain.handle('details', async (_event, dir, priority) => {
     if (error.code === 'SELECTION_SUPERSEDED') return { ok: false, cancelled: true };
     throw error;
   }
-  const { scan, newDlss } = inspection;
+  const { scan, newDlss, setupTargets } = inspection;
   // Opening game details must not change permissions or configuration files.
   const state = loadState();
-  const hasNativeDlss = installRoutes.nativeDlssPresent(scan);
-  const hasNativeUpscaler = installRoutes.nativeUpscalerPresent ? installRoutes.nativeUpscalerPresent(scan) : false;
-  const hostDlssFiles = [];
-  let effectivePrimaryDlss = scan.primaryDlss;
-  if (scan.chosen && scan.chosen.bitness === 32) {
-    const hostDir = path.join(path.dirname(scan.chosen.path), 'host64');
-    for (const name of ['nvngx_dlss.dll', 'nvngx_dlssnr.dll']) {
-      const full = path.join(hostDir, name);
-      if (fs.existsSync(full)) {
-        const item = {
-          path: full,
-          rel: path.relative(dir, full),
-          name,
-          version: pe.getFileVersion(full),
-          bitness: 64
-        };
-        hostDlssFiles.push(item);
-        if (!effectivePrimaryDlss && name === 'nvngx_dlss.dll') effectivePrimaryDlss = item;
-      }
-    }
-  }
-  const files = [...scan.dlssFiles, ...hostDlssFiles, ...scan.streamlineFiles]
-    .map((f) => ({ rel: f.rel, name: f.name, version: f.version }));
+  const hostDlssFiles = ['nvngx_dlss.dll','nvngx_dlssnr.dll']
+    .map(name => feederHostRuntime(dir, scan.chosen, name)).filter(Boolean);
+  const effectivePrimaryDlss = scan.primaryDlss || hostDlssFiles.find(file => file.name === 'nvngx_dlss.dll');
+  const files = [...scan.dlssFiles, ...hostDlssFiles, ...scan.streamlineFiles, ...(scan.upscalerFiles || [])]
+    .map((f) => ({ rel: f.rel, name: f.name, version: f.version, featureMismatch:f.featureMismatch }));
   const antiCheatDirectories = new Map();
+  const exes = scan.exeCandidates.map(exe => {
+    const apiOverride = apiPreference(state, dir, exe.path);
+    const inspected = setupTargets?.[exe.path];
+    const target = { ...(inspected && inspected.apiOverride === apiOverride ? inspected.target : setupTarget(dir, scan, exe, apiOverride)),
+      ...compatibility.antiCheatDetails(dir, exe.path, antiCheatDirectories) };
+    return {
+      rel: exe.rel, path: exe.path, apiLabel: exe.apiLabel, api: exe.api,
+      bitness: exe.bitness, size: exe.size, via: exe.via, emulator: exe.emulator,
+      installIssue: compatibility.targetIssue(dir, exe.path),
+      antiCheatWarning: target.antiCheatWarning, antiCheatComponents: target.antiCheatComponents,
+      hasNativeDlss: target.hasNativeDlss, hasNativeUpscaler: target.hasNativeUpscaler,
+      hasXeMfgDx12Upscaler: target.hasXeMfgDx12Upscaler, hasXeMfgVkUpscaler: target.hasXeMfgVkUpscaler,
+      hasXeMfgDlssSrDx12: target.hasXeMfgDlssSrDx12, hasXeMfgDlssSrVk: target.hasXeMfgDlssSrVk,
+      hasXeMfgDlssRrDx12: target.hasXeMfgDlssRrDx12, hasXeMfgDlssRrVk: target.hasXeMfgDlssRrVk,
+      hasXeMfgDlssFgDx12: target.hasXeMfgDlssFgDx12,
+      xeMfgOptiHost: target.xeMfgOptiHost, hasOptiScalerConfig: target.hasOptiScalerConfig,
+      optiFgHost: target.optiFgHost, hasOptiFgDx12Upscaler: target.hasOptiFgDx12Upscaler, optiFgInputs: target.optiFgInputs,
+      hasNativeDlssFg: target.hasNativeDlssFg, hasNativeFg: target.hasNativeFg, hasAnrAddonHost: target.hasAnrAddonHost,
+      classicMfgIssue: target.classicMfgIssue,
+      launcherProtected: target.launcherProtected, performanceMonitor: exe.performanceMonitor,
+      apiOverride, reshadeProxy: reshadeProxyPreference(state, dir, exe.path),
+      apiChoices: exe.apiChoices || [{ api: exe.api, label: exe.apiLabel }],
+      routes: target.launcherProtected ? ['wuwa-proxy'] : setupRoutes(target),
+      recommendedRoute: target.launcherProtected ? 'wuwa-proxy' : installRoutes.recommendedRoute(scan, target)
+    };
+  });
+  const chosen = exes.find(exe => exe.path === scan.chosen?.path);
   return {
     ok: Boolean(scan.chosen),
     reason: scan.chosen ? null : (scan.emptyReason || null),
@@ -1604,28 +1904,14 @@ ipcMain.handle('details', async (_event, dir, priority) => {
     via: scan.chosen ? scan.chosen.via : null,
     emulator: scan.emulator,
     installedRoute: scan.install && scan.install.route,
-    launcherProtected: !!require('./src/core/wuthering-waves').gameRoot(dir, scan.chosen?.path),
+    launcherProtected: chosen?.launcherProtected || false,
     ...compatibility.antiCheatDetails(dir, scan.chosen?.path, antiCheatDirectories),
     installedApi: scan.install && scan.install.api,
     installedExe: scan.install && scan.install.exe,
     previousReShadeRoute: scan.install && scan.install.previousReShadeRoute,
     optiscaler: scan.install && scan.install.optiscaler,
-    recommendedRoute: installRoutes.recommendedRoute(scan),
-    exes: scan.exeCandidates.map(e => {
-      const capabilities = { hasNativeDlss: e.hasNativeDlss ?? hasNativeDlss, hasNativeUpscaler: e.hasNativeUpscaler ?? hasNativeUpscaler,
-        hasNativeFg:e.hasNativeFg ?? installRoutes.nativeFgPresent(scan) };
-      return {
-        rel: e.rel, path: e.path, apiLabel: e.apiLabel, api: e.api,
-        bitness: e.bitness, size: e.size, via: e.via, emulator: e.emulator,
-        installIssue: compatibility.targetIssue(dir, e.path),
-        ...compatibility.antiCheatDetails(dir, e.path, antiCheatDirectories),
-        ...capabilities,
-        apiOverride: apiPreference(state, dir, e.path),
-        reshadeProxy: reshadeProxyPreference(state, dir, e.path),
-        apiChoices: e.apiChoices || [{ api: e.api, label: e.apiLabel }],
-        routes: installRoutes.routesFor({ ...e, ...capabilities })
-      };
-    }),
+    recommendedRoute: chosen?.recommendedRoute || null,
+    exes,
     files,
     currentDlss: effectivePrimaryDlss ? {
       rel: effectivePrimaryDlss.rel,
@@ -1697,12 +1983,21 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
     ? { ok:false, code:'errSelectedExeMissing', message:uiText('所选游戏程序已不在扫描列表中，请刷新后重新选择。', 'The selected executable is no longer in the scan. Refresh and select it again.') }
     : { ok:false, message:uiText('未找到游戏主程序。','No game executable found.') };
   const selection = requestedApi ?? apiPreference(loadState(), dir, detected.path);
-  const target = renderingApi.effective(detected, selection);
+  const target = setupTarget(dir, scan, detected, selection);
   compatibility.assertSafeTarget(dir, target.path);
-  target.hasNativeDlss = detected.hasNativeDlss ?? installRoutes.nativeDlssPresent(scan);
-  target.hasNativeUpscaler = detected.hasNativeUpscaler ?? (installRoutes.nativeUpscalerPresent ? installRoutes.nativeUpscalerPresent(scan) : false);
+  if (target.launcherProtected) return {ok:false, code:'errWutheringWaves', message:uiText(
+    '鸣潮使用独立加载器，请在游戏页的画质与补帧面板预览应用。',
+    'Wuthering Waves uses its standalone loader. Preview the change in the game’s Graphics and Frame Generation panel.'
+  )};
   const api = target.api;
-  const availableRoutes = installRoutes.routesFor(target, api);
+  const protectedRouteReason = requestedRoute === 'encore' ? installRoutes.encoreReason : Object.hasOwn(installRoutes.graphicsRouteReasons, requestedRoute)
+    ? installRoutes.graphicsRouteReasons[requestedRoute] : null;
+  if (protectedRouteReason) {
+    target.antiCheatWarning = compatibility.hasAntiCheat(dir, target.path);
+    const issue = protectedRouteReason(target);
+    if (issue) return {ok:false, code:'errSelectedRouteUnavailable', message:issue};
+  }
+  const availableRoutes = setupRoutes(target);
   const routeSpecified = requestedRoute != null && requestedRoute !== '';
   if (routeSpecified && !availableRoutes.includes(requestedRoute)) {
     if (requestedRoute === 'optiscaler') {
@@ -1716,24 +2011,22 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
   }
   if (!availableRoutes.length) return { ok: false, code: 'unsupportedRendererHint', message: 'This rendering API is not supported. Select the game’s DirectX 11 mode where available.' };
   const route = routeSpecified ? requestedRoute : installRoutes.recommendedRoute(scan, target);
+  if (['native','feeder','renodx','optiscaler'].includes(route)) {
+    const hardware = await combinedManager.detectHardwareEnvironment();
+    if (hardware.gpu.nvidiaPresent === false) return {ok:false,code:'errNeuralGpuUnsupported',message:uiText(
+      '此安装方式需要 NVIDIA 显卡运行 DLSS 神经渲染。已检测到的显示适配器均非 NVIDIA。',
+      'This route uses NVIDIA DLSS neural rendering. All detected display adapters are from other vendors.'
+    )};
+  }
 
   // ReShade Setup is a Windows executable. On Linux, support Windows games
   // launched with Steam Play by using their existing Proton prefix; native
   // Linux games do not load the Windows DLSS/ReShade payload.
-  const protonGame = process.platform === 'linux'
-    ? steam().find((game) => path.resolve(game.dir) === path.resolve(dir))
-    : null;
-  const proton = contextForSteamGame(protonGame);
-  if (process.platform === 'linux' && !proton) {
-    return { ok: false, code: 'errProtonRequired', message: 'This installer supports Windows games launched through Steam Proton. Launch the game once with Proton, then try again.' };
-  }
-  if (process.platform === 'linux' && api === 'vulkan') {
-    return { ok: false, code: 'errLinuxVulkanUnsupported', message: 'The Vulkan Feeder route needs a host Vulkan layer and is not supported on Linux yet. Select a DirectX renderer in the game.' };
-  }
+  const proton = installPlatformContext(dir, api, route);
 
   const send = (e) => { if (!previewFs.active()) event.sender.send('job', { ...e, dir }); };
   await guards.assertGameClosed(dir, target.path);
-  if (route === 'encore') {
+  if (route === 'encore' || installRoutes.componentRoutes.includes(route)) {
     const accepted = await encoreConsent(dir,target.path);
     if (!accepted) return {ok:false,cancelled:true};
     return combinedManager.applyCombinedConfiguration(dir, {route,exePath:target.path,apiOverride:selection,
@@ -1745,7 +2038,8 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
   if (journal.hasPendingRecovery(dir)) return { ok: false, code: 'errBackendRecovery' };
   const old = backends.readManifest(dir);
   const changed = old && (old.route !== route || old.game.api !== api || old.game.exe.toLowerCase() !== target.rel.toLowerCase());
-  if (changed && (old.game.api === 'vulkan' || api === 'vulkan')) return { ok: false, code: 'errBackendVulkanSwitch' };
+  const reuseMonitorLayer = old?.route === 'hud' && old.game.api === api && old.game.exe.toLowerCase() === target.rel.toLowerCase();
+  if (changed && !reuseMonitorLayer && (old.game.api === 'vulkan' || api === 'vulkan')) return { ok: false, code: 'errBackendVulkanSwitch' };
   let antiCheatAcknowledged = false;
   if (compatibility.hasAntiCheat(dir, target.path)) {
     const answer = previewFs.active() ? { response: 1 } : await dialog.showMessageBox(win, antiCheatWarning.dialogOptions(desktopLanguage(), dir, target.path));
@@ -1898,6 +2192,8 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
       antiCheatAcknowledged,
       emulator: target.emulator,
       source: p.source,
+      payloadDir: resolvePayloadRoot(),
+      userDataDir: app.getPath('userData'),
       optiRoot,
       optiVersion,
       companions,
@@ -2035,13 +2331,11 @@ ipcMain.handle('enhanced-apply', (event, dir, config, reviewToken) => exclusiveM
   if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, message: '无效的游戏目录' };
   const state = loadState();
   const send = (e) => { if (!previewFs.active()) event.sender.send('job', { ...e, dir }); };
-  const scanForOverride = await scanGame(dir,resolvedConfig?.exePath).catch(() => null);
-  const chosenExe = scanForOverride?.chosen?.path;
   return combinedManager.applyCombinedConfiguration(dir, {
-    apiOverride: chosenExe ? apiPreference(state, dir, chosenExe) : 'auto',
-    reshadeProxy: chosenExe ? reshadeProxyPreference(state, dir, chosenExe) : 'dxgi',
     ...resolvedConfig,
-    antiCheatAcknowledged:resolvedConfig?.route === 'encore',
+    preferencesForExe: exe => ({apiOverride: apiPreference(state, dir, exe), reshadeProxy: reshadeProxyPreference(state, dir, exe)}),
+    platformSetup: process.platform === 'linux' ? (api, route) => createSetupRunner(installPlatformContext(dir, api, route)) : undefined,
+    antiCheatAcknowledged:resolvedConfig?.performanceMonitor !== undefined || resolvedConfig?.route === 'hud' || resolvedConfig?.route === 'encore' || installRoutes.componentRoutes.includes(resolvedConfig?.route),
     payloadDir: resolvePayloadRoot(),
     userDataDir: app.getPath('userData'),
     requirePayload: requireRuntime
@@ -2084,13 +2378,16 @@ ipcMain.handle('library-check-runtime', (_event, id) => exclusiveMutation(async 
   await runtimes().require([id]);
   return { ok: true };
 }));
-ipcMain.handle('library-check', async () => {
+ipcMain.handle('library-check', async (_event, manual) => {
   // Update metadata is published atomically. Checking it doesn't change games or the package catalog.
-  try { return await updates().check(); }
+  try { return await updates().check({published:manual === true}); }
   catch (error) { return { ok: false, code: error.code, message: error.message }; }
 });
+function downloadSourceOptions(value) {
+  return typeof value === 'string' ? {mirror:value,priority:'mirror'} : {mirror:typeof value?.mirror === 'string' ? value.mirror : '',priority:value?.priority === 'official' ? 'official' : 'mirror'};
+}
 let libraryTransfer;
-ipcMain.handle('library-download', (event, id) => {
+ipcMain.handle('library-download', (event, id, source) => {
   const transfer = {sender:event.sender, cancelled:false};
   // Reserve cancellation before the mutation waits for pending catalog reads.
   // A rejected competing request must neither replace nor clear this owner.
@@ -2103,15 +2400,15 @@ ipcMain.handle('library-download', (event, id) => {
       // First-use seeding can also outlive a cancellation from the row button.
       if (transfer.cancelled) return {ok:false, cancelled:true};
       updater.onProgress = p => { if (!event.sender.isDestroyed()) event.sender.send('library-progress', p); };
-      return await updater.download(id);
+      return await updater.download(id, downloadSourceOptions(source));
     }
     finally { updater.onProgress = () => {}; }
   }).finally(() => { if (libraryTransfer === transfer) libraryTransfer = null; });
 });
-ipcMain.handle('library-cancel', event => {
-  if (libraryTransfer?.sender !== event.sender) return;
-  libraryTransfer.cancelled = true;
-  return updates().cancel();
+ipcMain.handle('library-cancel', (event, options) => {
+  if (libraryTransfer && libraryTransfer.sender !== event.sender) return;
+  if (libraryTransfer) libraryTransfer.cancelled = true;
+  return updates().cancel({discard:options?.discard === true});
 });
 function recordComponentChange(dir, result, action) {
   if (!result.ok || !result.historyManifest) return;
@@ -2145,19 +2442,39 @@ ipcMain.handle('library-rollback', (_event,dir,id,token) => exclusiveMutation(as
   recordComponentChange(dir, result, 'component-rollback');
   return result;
 }));
-ipcMain.handle('library-import', (_event, component) => exclusiveMutation(async()=>{
-  const definition=require('./src/core/component-definitions').DEFINITIONS[component];
-  if(!definition||definition.pinned||definition.internal)throw Error('这个内部组件由程序维护');
-  const chosen=await dialog.showOpenDialog({title:'导入组件文件或完整 ZIP 包',properties:['openFile'],filters:[{name:'组件文件',extensions:['zip','dll','addon64','addon32']}]});
-  if(chosen.canceled)return{ok:false,cancelled:true};
-  const file=chosen.filePaths[0],library=components();await library.init();
-  const staging=require('./src/core/component-library').safe(library.root,'imports/'+crypto.randomUUID());
-  let files;
-  try{
-    if(/\.zip$/i.test(file)){await fs.promises.mkdir(staging,{recursive:true});await require('./src/core/component-updates').unpack(file,staging);files=await require('./src/core/component-updates').mapFiles(staging,component);}
-    else {if(definition.files.length!==1)throw Error('该组件需要完整 ZIP 配套包');files={[definition.files[0]]:file};}
-    const p=await library.importPackage({component,files,source:'手动导入',trustedAdapter:false});return{ok:true,package:p};
-  }finally{if(fs.existsSync(staging))await fs.promises.rm(staging,{recursive:true,force:true});}
+ipcMain.handle('library-clean-cache', (_event, options) => exclusiveMutation(async () => {
+  const library = components();
+  await library.init();
+  return library.cleanCache({component:typeof options?.component === 'string' ? options.component : '',olderThanDays:Number(options?.olderThanDays) || 0});
+}));
+ipcMain.handle('library-import', (_event, component) => exclusiveMutation(async () => {
+  const { DEFINITIONS } = require('./src/core/component-definitions');
+  const definition = Object.hasOwn(DEFINITIONS, component) && DEFINITIONS[component];
+  if (!definition || definition.pinned || definition.internal) throw Error('这个内部组件由程序维护');
+  if (!definition.files.length && component !== 'optiscaler') throw Error('该组件需要通过配套包或组件发布记录入库');
+  const chosen = await dialog.showOpenDialog({
+    title: '导入组件文件或完整 ZIP 包', properties: ['openFile'],
+    filters: [{ name: '组件文件', extensions: ['zip', 'dll', 'addon64', 'addon32'] }],
+  });
+  if (chosen.canceled) return { ok: false, cancelled: true };
+  const file = chosen.filePaths[0];
+  const library = components();
+  await library.init();
+  const spec = { component, source: '手动导入', trustedAdapter: false };
+  if (!/\.zip$/i.test(file)) {
+    if (definition.files.length !== 1) throw Error('该组件需要完整 ZIP 配套包');
+    return { ok: true, package: await library.importPackage({ ...spec, files: { [definition.files[0]]: file } }) };
+  }
+  const { unpack, mapFiles } = require('./src/core/component-archive');
+  const staging = require('./src/core/component-library').safe(library.root, 'imports/' + crypto.randomUUID());
+  await fs.promises.mkdir(staging, { recursive: true });
+  try {
+    await unpack(file, staging);
+    const files = await mapFiles(staging, component);
+    return { ok: true, package: await library.importPackage({ ...spec, files }) };
+  } finally {
+    await fs.promises.rm(staging, { recursive: true, force: true });
+  }
 }));
 let runtimeDetector;
 ipcMain.handle('component-runtime', async (_event, dir) => {
@@ -2171,24 +2488,32 @@ ipcMain.handle('component-lock', (_event, dir, enabled) => exclusiveMutation(asy
   return reviews().setLock(dir, enabled);
 }));
 let preparation;
-ipcMain.handle('component-cancel-prepare', event => {
+ipcMain.handle('component-cancel-prepare', (event, options) => {
   if (preparation?.sender !== event.sender) return;
   preparation.controller.abort();
-  runtimes().cancel();
+  preparation.cache?.cancel({discard:options?.discard === true});
 });
-ipcMain.handle('component-prepare', (event, dependencies) => exclusiveMutation(async () => {
+ipcMain.handle('component-prepare', (event, dependencies, source) => {
+  const request = {sender:event.sender, controller:new AbortController()};
+  if (!mutationBusy) preparation = request;
+  return exclusiveMutation(() => prepareComponents(request, dependencies, source))
+    .finally(() => { if (preparation === request) preparation = null; });
+});
+async function prepareComponents(request, dependencies, source) {
+  const {sender, controller:{signal}} = request;
+  if (signal.aborted) return {ok:false, cancelled:true};
   if (!Array.isArray(dependencies) || dependencies.length > 24) throw new Error('无效的缓存准备请求');
-  const controller = new AbortController(), {signal} = controller;
-  preparation = {sender:event.sender, controller};
   const cache = runtimes();
-  const send = p => { if (!event.sender.isDestroyed()) event.sender.send('component-progress', p); };
+  const send = p => { if (!sender.isDestroyed()) sender.send('component-progress', p); };
   cache.onProgress = send;
   try {
     const selected = [...new Set(dependencies)];
     const runtimeIds = selected.filter(d => typeof d === 'string' && d.startsWith('runtime:')).map(d => d.slice(8));
     if (runtimeIds.length) {
       send({stage:'prepare', name:cache.pack(runtimeIds[0]).name});
-      const result = await cache.prepare(runtimeIds);
+      request.cache = cache;
+      const result = await cache.prepare(runtimeIds, downloadSourceOptions(source));
+      request.cache = null;
       if (result.cancelled) return result;
       if (unifiedComponents) unifiedComponents.initialized = false;
     }
@@ -2208,6 +2533,6 @@ ipcMain.handle('component-prepare', (event, dependencies) => exclusiveMutation(a
   } catch (error) {
     if (signal.aborted) return {ok:false, cancelled:true};
     throw error;
-  } finally { cache.onProgress = () => {}; preparation = null; }
-}));
+  } finally { cache.onProgress = () => {}; request.cache = null; }
+}
 

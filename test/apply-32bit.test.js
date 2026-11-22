@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const { applySwap, restore } = require('../src/core/apply');
+const { writePe } = require('./fixtures/pe');
 
 function put(file, contents = path.basename(file)) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -26,8 +27,8 @@ test('32-bit DX9 install deploys feeder host and restores every added file', asy
   const source = {
     hasNeuralRendering: true,
     payload: [
-      { name: 'nvngx_dlssnr.dll', path: put(path.join(payload, 'nvngx_dlssnr.dll')), version: '1.0.0' },
-      { name: 'nvngx_dlss.dll', path: put(path.join(payload, 'nvngx_dlss.dll')), version: '1.0.0' }
+      { name: 'nvngx_dlssnr.dll', path: writePe(path.join(payload, 'nvngx_dlssnr.dll')), version: '1.0.0' },
+      { name: 'nvngx_dlss.dll', path: writePe(path.join(payload, 'nvngx_dlss.dll')), version: '1.0.0' }
     ],
     feeder: {
       ok: true,

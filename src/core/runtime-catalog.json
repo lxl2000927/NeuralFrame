@@ -1103,18 +1103,25 @@
       "id": "localization",
       "name": "中文适配与预加载桥接",
       "component": "localization",
-      "version": "zh1.10",
+      "version": "zh1.12",
       "bundled": true,
+      "upstreams": [
+        {
+          "name": "skyi7943-cmd/DLSS5-Swapper-Enhanced",
+          "url": "https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced",
+          "kind": "project"
+        }
+      ],
       "files": [
         {
           "path": "enhanced/zh-cn/dlss5-zh-cn.addon32",
-          "size": 839168,
-          "sha256": "5b15891ad240093e1e798540854824ac52f248a96703690132246ca172bf3faa"
+          "size": 651776,
+          "sha256": "0fc240e292a582b8e9c54045e66cbe51a5f0926920ca25bcd9749424f9ed9195"
         },
         {
           "path": "enhanced/zh-cn/dlss5-zh-cn.addon64",
-          "size": 828928,
-          "sha256": "41f5e109dfcb24d56e656da8dee31dc4f013a552173aed9602c68adef9d0d4d5"
+          "size": 697856,
+          "sha256": "3005054c50b53af2443be40188f6954a0731e50195d9066fc69e278e8ce37c3e"
         },
         {
           "path": "enhanced/zh-cn/winmm.dll",
@@ -1122,34 +1129,34 @@
           "sha256": "6bb30decb5a91b28ced9234350897f43748dbe9e0863243a4856d899692730fc"
         }
       ],
-      "contentId": "65ec79643f4c3cd5c2ac97fc2de1a7bc159e1d3c5e5a0b5c99b8394f099e4f7a"
+      "contentId": "b38fb63a6ab78e9f87627ad3e356867f1b04c40f773dcd0a10c9325253084d2d"
     },
     {
       "id": "encore",
-      "name": "RTX Encore 2.4.1",
+      "name": "RTX Encore 2.5.0",
       "component": "encore",
-      "version": "2.4.1",
+      "version": "2.5.0",
       "bundled": false,
       "repository": "SilyNoMeta/rtx-encore",
       "files": [
         {
           "path": "enhanced/encore/rtx-encore.dll",
           "archivePath": "rtx-encore.dll",
-          "size": 46694400,
-          "sha256": "9a6dcc15058919618959edfa4510f5ffb913f4facf265c99ca3c49bc49c170c2"
+          "size": 47319040,
+          "sha256": "58fff4489e2222cb263e17142613693869acec458e0fa0b7ab260482fbf8c762"
         },
         {
           "path": "enhanced/encore/THIRD-PARTY-NOTICES.md",
           "archivePath": "THIRD-PARTY-NOTICES.md",
-          "size": 27855,
-          "sha256": "6263f24f369203089e617aad6be05f0c1103891e4f928d0da66da51ba1dc3939"
+          "size": 29109,
+          "sha256": "57ce4dda7399aa824025afa6eee08a13dd77151ef11680728764a38a207758c1"
         }
       ],
-      "contentId": "ba422c2e665ab0058991dee08dc184ac61ea388137fe4c91a0e61873074b0c5c",
-      "archive": "RTX-Encore-v2.4.1.zip",
-      "size": 192104923,
-      "sha256": "e5383604a9289c70c8a47e73e4c22503c9e5834d9ed0058dc4754b3d79409202",
-      "url": "https://github.com/SilyNoMeta/rtx-encore/releases/download/v2.4.1/RTX-Encore-v2.4.1.zip",
+      "contentId": "2b4da1904da8ed236d3be8a7ebf47a5d558aa73087cdb552522e9f0ad05bece1",
+      "archive": "RTX-Encore-v2.5.0.zip",
+      "size": 193529067,
+      "sha256": "249a22ff63bbbeedc29d1509c1f7bb21570e18cf09a1ae3eeba775855beacbda",
+      "url": "https://github.com/SilyNoMeta/rtx-encore/releases/download/v2.5.0/RTX-Encore-v2.5.0.zip",
       "upstreams": [
         {
           "name": "SilyNoMeta/rtx-encore",
@@ -1164,6 +1171,13 @@
       "component": "mfg-universal",
       "version": "1.7.1",
       "bundled": true,
+      "upstreams": [
+        {
+          "name": "dashdogy/MFG-Unlocker",
+          "url": "https://github.com/dashdogy/MFG-Unlocker",
+          "kind": "project"
+        }
+      ],
       "files": [
         {
           "path": "enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt",
@@ -1200,6 +1214,643 @@
           "kind": "project"
         }
       ]
+    },
+    {
+      "id": "anr",
+      "name": "ANR FG B20",
+      "component": "anr",
+      "version": "B20",
+      "bundled": false,
+      "repository": "apex-compute/ANR",
+      "files": [
+        {
+          "path": "enhanced/anr/LICENSES/OptiScaler-GPL-3.0.txt",
+          "archivePath": "LICENSES/OptiScaler-GPL-3.0.txt",
+          "size": 35149,
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler.ini",
+          "archivePath": "game/OptiScaler.ini",
+          "size": 58976,
+          "sha256": "dd6540a7d06ca4a7b0de88c227b37e555ccf16ab34fe9349364d3600e96f77a0"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/adapters/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/adapters/pack.nrx",
+          "size": 35318,
+          "sha256": "8b1c812310f519cd4c6f60079f214f009117cfc35e1f6ffd9835c213c43222fe"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/kernels-portable/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/kernels-portable/pack.nrx",
+          "size": 521592,
+          "sha256": "d41b9a87806d8529f18c898a83c4e4a83e720b3e1cafbece7daf06175fa622a2"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/kernels/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/kernels/pack.nrx",
+          "size": 396634,
+          "sha256": "15b864a39495d8d9a0a92cb3799928055e6b9e5d1ad4136233f818570a2d2876"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/nr_fg.ini",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/nr_fg.ini",
+          "size": 603,
+          "sha256": "68bc047729ecd40558a328b7a56510569ff71d6259eb932f6f18f513226f93d3"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/nvngx_dlssg.dll",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/nvngx_dlssg.dll",
+          "size": 3684136,
+          "sha256": "94dc4f10b20d8034d9c1342385a545c60a92de9b6ddea86fd0012c7883a6e0a4"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/path_table.json",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/path_table.json",
+          "size": 9514,
+          "sha256": "82992baaf5d2f0af85cec8f8ced8cbfd5d5d7626b99c1a29f3799964f2fb4452"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-pq10/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-pq10/pack.nrx",
+          "size": 45332,
+          "sha256": "83f05fdebe59467e0ed4e85b4777b0bd646232623ca03b8057ba8527a2fd9671"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-scrgb16/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-scrgb16/pack.nrx",
+          "size": 41914,
+          "sha256": "8843b1cc01f231c08e57c39396b2ed392e48ccffcc2ec92b2648dd8fb36ad7d6"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-srgb8/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-srgb8/pack.nrx",
+          "size": 42991,
+          "sha256": "4bae89c91e8f372da1432f0aa0b42b88608c2cc616db06eaf256a5acbb407ba8"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-pq10/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-pq10/pack.nrx",
+          "size": 94351,
+          "sha256": "5fd83071cb83c596dd51db675521dc5ae667237a7d479660014bed8ca54e7a4c"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-scrgb16/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-scrgb16/pack.nrx",
+          "size": 90633,
+          "sha256": "5b0cab75f259f9c1177f29a7d4ea880584d134682110039d6e0ece208ad20074"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-srgb8/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-srgb8/pack.nrx",
+          "size": 92111,
+          "sha256": "a202e4aeb646ae3b2b7bbef4a2a25f4fb3830049b6f4dd2e4a1464641ae3714c"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-pq10/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-pq10/pack.nrx",
+          "size": 93900,
+          "sha256": "db074df27e3468471f22c8bf895e08d42cc094bc317e9f25fb85ccddfdb999a2"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-scrgb16/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-scrgb16/pack.nrx",
+          "size": 90581,
+          "sha256": "bfa0c124366eb77b70a12578859774326136ea38d6f46731e12232cd38ff98aa"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-srgb8/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-srgb8/pack.nrx",
+          "size": 91677,
+          "sha256": "cb2a0980c6eeb4428b00942a3f37a6f691be3bd5f353f97e144c27094f005def"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-pq10/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-pq10/pack.nrx",
+          "size": 81428,
+          "sha256": "64d3d6376456811b6bdd9774bfd7863af8b43ff4336b13a50c6fc03de916dc7e"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-scrgb16/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-scrgb16/pack.nrx",
+          "size": 77842,
+          "sha256": "ac13a9c8a7622e3d0c036b4e04b0fb3dcd4fde5aeca3baae0a9aa592ab21053e"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-srgb8/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-srgb8/pack.nrx",
+          "size": 79020,
+          "sha256": "2b9a3cd500246c40cf1a4604ab0f6c19d666c09ed59ebbec29ea9d8f3838aea7"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-pq10/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-pq10/pack.nrx",
+          "size": 64591,
+          "sha256": "ee3fcc13a2862ed55fe2993c1d9e06cd4d13495f7a5ecf9d66b6ff071ed886db"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-scrgb16/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-scrgb16/pack.nrx",
+          "size": 61115,
+          "sha256": "471da1067a25e58e4cc97f5fd0fb4e45222ee4ce22db5fb86cdb7c5e36ac400a"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-srgb8/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-srgb8/pack.nrx",
+          "size": 62374,
+          "sha256": "8f80cadf7c46adab11d3523d31b5db69f78b32d0f42ab2ce701c6ec73580855f"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-pq10/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-pq10/pack.nrx",
+          "size": 85260,
+          "sha256": "f3a4af5bc2e84805e3112705cc57096181e8eaf8bd394b7a1e397c4ead5ae7fd"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-scrgb16/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-scrgb16/pack.nrx",
+          "size": 81798,
+          "sha256": "b3eea11f2c6fb8be6d435af02e719036daf238ba5d7769535b264735cf320517"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-srgb8/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-srgb8/pack.nrx",
+          "size": 82908,
+          "sha256": "8f4bfb45f64b3ea4e262620aef60782f6204da6930d05b5b0c36e4c5c97db1ad"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-pq10/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-pq10/pack.nrx",
+          "size": 66743,
+          "sha256": "aed2004ca34c33ee28c5f91e83569dd5aa246284d363f08cb7ba12700cc36891"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-scrgb16/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-scrgb16/pack.nrx",
+          "size": 63436,
+          "sha256": "fe481c40690099298f7a63d3c24ed5dea832db37142f5a08c9a37536de916ea0"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-srgb8/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-srgb8/pack.nrx",
+          "size": 64512,
+          "sha256": "4957dac1fa83cadb96743e05646a8e1e08cfc08b3e2ad27d1640a588f9e5d43d"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-xmx-pq10/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-xmx-pq10/pack.nrx",
+          "size": 90682,
+          "sha256": "f5f3a3afc8a6a0a4acfe2943511444eaeca1b1ae68b96d85e7a8d38ed9f30cea"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-xmx-srgb8/pack.nrx",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-xmx-srgb8/pack.nrx",
+          "size": 88268,
+          "sha256": "f744f66f6785c633657a2c66e8c09d9fde739f4199e401469543549b2e9e520b"
+        },
+        {
+          "path": "enhanced/anr/OptiScaler/custom/Apex Neural Rendering FG/dlssg/size_table.json",
+          "archivePath": "game/OptiScaler/custom/Apex Neural Rendering FG/dlssg/size_table.json",
+          "size": 958,
+          "sha256": "7c602f6709e14bbf972250d47b8b3dc55ce4dafd803723561120097e644e5478"
+        },
+        {
+          "path": "enhanced/anr/dxgi.dll",
+          "archivePath": "game/dxgi.dll",
+          "size": 29950464,
+          "sha256": "1b285f895a6a24b914b8d8eaea0f2d5e9d5ff59230ca361437c0677e1f607418"
+        }
+      ],
+      "archive": "anr-fg-V.B20-full.zip",
+      "size": 11729994,
+      "sha256": "999e8b08ac177749880d75018bbe02f6d184730bbd3bb13b68633860bf491598",
+      "url": "https://github.com/apex-compute/ANR/releases/download/FG-V.B20/anr-fg-V.B20-full.zip",
+      "upstreams": [
+        {
+          "name": "apex-compute/ANR",
+          "url": "https://github.com/apex-compute/ANR",
+          "kind": "project"
+        }
+      ],
+      "contentId": "16bd4e0b47ef703bb9e1d341758cd2be9bcec5e263affb1113800751ec0f4c36"
+    },
+    {
+      "id": "anr-addon",
+      "name": "ANR FG B20 · OptiScaler Add-on",
+      "component": "anr-addon",
+      "version": "B20",
+      "bundled": false,
+      "repository": "apex-compute/ANR",
+      "files": [
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/adapters/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/adapters/pack.nrx",
+          "size": 35318,
+          "sha256": "8b1c812310f519cd4c6f60079f214f009117cfc35e1f6ffd9835c213c43222fe"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/kernels-portable/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/kernels-portable/pack.nrx",
+          "size": 521592,
+          "sha256": "d41b9a87806d8529f18c898a83c4e4a83e720b3e1cafbece7daf06175fa622a2"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/kernels/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/kernels/pack.nrx",
+          "size": 396634,
+          "sha256": "15b864a39495d8d9a0a92cb3799928055e6b9e5d1ad4136233f818570a2d2876"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/nr_fg.ini",
+          "archivePath": "Apex Neural Rendering FG/dlssg/nr_fg.ini",
+          "size": 603,
+          "sha256": "68bc047729ecd40558a328b7a56510569ff71d6259eb932f6f18f513226f93d3"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/nvngx_dlssg.dll",
+          "archivePath": "Apex Neural Rendering FG/dlssg/nvngx_dlssg.dll",
+          "size": 3684136,
+          "sha256": "138abe36a55003847dcf2b18c5e208138fb8e542b263cfeeb36613f362cee6f6"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/path_table.json",
+          "archivePath": "Apex Neural Rendering FG/dlssg/path_table.json",
+          "size": 9514,
+          "sha256": "82992baaf5d2f0af85cec8f8ced8cbfd5d5d7626b99c1a29f3799964f2fb4452"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-pq10/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-pq10/pack.nrx",
+          "size": 45332,
+          "sha256": "83f05fdebe59467e0ed4e85b4777b0bd646232623ca03b8057ba8527a2fd9671"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-scrgb16/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-scrgb16/pack.nrx",
+          "size": 41914,
+          "sha256": "8843b1cc01f231c08e57c39396b2ed392e48ccffcc2ec92b2648dd8fb36ad7d6"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-srgb8/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-3840x2160-coopmat-nvidia-blackwell-srgb8/pack.nrx",
+          "size": 42991,
+          "sha256": "4bae89c91e8f372da1432f0aa0b42b88608c2cc616db06eaf256a5acbb407ba8"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-pq10/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-pq10/pack.nrx",
+          "size": 94351,
+          "sha256": "5fd83071cb83c596dd51db675521dc5ae667237a7d479660014bed8ca54e7a4c"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-scrgb16/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-scrgb16/pack.nrx",
+          "size": 90633,
+          "sha256": "5b0cab75f259f9c1177f29a7d4ea880584d134682110039d6e0ece208ad20074"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-srgb8/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-nvidia-blackwell-srgb8/pack.nrx",
+          "size": 92111,
+          "sha256": "a202e4aeb646ae3b2b7bbef4a2a25f4fb3830049b6f4dd2e4a1464641ae3714c"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-pq10/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-pq10/pack.nrx",
+          "size": 93900,
+          "sha256": "db074df27e3468471f22c8bf895e08d42cc094bc317e9f25fb85ccddfdb999a2"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-scrgb16/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-scrgb16/pack.nrx",
+          "size": 90581,
+          "sha256": "bfa0c124366eb77b70a12578859774326136ea38d6f46731e12232cd38ff98aa"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-srgb8/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-coopmat-srgb8/pack.nrx",
+          "size": 91677,
+          "sha256": "cb2a0980c6eeb4428b00942a3f37a6f691be3bd5f353f97e144c27094f005def"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-pq10/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-pq10/pack.nrx",
+          "size": 81428,
+          "sha256": "64d3d6376456811b6bdd9774bfd7863af8b43ff4336b13a50c6fc03de916dc7e"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-scrgb16/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-scrgb16/pack.nrx",
+          "size": 77842,
+          "sha256": "ac13a9c8a7622e3d0c036b4e04b0fb3dcd4fde5aeca3baae0a9aa592ab21053e"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-srgb8/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-dp4a-srgb8/pack.nrx",
+          "size": 79020,
+          "sha256": "2b9a3cd500246c40cf1a4604ab0f6c19d666c09ed59ebbec29ea9d8f3838aea7"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-pq10/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-pq10/pack.nrx",
+          "size": 64591,
+          "sha256": "ee3fcc13a2862ed55fe2993c1d9e06cd4d13495f7a5ecf9d66b6ff071ed886db"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-scrgb16/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-scrgb16/pack.nrx",
+          "size": 61115,
+          "sha256": "471da1067a25e58e4cc97f5fd0fb4e45222ee4ce22db5fb86cdb7c5e36ac400a"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-srgb8/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-packed-srgb8/pack.nrx",
+          "size": 62374,
+          "sha256": "8f80cadf7c46adab11d3523d31b5db69f78b32d0f42ab2ce701c6ec73580855f"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-pq10/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-pq10/pack.nrx",
+          "size": 85260,
+          "sha256": "f3a4af5bc2e84805e3112705cc57096181e8eaf8bd394b7a1e397c4ead5ae7fd"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-scrgb16/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-scrgb16/pack.nrx",
+          "size": 81798,
+          "sha256": "b3eea11f2c6fb8be6d435af02e719036daf238ba5d7769535b264735cf320517"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-srgb8/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-linalg-srgb8/pack.nrx",
+          "size": 82908,
+          "sha256": "8f4bfb45f64b3ea4e262620aef60782f6204da6930d05b5b0c36e4c5c97db1ad"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-pq10/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-pq10/pack.nrx",
+          "size": 66743,
+          "sha256": "aed2004ca34c33ee28c5f91e83569dd5aa246284d363f08cb7ba12700cc36891"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-scrgb16/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-scrgb16/pack.nrx",
+          "size": 63436,
+          "sha256": "fe481c40690099298f7a63d3c24ed5dea832db37142f5a08c9a37536de916ea0"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-srgb8/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-srgb8/pack.nrx",
+          "size": 64512,
+          "sha256": "4957dac1fa83cadb96743e05646a8e1e08cfc08b3e2ad27d1640a588f9e5d43d"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-xmx-pq10/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-xmx-pq10/pack.nrx",
+          "size": 90682,
+          "sha256": "f5f3a3afc8a6a0a4acfe2943511444eaeca1b1ae68b96d85e7a8d38ed9f30cea"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-xmx-srgb8/pack.nrx",
+          "archivePath": "Apex Neural Rendering FG/dlssg/programs/fg-lite-any-portable-xmx-srgb8/pack.nrx",
+          "size": 88268,
+          "sha256": "f744f66f6785c633657a2c66e8c09d9fde739f4199e401469543549b2e9e520b"
+        },
+        {
+          "path": "enhanced/anr-addon/Apex Neural Rendering FG/dlssg/size_table.json",
+          "archivePath": "Apex Neural Rendering FG/dlssg/size_table.json",
+          "size": 958,
+          "sha256": "7c602f6709e14bbf972250d47b8b3dc55ce4dafd803723561120097e644e5478"
+        }
+      ],
+      "archive": "anr-fg-V.B20-addon.zip",
+      "size": 4130422,
+      "sha256": "750885d982b0e58e815004da698999f3b85f20c84a28c33cc15ae54e555f70ae",
+      "url": "https://github.com/apex-compute/ANR/releases/download/FG-V.B20/anr-fg-V.B20-addon.zip",
+      "upstreams": [
+        {
+          "name": "apex-compute/ANR",
+          "url": "https://github.com/apex-compute/ANR",
+          "kind": "project"
+        }
+      ],
+      "contentId": "8cf1fbd7edb8c4d89979617c0132c0cdb2dd7234179aa06d8bb850225e4b69e2"
+    },
+    {
+      "id": "sm86",
+      "name": "Dlssg_for_sm86 0.4.2",
+      "component": "sm86",
+      "version": "0.4.2",
+      "bundled": false,
+      "repository": "pandaligx/RTX-FG-Manager",
+      "files": [
+        {
+          "path": "enhanced/sm86/dlssg_sm86/backend/sm86_backend.dll",
+          "archivePath": "dlssg-0.4.2-component-backend-sm86_backend-4e445fb822e8/dlssg_sm86/backend/sm86_backend.dll",
+          "size": 2356416,
+          "sha256": "4e445fb822e8af37212933fb9b1ace01eb82db0f64896359a7711b3fe5db7349"
+        },
+        {
+          "path": "enhanced/sm86/dlssg_sm86/kernels/fg_kernels.dll",
+          "archivePath": "dlssg-0.4.2-component-kernels-fg_kernels-1ebd50b74ac8/dlssg_sm86/kernels/fg_kernels.dll",
+          "size": 11987504,
+          "sha256": "1ebd50b74ac8583299fd902208487e7f71b6bfb8d44ccee224cd2372a22c35a7"
+        },
+        {
+          "path": "enhanced/sm86/dlssg_sm86/runtime/nvngx_dlssg.dll",
+          "archivePath": "dlssg-0.4.2-component-runtime-nvngx_dlssg-cadee1aa6db3/dlssg_sm86/runtime/nvngx_dlssg.dll",
+          "size": 7506544,
+          "sha256": "cadee1aa6db3907babdc3285da2aebc4553d92b89c38ba3eae8abd8bba1bea72"
+        },
+        {
+          "path": "enhanced/sm86/dlssg_sm86/sr/nvngx_dlss.dll",
+          "archivePath": "dlssg-0.4.2-component-sr-nvngx_dlss-858ccff96360/dlssg_sm86/sr/nvngx_dlss.dll",
+          "size": 74187376,
+          "sha256": "858ccff96360c3098db9264cd6f13d04a027e09b6ce7ad5bbc297570e824b4f2"
+        },
+        {
+          "path": "enhanced/sm86/dlssg_sm86/sr/sr_kernels.dll",
+          "archivePath": "dlssg-0.4.2-component-sr-sr_kernels-b0b82c6e55b1/dlssg_sm86/sr/sr_kernels.dll",
+          "size": 107514704,
+          "sha256": "b0b82c6e55b12cee49ff44257ee7121c45dedd6b2f78f6bacdcec6f724a8886c"
+        },
+        {
+          "path": "enhanced/sm86/dlssg_sm86/xefg/xefg_kernels.dll",
+          "archivePath": "dlssg-0.4.2-component-xefg-xefg_kernels-605f2bc5e7f3/dlssg_sm86/xefg/xefg_kernels.dll",
+          "size": 17447416,
+          "sha256": "605f2bc5e7f3affe3136fd8b71555cfc1c189240ab3a35913bd7c5b5fecc162d"
+        },
+        {
+          "path": "enhanced/sm86/dlssg_sm86.ini",
+          "archivePath": "dlssg-0.4.2-entry-version-07a964d7e7fa/dlssg_sm86.ini",
+          "size": 10480,
+          "sha256": "f87c375e80f8992d5988f4fd3434b39e7bd09f1650fffc3e64be90c43812c191"
+        },
+        {
+          "path": "enhanced/sm86/version.dll",
+          "archivePath": "dlssg-0.4.2-entry-version-07a964d7e7fa/version.dll",
+          "size": 830176,
+          "sha256": "12c0c4368062049ef2c6182a98cfed13a6e7f3c06655b25b1fe02815dc077d12"
+        },
+        {
+          "path": "enhanced/sm86/dlssg_sm86/LICENSE.md",
+          "archivePath": "dlssg-0.4.2-notices-c94738231fdd/dlssg_sm86/LICENSE.md",
+          "size": 1065,
+          "sha256": "7537220f50c6430d953eda8bff01f0817014e604cb3607f3b62c786d070d8570"
+        },
+        {
+          "path": "enhanced/sm86/dlssg_sm86/THIRD_PARTY_NOTICES.txt",
+          "archivePath": "dlssg-0.4.2-notices-c94738231fdd/dlssg_sm86/THIRD_PARTY_NOTICES.txt",
+          "size": 10517,
+          "sha256": "6729e527a07ae224904e824bfdcdda52b6e1e80a0c5d23246d69b3804f241184"
+        }
+      ],
+      "archive": "dlssg-0.4.2-complete-190c404e6796.zip",
+      "size": 90795780,
+      "sha256": "190c404e679629bb40ca52e296fe52d21c5705e065ab01c37b584bfd2ecee7ab",
+      "url": "https://github.com/pandaligx/RTX-FG-Manager/releases/download/payloads/dlssg-0.4.2-complete-190c404e6796.zip",
+      "upstreams": [
+        {
+          "name": "sdli1995/dlssg_for_sm86",
+          "url": "https://github.com/sdli1995/dlssg_for_sm86",
+          "kind": "project"
+        },
+        {
+          "name": "pandaligx/RTX-FG-Manager",
+          "url": "https://github.com/pandaligx/RTX-FG-Manager",
+          "kind": "project"
+        }
+      ],
+      "contentId": "4e8e0312c8f817e7c65f8c348abef33db12f9ffe4513fa96211b3543aa5a644f"
+    },
+    {
+      "id": "sm86-delta",
+      "name": "Dlssg_for_sm86 0.4.2 · 三角洲 DX12 / Vulkan",
+      "component": "sm86-delta",
+      "version": "0.4.2+rtxfg.1",
+      "bundled": false,
+      "repository": "pandaligx/RTX-FG-Manager",
+      "files": [
+        {
+          "path": "enhanced/sm86-delta/dlssg_sm86/backend/sm86_backend.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-backend-sm86_backend-7d197846fdc1-r1/dlssg_sm86/backend/sm86_backend.dll",
+          "size": 2356416,
+          "sha256": "4e445fb822e8af37212933fb9b1ace01eb82db0f64896359a7711b3fe5db7349"
+        },
+        {
+          "path": "enhanced/sm86-delta/dlssg_sm86/kernels/fg_kernels.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-kernels-fg_kernels-17a73896d03e-r1/dlssg_sm86/kernels/fg_kernels.dll",
+          "size": 11987504,
+          "sha256": "1ebd50b74ac8583299fd902208487e7f71b6bfb8d44ccee224cd2372a22c35a7"
+        },
+        {
+          "path": "enhanced/sm86-delta/dlssg_sm86/runtime/nvngx_dlssg.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-runtime-nvngx_dlssg-18c596ffc0da-r1/dlssg_sm86/runtime/nvngx_dlssg.dll",
+          "size": 7506544,
+          "sha256": "cadee1aa6db3907babdc3285da2aebc4553d92b89c38ba3eae8abd8bba1bea72"
+        },
+        {
+          "path": "enhanced/sm86-delta/dlssg_sm86/sr/nvngx_dlss.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-sr-nvngx_dlss-79af3944d8b4-r1/dlssg_sm86/sr/nvngx_dlss.dll",
+          "size": 74187376,
+          "sha256": "858ccff96360c3098db9264cd6f13d04a027e09b6ce7ad5bbc297570e824b4f2"
+        },
+        {
+          "path": "enhanced/sm86-delta/dlssg_sm86/sr/sr_kernels.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-sr-sr_kernels-48ad972f0c93-r1/dlssg_sm86/sr/sr_kernels.dll",
+          "size": 107514704,
+          "sha256": "b0b82c6e55b12cee49ff44257ee7121c45dedd6b2f78f6bacdcec6f724a8886c"
+        },
+        {
+          "path": "enhanced/sm86-delta/dlssg_sm86/xefg/xefg_kernels.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-xefg-xefg_kernels-55ce3841ceda-r1/dlssg_sm86/xefg/xefg_kernels.dll",
+          "size": 17447416,
+          "sha256": "605f2bc5e7f3affe3136fd8b71555cfc1c189240ab3a35913bd7c5b5fecc162d"
+        },
+        {
+          "path": "enhanced/sm86-delta/dlssg_sm86/LICENSE.md",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-notices-1057b99a4210-r1/dlssg_sm86/LICENSE.md",
+          "size": 1065,
+          "sha256": "7537220f50c6430d953eda8bff01f0817014e604cb3607f3b62c786d070d8570"
+        },
+        {
+          "path": "enhanced/sm86-delta/dlssg_sm86/THIRD_PARTY_NOTICES.txt",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-notices-1057b99a4210-r1/dlssg_sm86/THIRD_PARTY_NOTICES.txt",
+          "size": 59514,
+          "sha256": "908f1bc3a6fe9a85b44e86bdc649e242b06e9ce85d81b88bb014191070d34c48"
+        },
+        {
+          "path": "enhanced/sm86-delta/dlssg_sm86.ini",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-version-r1/dlssg_sm86.ini",
+          "size": 10883,
+          "sha256": "bf4b0844a4752aa339c234913a921ff80c5fb28657309eb3f8d4e0647bff4fc9"
+        },
+        {
+          "path": "enhanced/sm86-delta/version.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-version-r1/version.dll",
+          "size": 5731896,
+          "sha256": "9c54ac17483e3aa2bf7d65bd934823d89141e5d7addc39565c599e733dbce561"
+        }
+      ],
+      "archive": "rtxfg-0.4.2-dx12-vulkan-r1-complete-390d62f8cc88.zip",
+      "size": 103039945,
+      "sha256": "390d62f8cc881cc77c69e745fb5309da918d1a75f7a6e94492993d93dfcbb43c",
+      "url": "https://github.com/pandaligx/RTX-FG-Manager/releases/download/payloads/rtxfg-0.4.2-dx12-vulkan-r1-complete-390d62f8cc88.zip",
+      "upstreams": [
+        {
+          "name": "pandaligx/RTX-FG-Manager",
+          "url": "https://github.com/pandaligx/RTX-FG-Manager",
+          "kind": "project"
+        }
+      ],
+      "contentId": "08b1a8f532a348a1819e25fcec89e38b7fca42047bfcb7081cc666f0cb0b3cf1"
+    },
+    {
+      "id": "xemfg-intel",
+      "name": "Intel XeSS 帧生成与 XeLL",
+      "component": "xemfg-intel",
+      "version": "3.0.2",
+      "bundled": false,
+      "repository": "intel/xess",
+      "files": [
+        {
+          "path": "enhanced/xemfg-intel/LICENSE.txt",
+          "archivePath": "LICENSE.txt",
+          "size": 4194,
+          "sha256": "784be42c39a4a4d03cf85d88e15e59d75828fca773ce45b8dbfffbd7eaf208df"
+        },
+        {
+          "path": "enhanced/xemfg-intel/libxell.dll",
+          "archivePath": "bin/libxell.dll",
+          "size": 415368,
+          "sha256": "d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7"
+        },
+        {
+          "path": "enhanced/xemfg-intel/libxess_fg.dll",
+          "archivePath": "bin/libxess_fg.dll",
+          "size": 22957432,
+          "sha256": "ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27"
+        },
+        {
+          "path": "enhanced/xemfg-intel/third-party-programs.txt",
+          "archivePath": "third-party-programs.txt",
+          "size": 35788,
+          "sha256": "e8d8899dbfc4de0e8ca25560be9358e03c1405d7c956d20a1838c3c709b9b51c"
+        }
+      ],
+      "archive": "XeSS_SDK_3.0.2.zip",
+      "size": 76839749,
+      "sha256": "88b8a373f30e33f3558a77a93e634f11b8132fc3047ea1a8edeead32b8471990",
+      "url": "https://github.com/intel/xess/releases/download/v3.0.2/XeSS_SDK_3.0.2.zip",
+      "upstreams": [
+        {
+          "name": "Intel XeSS SDK 3.0.2",
+          "url": "https://github.com/intel/xess/releases/tag/v3.0.2",
+          "kind": "project"
+        }
+      ],
+      "contentId": "509bee9c4c361563ae703f1c449ea125dee09fdc8e26fdd80c5e1ca2d272a546"
     }
   ]
 }

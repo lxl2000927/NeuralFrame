@@ -17,6 +17,35 @@ function fixture(t, renderer='D3D12CreateDevice') {
     payloadDir:payload.root,gpuName:'NVIDIA GeForce RTX 4070 Laptop GPU',encoreSettings:{...config.DEFAULTS,mfgMode:'x3'}};
   return {root,gameDir,exePath,options,reviews:new ComponentReview(path.join(root,'profile'))};
 }
+test('the verified 2.5 spatial-only installation works without DLSS, NR or FG runtime files',async t=>{
+  const f=fixture(t),payloadDir=path.join(f.root,'spatial-only-payload');
+  fs.cpSync(path.join(payload.root,'enhanced/encore'),path.join(payloadDir,'enhanced/encore'),{recursive:true});
+  const settings={...config.DEFAULTS,upscaling:'mwsr',spatialSharpness:48,spatialAa:'fxaa'};
+  const work=async()=>({ok:true,manifest:await backends.install({...f.options,payloadDir,encoreSettings:settings})});
+  const request={kind:'install',route:'encore'};
+  const preview=await f.reviews.run(f.gameDir,request,work);
+  assert.equal(fs.existsSync(path.join(f.gameDir,'version.dll')),false);
+  assert.equal((await f.reviews.run(f.gameDir,request,work,preview.preview.token)).ok,true);
+  const scan=await scanGame(f.gameDir),actual=encore.inspect(f.gameDir,scan,backends.readManifest(f.gameDir));
+  assert.equal(actual.engine.version,'2.5.0');assert.equal(actual.engine.verified,true);
+  assert.equal(actual.settings.upscaling,'mwsr');assert.equal(actual.settings.spatialSharpness,48);assert.equal(actual.settings.spatialAa,'fxaa');
+  assert.equal(hash(fs.readFileSync(path.join(f.gameDir,'RTX-Encore-NOTICES.md'))),'57ce4dda7399aa824025afa6eee08a13dd77151ef11680728764a38a207758c1');
+  for(const unwanted of ['nvngx_dlssg.dll','sl.interposer.dll','nvngx_dlssnr.dll','nvngx_dlss.dll'])
+    assert.equal(fs.existsSync(path.join(f.gameDir,unwanted)),false);
+  await backends.restore(f.gameDir);
+  for(const name of ['version.dll','RTX-Encore-NOTICES.md',encore.CONFIG]) assert.equal(fs.existsSync(path.join(f.gameDir,name)),false);
+  assert.ok(fs.existsSync(f.exePath));
+});
+
+test('Encore refuses detected anti-cheat before preparing any component even after general risk consent',async t=>{
+  const f=fixture(t);
+  fs.mkdirSync(path.join(f.gameDir,'EasyAntiCheat'));
+  const scan=await scanGame(f.gameDir,f.exePath);
+  assert.match(encore.inspect(f.gameDir,scan).reason,/反作弊/);
+  await assert.rejects(backends.install({...f.options,payloadDir:path.join(f.root,'no-components'),antiCheatAcknowledged:true}),/Encore 不支持带反作弊/);
+  assert.equal(fs.existsSync(path.join(f.gameDir,'version.dll')),false);
+});
+
 test('real pinned Encore preview is read-only; install, menu tuning, model update and restore stay transactional', async t => {
   const f=fixture(t), bytes=fs.readFileSync(f.exePath);
   const original=path.join(f.gameDir,'Engine','nvngx_dlss.dll');writePe(original,{version:[3,7,0,0]});const originalBytes=fs.readFileSync(original);
@@ -74,7 +103,9 @@ test('Encore route rejects Wuthering Waves and unsupported GPUs before writing',
   const exe=writePe(path.join(dir,'Client','Binaries','Win64','Client-Win64-Shipping.exe'),{bitness:64,text:'D3D12CreateDevice',size:131072});
   fs.writeFileSync(path.join(dir,'Wuthering Waves.exe'),'launcher');
   const scan=await scanGame(dir);assert.throws(()=>encore.assertTarget(dir,scan,scan.chosen,'RTX 4070'),/鸣潮/);
-  await assert.rejects(backends.install({...f.options,gpuName:'Unknown'}),/NVIDIA RTX/);
+  for (const gpuName of ['AMD Radeon RX 7800 XT','Unknown',undefined])
+    await assert.rejects(backends.install({...f.options,gpuName}),/NVIDIA RTX/);
+  assert.equal(backends.readManifest(f.gameDir),null);
   assert.equal(fs.existsSync(path.join(dir,'_DLSS5_Backup')),false);assert.ok(fs.existsSync(exe));
 });
 test('DX11 and Vulkan added FG use the adjacent proxy without a ReShade global layer',async t=>{
@@ -143,7 +174,7 @@ test('Encore refuses a second copy under another proxy name or an ASI loader dir
   }
 });
 test('Encore preserves the installed version until explicitly selected, previews upgrades, and keeps menu JSONC',async t=>{
-  const f=fixture(t),engines=require('../src/core/engine-packages'),describe=engines.describe;
+  const f=fixture(t),engines=require('../src/core/engine-packages'),identify=engines.identify;
   const native=path.join(f.gameDir,'Engine','nvngx_dlss.dll');writePe(native,{version:[3,7,0,0]});
   // Registry verification has separate tests with original release bytes. These
   // two tiny engines isolate selection, ownership and transaction semantics.
@@ -153,7 +184,7 @@ test('Encore preserves the installed version until explicitly selected, previews
       packageId:hash(version),verified:true,compatible:true,recommended:index===1,capabilities:config.capabilities(version)};
   });
   let resolutions=0;
-  t.mock.method(engines,'describe',(component,pkg)=>component==='encore' && entries.find(e=>e.sha256===pkg.sha256) || describe(component,pkg));
+  t.mock.method(engines,'identify',(component,sha)=>component==='encore' && entries.find(e=>e.sha256===sha) || identify(component,sha));
   t.mock.method(engines,'resolve',async({packageId})=>{resolutions++;const selected=packageId?entries.find(e=>e.packageId===packageId):entries[1];assert.ok(selected);return {...selected};});
   await backends.install({...f.options,encorePackageId:entries[0].packageId});
   const proxy=path.join(f.gameDir,'version.dll'),json=path.join(f.gameDir,encore.CONFIG);
@@ -184,9 +215,20 @@ test('Encore preserves the installed version until explicitly selected, previews
 });
 test('Encore does not silently replace a missing or unrecognized installed engine and reports drift',async t=>{
   const f=fixture(t);await backends.install(f.options);
+  const scan=await scanGame(f.gameDir),receipt=backends.readManifest(f.gameDir);
+  const companion=path.join(f.gameDir,'sl.common.dll'),bytes=fs.readFileSync(companion);
+  assert.equal(encore.inspect(f.gameDir,scan,receipt).filesPresent,true);
+  const fd=fs.openSync(companion,'r+');
+  try { fs.writeSync(fd,Buffer.from([bytes[0]^1]),0,1,0); } finally { fs.closeSync(fd); }
+  const companionDrift=encore.inspect(f.gameDir,scan,receipt);
+  assert.equal(companionDrift.engine.verified,true);assert.equal(companionDrift.filesPresent,false);
+  fs.writeFileSync(companion,bytes);
+  assert.equal(encore.inspect(f.gameDir,scan,receipt).filesPresent,true);
   const proxy=path.join(f.gameDir,'version.dll');fs.unlinkSync(proxy);
-  const status=encore.inspect(f.gameDir,await scanGame(f.gameDir),backends.readManifest(f.gameDir));
-  assert.equal(status.engine.verified,false);assert.deepEqual(status.capabilities,{});
+  const status=encore.inspect(f.gameDir,scan,receipt);
+  assert.equal(status.engine.verified,false);assert.equal(status.engine.compatible,false);
+  assert.equal(status.engine.label,'配套文件缺失或已变化');
+  assert.equal(status.filesPresent,false);assert.deepEqual(status.capabilities,{});assert.deepEqual(status.engine.capabilities,{});
   await assert.rejects(backends.install(f.options),/明确选择推荐版本/);
   await backends.install({...f.options,encorePackageId:''});
   assert.equal(encore.inspect(f.gameDir,await scanGame(f.gameDir),backends.readManifest(f.gameDir)).engine.verified,true);

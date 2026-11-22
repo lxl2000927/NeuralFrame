@@ -3,41 +3,47 @@ import { ChevronDown } from "lucide-react";
 import { t } from "../i18n";
 import { getBridge } from "../bridge";
 import { Select } from "../components";
-import { errorText, size } from "../domain";
+import { errorText, gameRouteLabels as routes, neuralGpuReason, sameExecutable, size, usesFramePanel } from "../domain";
 import type { Details, Status } from "../types";
 import * as installRoutes from "../../../src/shared/install-routes.js";
 import * as renderingApi from "../../../src/shared/rendering-api.js";
 
-const routes: Record<string, string> = {
-  native: "原生 DLSS（RenoDX）", feeder: "Feeder + ReShade",
-  renodx: "RenoDX DLSS Tool", optiscaler: "OptiScaler DLSS-NR",
-  encore: "Encore 新增帧生成（实验性）",
-};
 export type SetupSelection = { exePath: string; route: string };
 export function resolveSetup(details: Details, selection: SetupSelection | null) {
   const exes = details.exes || [];
-  const exe = selection ? exes.find(item => item.path === selection.exePath) :
-    exes.find(item => item.rel === details.installedExe) ||
-    exes.find(item => item.path === details.exePath) || exes[0];
-  const target = exe ? renderingApi.effective(exe, exe.apiOverride || "auto") : null;
-  const available: string[] = target ? installRoutes.routesFor(target) : [];
+  const exe = selection ? exes.find(item => sameExecutable(item.path, selection.exePath)) :
+    exes.find(item => sameExecutable(item.rel, details.installedExe)) ||
+    exes.find(item => sameExecutable(item.path, details.exePath)) || exes[0];
+  const protectedGame = exe?.launcherProtected ?? details.launcherProtected;
+  const target = exe ? renderingApi.effective({...exe, launcherProtected:protectedGame,
+    antiCheatWarning:exe.antiCheatWarning || details.antiCheatWarning}, exe.apiOverride || "auto") : null;
+  const available: string[] = target ? [...installRoutes.routesFor(target),
+    ...installRoutes.componentRoutesFor(target)] : [];
+  const recommended = exe?.recommendedRoute === undefined ? details.recommendedRoute : exe.recommendedRoute;
+  const ownsInstall = details.installedExe ? sameExecutable(exe?.rel, details.installedExe)
+    : !selection || sameExecutable(exe?.path, details.exePath);
+  const installed = ownsInstall ? details.installedRoute : undefined;
+  const wanted = selection?.route || installed || recommended || "";
+  const wantedOptional = installRoutes.componentRoutes.includes(wanted) && wanted;
+  const graphicsIssue = wantedOptional && !available.includes(wantedOptional)
+    ? (usesFramePanel(wantedOptional) && installRoutes.graphicsRouteReasons[wantedOptional](target)) || "当前程序或渲染 API 不支持所选路线。" : null;
+  if (wantedOptional && graphicsIssue && !protectedGame) available.push(wantedOptional);
   // Keep an installed backend visible even if a game update changes eligibility.
-  if (target && (selection?.route === 'encore' || (!selection && details.installedRoute === 'encore')) && !available.includes('encore')) available.push('encore');
-  const wanted = selection?.route || details.installedRoute || details.recommendedRoute || "";
-  const route = selection?.route === 'encore' ? 'encore' : available.includes(wanted) ? wanted : available.includes(details.recommendedRoute || "")
-    ? details.recommendedRoute! : available[0] || "";
-  const encoreIssue = target ? installRoutes.encoreReason({...target,launcherProtected:details.launcherProtected})
+  if (target && (selection?.route === 'encore' || (!selection && installed === 'encore')) && !available.includes('encore')) available.push('encore');
+  const route = selection?.route === 'encore' ? 'encore' : available.includes(wanted) ? wanted : recommended && available.includes(recommended)
+    ? recommended : available[0] || "";
+  const encoreIssue = target ? installRoutes.encoreReason(target)
     : "所选游戏程序已不在扫描列表中，请重新选择。";
-  return { exe, target, available, route, encoreIssue };
+  const frameNotice = target ? installRoutes.graphicsRouteReasons[target.optiFgHost ? "optifg" : target.xeMfgOptiHost ? "xemfg-optiscaler" : "xemfg"](target) : null;
+  return { exe, target, available, route, encoreIssue, graphicsIssue, frameNotice, protectedGame, recommended, installed, ownsInstall };
 }
 
-export function GameSetup({ dir, details, status, busy, selection, onChange, message, onUpdated }: {
+export function GameSetup({ dir, details, status, busy, selection, onChange, onViewFrameRoute, message, onUpdated }: {
   dir: string; details: Details; status?: Status; busy: boolean;
-  selection: SetupSelection | null; onChange: (selection: SetupSelection) => void;
+  selection: SetupSelection | null; onChange: (selection: SetupSelection) => void; onViewFrameRoute: (selection: SetupSelection) => void;
   message: (s: string) => void; onUpdated: () => void;
 }) {
-  const { exe, target, available, route } = resolveSetup(details, selection);
-  const protectedGame = details.launcherProtected || status?.launcherProtected;
+  const { exe, target, available, route, protectedGame, recommended, installed, ownsInstall, frameNotice } = resolveSetup(details, selection);
   const [saving, setSaving] = useState(false);
   const [builds, setBuilds] = useState<{ builds: { version: string; label: string }[]; current: string } | null>(null);
   const lock = useRef(false);
@@ -55,12 +61,27 @@ export function GameSetup({ dir, details, status, busy, selection, onChange, mes
     finally { lock.current = false; setSaving(false); }
   };
   const chooseRoute = (value: string) => { if (exe) onChange({ exePath: exe.path, route: value }); };
-  const reshadeRoutes = available.filter(id => !["optiscaler","encore"].includes(id));
-  const backend = protectedGame ? "native" : ["optiscaler","encore"].includes(route) ? route : "reshade";
+  const chooseExe = (exePath:string) => {
+    let route = selection?.route || installed || "";
+    if (usesFramePanel(route) && !resolveSetup(details,{exePath,route:""}).available.includes(route)) route = "";
+    onChange({exePath,route});
+  };
+  const separate = ["optiscaler","encore",...installRoutes.componentRoutes];
+  const reshadeRoutes = available.filter(id => !separate.includes(id));
+  const backend = protectedGame ? "native" : separate.includes(route) ? route : "reshade";
+  const gpu = status?.hardware?.gpu;
+  const classicGpuIssue = gpu?.nvidiaPresent === false && !protectedGame && ["native","feeder","renodx","optiscaler"].includes(route);
+  const frameRoute = classicGpuIssue && ["xemfg-optiscaler","optifg","xemfg","anr"].find(id=>available.includes(id) &&
+    (id !== "anr" || !installRoutes.anrGpuReason(gpu?.name)));
+  const afmf = classicGpuIssue && !frameRoute && installRoutes.afmfDriverMode(target,status?.hardware);
   const currentVersion = protectedGame ? status?.nativeRuntimeStack?.sr?.version || details.currentDlss?.version : details.currentDlss?.version;
-  const installedBackend = details.installedRoute === "wuwa-proxy" ? "version.dll"
-    : details.installedRoute === "encore" ? "RTX Encore"
-    : details.optiscaler?.installed ? "OptiScaler"
+  const inspectedTarget = sameExecutable(exe?.path, details.exePath);
+  const hasNeuralConsumer = status?.neural?.dependencies?.hasConsumer;
+  const installedBackend = installed === "wuwa-proxy" ? "version.dll"
+    : installed === "hud" ? t("无")
+    : installed === "encore" ? "RTX Encore"
+    : installed && installRoutes.componentRoutes.includes(installed) ? t(routes[installed])
+    : ownsInstall && details.optiscaler?.installed ? "OptiScaler"
     : details.reshade?.installed ? "ReShade" : t("无");
   const files = details.files || [];
   return <section className="settings-section game-setup" aria-label={t("安装与运行环境")}>
@@ -68,8 +89,8 @@ export function GameSetup({ dir, details, status, busy, selection, onChange, mes
     <fieldset disabled={busy || saving}>
       <div className="setup-fields">
         <label className="setup-field setup-wide"><span>{t("可执行文件")}</span>
-          <Select label={t("可执行文件")} value={exe?.path || selection?.exePath || ""} disabled={!details.exes?.length || protectedGame}
-            onChange={exePath => onChange({ exePath, route })}
+          <Select label={t("可执行文件")} value={exe?.path || selection?.exePath || ""} disabled={!details.exes?.length || details.launcherProtected}
+            onChange={chooseExe}
             options={(details.exes || []).map(item => [item.path,
               `${item.rel} — ${item.apiLabel} — ${item.bitness}-bit — ${size(item.size)}`])} />
         </label>
@@ -88,8 +109,11 @@ export function GameSetup({ dir, details, status, busy, selection, onChange, mes
               ...(reshadeRoutes.length ? [["reshade", t("ReShade（默认）")]] : []),
               ...(available.includes("optiscaler") ? [["optiscaler", "OptiScaler"]] : []),
               ...(available.includes("encore") ? [["encore", "RTX Encore"]] : []),
+              ...available.filter(id => installRoutes.componentRoutes.includes(id)).map(id => [id,t(routes[id])]),
             ]}
-            onChange={value => chooseRoute(value === "reshade" ? reshadeRoutes[0] : value)} />
+            onChange={value => chooseRoute(value === "reshade"
+              ? (recommended && reshadeRoutes.includes(recommended) ? recommended : reshadeRoutes[0])
+              : value)} />
         </label>
         <label className="setup-field"><span>{t("安装方式")}</span>
           <Select label={t("安装方式")} value={protectedGame ? "wuwa-proxy" : route}
@@ -119,28 +143,38 @@ export function GameSetup({ dir, details, status, busy, selection, onChange, mes
           </label>}
       </div>
     </fieldset>
+    {route === "feeder" && <p className="footnote">{t("Feeder 向渲染插件提供游戏画面和运动数据。DLSS 神经渲染仍需要兼容的 NVIDIA RTX 显卡。")}</p>}
+    {classicGpuIssue && <p className="error">{t(neuralGpuReason)}</p>}
+    {frameRoute && exe && <button disabled={busy || saving} onClick={()=>onViewFrameRoute({exePath:exe.path,route:frameRoute})}>{t("查看 {0} 设置", [t(routes[frameRoute])])}</button>}
+    {afmf && <div className="footnote">
+      <p>{t("此显卡可在 AMD Software: Adrenalin Edition 中设置 AFMF 驱动补帧。")}
+        {afmf === "afmf-fullscreen" && " " + t("RX 6000 系列需要独占全屏。")}</p>
+      <button onClick={()=>void getBridge().openProject("amd-afmf").then(ok=>{if (!ok) message(t("无法打开项目链接"));}).catch(e=>message(errorText(e)))}>{t("查看 AMD 官方 AFMF 说明")}</button>
+    </div>}
     <dl className="setup-status">
       <div><dt>{t("架构")}</dt><dd>{exe?.bitness ? `${exe.bitness}-bit` : t("未知")}</dd></div>
       <div><dt>{t("渲染 API")}</dt><dd className="setup-positive">{target?.apiLabel || t("未知")}</dd></div>
-      <div><dt>{t("已安装的后端")}</dt><dd>{installedBackend}</dd></div>
-      <div><dt>DLSS</dt><dd>{currentVersion || t("未检测到")}
+      {inspectedTarget && <div><dt>{t("已安装的后端")}</dt><dd>{installedBackend}</dd></div>}
+      {inspectedTarget ? <div><dt>DLSS</dt><dd>{currentVersion || t("未检测到")}
         {protectedGame ? <span className="setup-version-note">{t("保留游戏原版")}</span>
           : details.newDlss && details.newDlss !== currentVersion && selection && backend === "reshade"
             ? <><span className="setup-version-arrow">→</span><span className="setup-positive">{details.newDlss}</span></> : null}</dd></div>
-      <div><dt>{t("神经渲染插件")}</dt><dd>{details.addon || status?.neural?.installed ? t("已安装") : t("未安装")}</dd></div>
-      <div><dt>ReShade</dt><dd>{details.reshade?.installed ? details.reshade.version || t("已安装") : t("未安装")}</dd></div>
+        : <div><dt>DLSS</dt><dd>{t(exe?.hasNativeDlss === undefined ? "尚未检测" : exe.hasNativeDlss ? "检测到原生超分" : "未检测到原生超分")}</dd></div>}
+      {inspectedTarget && <><div><dt>{t("神经渲染插件")}</dt><dd>{t(hasNeuralConsumer === undefined ? "尚未检测" : hasNeuralConsumer ? "已安装" : "未安装")}</dd></div>
+      <div><dt>ReShade</dt><dd>{details.reshade?.installed ? details.reshade.version || t("已安装") : t("未安装")}</dd></div></>}
     </dl>
     {!protectedGame && target && installRoutes.encoreReason(target) && <p className="footnote">RTX Encore：{t(installRoutes.encoreReason(target)!)}</p>}
-    <details className="setup-files" open>
+    {!protectedGame && frameNotice && !usesFramePanel(route) && <p className="footnote">{t(frameNotice)}</p>}
+    {inspectedTarget && <details className="setup-files" open>
       <summary><span>{t("检测到的组件文件")}</span><span>{t("{0} 个", [files.length])}</span><ChevronDown size={15} /></summary>
       <div className="setup-file-list">
         {files.length ? files.map(file => <div className="setup-file" key={file.rel}>
-          <code>{file.rel}</code><span>{file.version || "—"}</span>
+          <code>{file.rel}</code><span>{file.featureMismatch ? t("组件身份与文件名不符") : file.version || "—"}</span>
         </div>) : <p className="setup-empty">{t("未检测到组件文件")}</p>}
       </div>
-    </details>
+    </details>}
     {!exe && selection ? <p className="error">{t("所选游戏程序已不在扫描列表中，请重新选择。")}</p>
-      : !available.length && <p className="error">{t("当前 API 或程序位数没有可用路线，可核对程序或手动指定 API。")}</p>}
+      : !protectedGame && !available.length && <p className="error">{t("当前 API 或程序位数没有可用路线，可核对程序或手动指定 API。")}</p>}
     {exe?.installIssue && <p className="error">{t(exe.installIssue)}</p>}
   </section>;
 }

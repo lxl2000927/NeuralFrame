@@ -1,17 +1,19 @@
 'use strict';
 const jsonc = require('jsonc-parser');
+const spatial = require('../shared/encore-spatial');
 const fail = message => Object.assign(new Error(message), {code:'errEncoreConfig'});
 const DEFAULTS = Object.freeze({mfgMode:'off', neuralMode:'off', neuralModelId:'310.8.SF-v2',
   upscaling:'off', motion:'game', nrResolution:'custom', nrScale:75, nrPasses:1,
   nrPass1Placement:'inherit', nrPass2Placement:'inherit', nrPass3Placement:'inherit', nrPass4Placement:'inherit',
-  dlssRenderScale:'game', dlssCustomScale:67});
+  dlssRenderScale:'game', dlssCustomScale:67,
+  ...spatial.defaults});
 const PASS_KEYS = ['nrPass1Placement','nrPass2Placement','nrPass3Placement','nrPass4Placement'];
 const PLACEMENTS = ['inherit','before-sr','after-sr','present'];
 const SR_SCALES = ['game','dlaa','ultra','quality','balanced','performance','ultra-performance','custom'];
 function capabilities(version = '2.3.0') {
   if (version && typeof version === 'object') return version;
   const newer = /^2\.(?:[4-9]|[1-9]\d+)\./.test(String(version));
-  return {nrPassPlacement:newer,dlssCustomScale:true,dlssCustomScaleMin:newer ? 33 : 50};
+  return {nrPassPlacement:newer,dlssCustomScale:true,dlssCustomScaleMin:newer ? 33 : 50,spatialUpscaling:version==='2.5.0'};
 }
 function document(text) {
   if (Buffer.byteLength(text) > 2 * 1024 * 1024) throw fail('Encore 配置超过读取上限。');
@@ -45,12 +47,13 @@ function read(text) {
     nrPasses:nr.nrPasses || 1,
     ...Object.fromEntries(PASS_KEYS.map(key => [key,nr[key] ?? DEFAULTS[key]])),
     dlssRenderScale:sr.dlssRenderScale ?? DEFAULTS.dlssRenderScale,
-    dlssCustomScale:sr.dlssCustomScale ?? DEFAULTS.dlssCustomScale };
+    dlssCustomScale:sr.dlssCustomScale ?? DEFAULTS.dlssCustomScale,
+    ...Object.fromEntries(Object.keys(spatial.fields).map(k=>[k,value.superResolutionSharpening?.[k] ?? DEFAULTS[k]])) };
 }
-function validate(settings, version = '2.3.0', baseline) {
+function validate(settings, version = '2.3.0', baseline, switching = false) {
   if (!settings || !['off','x2','x3','x4','x5','x6'].includes(settings.mfgMode) ||
       !['off','latest_compatible','legacy'].includes(settings.neuralMode) ||
-      !['off','dlss'].includes(settings.upscaling) ||
+      !['off','dlss',...spatial.engines].includes(settings.upscaling) ||
       !['game','encore','shader','quality','fast'].includes(settings.motion) ||
       (settings.neuralMode !== 'off' && (
         !['render','output','quality','balanced','performance','ultra-performance','custom'].includes(settings.nrResolution) ||
@@ -58,6 +61,8 @@ function validate(settings, version = '2.3.0', baseline) {
         !Number.isInteger(settings.nrPasses) || settings.nrPasses < 1 || settings.nrPasses > 4)))
     throw fail('Encore 参数包含尚未适配的值，请重新选择。');
   const caps = capabilities(version);
+  const spatialError = spatial.settingsIssue(settings,caps.spatialUpscaling,baseline,switching);
+  if (spatialError) throw fail(spatialError);
   const enablingNr = baseline?.neuralMode === 'off' && settings.neuralMode !== 'off';
   for (const key of PASS_KEYS) {
     if (settings[key] === undefined || (baseline && settings[key] === baseline[key] && !enablingNr)) continue;
@@ -74,11 +79,11 @@ function validate(settings, version = '2.3.0', baseline) {
     throw fail(`当前 Encore 的 DLSS 自定义渲染比例范围为 ${caps.dlssCustomScaleMin ?? 50}–100%。`);
   return settings;
 }
-function configure(text, settings, hasNativeDlss, version = '2.3.0') {
+function configure(text, settings, hasNativeDlss, version = '2.3.0', switching = false) {
   if (!settings) validate(settings,version);
   const original = document(text), nr = settings.neuralMode !== 'off', fg = settings.mfgMode !== 'off';
   const baseline = read(text);
-  validate(settings,version,baseline);
+  validate(settings,version,baseline,switching);
   for (const key of ['frameGeneration','neuralRendering','dlssSuperResolution','renderingEngines','smoothMotion']) {
     if (original[key] !== undefined && (!original[key] || typeof original[key] !== 'object' || Array.isArray(original[key])))
       throw fail('Encore 配置字段类型不兼容，已保留原文件。');
@@ -94,10 +99,19 @@ function configure(text, settings, hasNativeDlss, version = '2.3.0') {
     [['dlssSuperResolution','dlssWithoutGameDlss'],settings.upscaling !== 'off'],
     [['dlssSuperResolution','presentOpticalFlow'],settings.motion],
   ];
-  if (fg) patches.push([['renderingEngines','frameGenerationEngine'],'dlss-fg'],
-    [['frameGeneration','mode'],'fixed'], [['frameGeneration','multiplier'],Number(settings.mfgMode.slice(1))],
-    [['smoothMotion','smoothMotionEnabled'],false]);
-  if (settings.upscaling !== 'off') patches.push([['dlssSuperResolution','dlssWithoutGameDlssEngine'],'dlss']);
+  if (fg && settings.mfgMode !== baseline.mfgMode) patches.push([['renderingEngines','frameGenerationEngine'],'dlss-fg'],
+    [['frameGeneration','mode'],'fixed'], [['frameGeneration','multiplier'],Number(settings.mfgMode.slice(1))]);
+  if (fg) patches.push([['smoothMotion','smoothMotionEnabled'],false]);
+  if (settings.upscaling !== 'off') patches.push([['dlssSuperResolution','dlssWithoutGameDlssEngine'],settings.upscaling]);
+  const spatialMode = spatial.engines.includes(settings.upscaling);
+  if ((spatialMode && settings.upscaling !== baseline.upscaling) || original.dlssSuperResolution?.dlssWithoutGameDlssOutput === undefined)
+    patches.push([['dlssSuperResolution','dlssWithoutGameDlssOutput'],spatialMode ? 'screen' : 'game']);
+  for (const key of Object.keys(spatial.fields)) {
+    if (settings[key] === undefined || settings[key] === baseline[key]) continue;
+    const group = original.superResolutionSharpening;
+    if (group !== undefined && (!group || typeof group !== 'object' || Array.isArray(group))) throw fail('Encore 配置字段类型不兼容，已保留原文件。');
+    patches.push([['superResolutionSharpening',key],settings[key]]);
+  }
   if (nr) patches.push([['neuralRendering','core','nrPasses'],settings.nrPasses],
     [['neuralRendering','core','nrResolution'],settings.nrResolution], [['neuralRendering','core','nrResolutionScale'],settings.nrScale]);
   // These controls were added after existing profiles. Merely showing their
@@ -113,7 +127,6 @@ function configure(text, settings, hasNativeDlss, version = '2.3.0') {
   // placement, learned pacing, exposure, or unknown future/private keys.
   if (original.neuralRendering?.core?.nrPlacement === undefined) patches.push([['neuralRendering','core','nrPlacement'],'after-sr']);
   if (original.frameGeneration?.flipMeteringBypass === undefined) patches.push([['frameGeneration','flipMeteringBypass'],'auto']);
-  if (original.dlssSuperResolution?.dlssWithoutGameDlssOutput === undefined) patches.push([['dlssSuperResolution','dlssWithoutGameDlssOutput'],'game']);
   const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
   let out = bom ? text.slice(1) : text;
   try {

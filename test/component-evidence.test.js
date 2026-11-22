@@ -8,7 +8,7 @@ const text = evidence => JSON.stringify(evidence);
 test('uncollected releases never borrow evidence from a known version', () => {
   for (const [component, version] of [
     ['mfg-renodx', '1.9.1'], ['mfg-renodx', '1.9.0-beta.1'], ['mfg-renodx', '1.9.0 patched'],
-    ['mfg-universal', '1.7.2'], ['encore', '2.4.2'], ['streamline', '2.13'],
+    ['mfg-universal', '1.7.2'], ['encore', '2.4.3'], ['streamline', '2.13'],
     ['renodx-nr', '8.5.0-rc10'], ['unknown', '1.9.0'], ['__proto__', 'constructor'],
   ]) {
     const result = projectEvidence(component, version);
@@ -82,8 +82,25 @@ test('combined Feeder pack identifies each version without upgrading offline tes
   assert.equal(projectEvidence('feeder', '1.17 + 1.20').checkedAt, null);
 });
 
+test('the Pipo release comparison is kept separate from installable sm86 packages', () => {
+  const standard = projectEvidence('sm86', '0.4.2');
+  const note = standard.records.find(record => record.scope.includes('Pipo sm86-10'));
+  assert.equal(note.status, '仅收录发布资料');
+  assert.match(note.detail, /预设 C、内核模式 2/);
+  assert.match(note.detail, /RTX 3070/);
+  assert.match(note.detail, /驱动限制/);
+  assert.ok(standard.sources.some(source => source.url.endsWith('/releases/tag/sm86-10')));
+  const english = require('../ui/src/locales/en.json');
+  for (const label of [note.scope, note.status, note.detail, standard.sources.at(-1).label]) assert.ok(english[label]);
+  assert.doesNotMatch(text(projectEvidence('sm86-delta', '0.4.2+rtxfg.1')), /Pipo/);
+  assert.equal(projectEvidence('sm86', '0.4.2-pipo').checkedAt, null);
+  const routes = require('../src/shared/install-routes');
+  assert.ok(!routes.componentRoutes.some(route => /pipo/i.test(route)));
+  assert.ok(!require('../src/core/runtime-catalog.json').packs.some(pack => /pipo/i.test(pack.id)));
+});
+
 test('all documented sources are fixed HTTPS primary-project paths with a release or tag', () => {
-  const owners = new Set(['mavismmg', 'dashdogy', 'SilyNoMeta', 'jlrouzies-fr', 'NVIDIA-RTX', 'NVIDIA', 'crosire']);
+  const owners = new Set(['mavismmg', 'dashdogy', 'SilyNoMeta', 'jlrouzies-fr', 'NVIDIA-RTX', 'NVIDIA', 'crosire','apex-compute','sdli1995','pandaligx','intel','pipotoufikxyz-lgtm']);
   const urls = projectEvidenceSources();
   assert.equal(urls.length, new Set(urls).size);
   assert.ok(urls.length >= 10);
@@ -125,9 +142,11 @@ test('production runtime rows resolve exact evidence through the actual UI wrapp
   const rows = groupLibrary({ runtimePacks, packages: [] }, []).flatMap(group => group.versions);
   const expected = new Map([
     ['feeder', ['v1.17.0', 'v1.19.0']],
-    ['mfg-universal', ['v1.7.1']],
+    ['mfg-universal', ['v1.7.1','v1.7.1']],
+    ['xemfg-intel', ['v3.0.2','v1.7.1']],
     ['mfg-optiscaler-170', ['v1.7.0']],
-    ['encore', ['v2.4.1']],
+    ['encore', ['v2.5.0']], ['anr',['FG-V.B20']], ['anr-addon',['FG-V.B20']],
+    ['sm86',['0.4.2','sm86-10']], ['sm86-delta',['v4.3.36']],
     ['mfg-renodx', ['1.5.5']],
     ['sl-modern', ['v2.14.16']],
     ['sr-modern', ['v310.9.16']],

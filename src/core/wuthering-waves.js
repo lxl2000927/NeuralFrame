@@ -387,6 +387,18 @@ function restoreManifest(dir, manifest, archived, checkOriginals = false, onLog)
   return filtered;
 }
 
+// Standalone component updates may only touch files outside launcher and loader ownership.
+function protectedComponentFiles(root) {
+  if (!root) return () => false;
+  try {
+    const index = resources(root), bin = path.dirname(path.join(root, CLIENT));
+    if (!index) return () => true;
+    const owned = rtxFiles(bin);
+    owned.add(key(path.join(root, INDEX)));
+    owned.add(key(path.join(bin, ENGINE_RECEIPT)));
+    return file => index.has(key(file)) || owned.has(key(file));
+  } catch { return () => true; }
+}
 // Covers classic installs and component updates as well as the graphics page.
 // Restoring an older deployment may legitimately write the exact official bytes.
 function checkPreview(root, dir, rows, state, kind) {
@@ -515,6 +527,10 @@ async function configure(dir, root, scan, config, onLog) {
     throw fail('不支持此渲染模式或补帧倍率。');
   const enableNr = !!neuralMode && neuralMode !== 'off',
     enableFg = !!mfgMode && mfgMode !== 'off';
+  if (enableNr) require('./install-guards').assertNeuralGpu(config.nvidiaPresent);
+  // These controls select DLSS-G. Standalone XeMFG uses its own provider,
+  // frame count and dynamic settings in an externally configured loader.
+  if (enableFg && config.nvidiaPresent === false) throw fail('鸣潮独立加载器的 NVIDIA DLSS-G 设置需要 NVIDIA 显卡。');
   const exe = journal.safePath(dir, path.relative(dir, path.join(root, CLIENT)));
   if (key(exe) !== key(scan.chosen.path)) throw fail('请将鸣潮的目标程序设为 Client-Win64-Shipping.exe。');
   if (
@@ -705,4 +721,4 @@ async function configure(dir, root, scan, config, onLog) {
     return { ok: true, hardwareProfile, neuralResult: manifest.neuralRendering, mfgResult: manifest.mfg };
   });
 }
-module.exports = { gameRoot, checkPreview, inspectNativeStack, inspectProxy, configure, restoreManifest, withRtxLock };
+module.exports = { gameRoot, checkPreview, protectedComponentFiles, inspectNativeStack, inspectProxy, configure, restoreManifest, withRtxLock };

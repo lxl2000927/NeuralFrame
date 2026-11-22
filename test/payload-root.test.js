@@ -52,6 +52,8 @@ test('MFG keeps an explicitly empty payload and cannot borrow an unrelated porta
   fs.mkdirSync(path.dirname(candidate),{recursive:true});
   fs.writeFileSync(candidate,'wrong package');
   writePe(path.join(game,'Game.exe'),{text:'D3D12CreateDevice'});
+  require('./fixtures/pe').writeProvider(path.join(game,'sl.dlss_g.dll'), ['slGetPluginFunction']);
+  fs.appendFileSync(path.join(game,'sl.dlss_g.dll'), 'slDLSSGGetState\0slDLSSGSetOptions');
   const old = process.env.PORTABLE_EXECUTABLE_DIR;
   process.env.PORTABLE_EXECUTABLE_DIR = portable;
   t.after(() => { if (old === undefined) delete process.env.PORTABLE_EXECUTABLE_DIR; else process.env.PORTABLE_EXECUTABLE_DIR = old; });

@@ -28,12 +28,12 @@ test('assessment explains unknown archives, known unsupported DLLs and route-onl
   assert.equal(componentCompatibility({component:'mfg-renodx',name:'archive.zip'}).assessment,'verify');
   assert.equal(componentCompatibility({component:'mfg-renodx',name:'renodx-mfgunlock.addon64',sha256:'a'.repeat(64)}).assessment,'unsupported');
   assert.equal(componentCompatibility({component:'dlss-fg',files:[{rel:'nvngx_dlssg.dll',sha256:'a'.repeat(64)}]}).assessment,'unsupported');
-  assert.equal(componentCompatibility({component:'dlss-fg',trustedAdapter:true}).ready,true);
+  assert.equal(componentCompatibility({component:'dlss-fg',trustedAdapter:true}).ready,false);
   assert.equal(componentCompatibility({component:'overlay'}).assessment,'internal');
 });
 
 test('adapter trust follows matching bytes, never a matching tag, and requires the complete package', () => {
-  const sha='a'.repeat(64);
+  const sha=catalog.packs.find(p=>p.id==='mfg-renodx').files.find(f=>f.path.endsWith('/renodx-mfgunlock.addon64')).sha256;
   const packages=[{id:'trusted',component:'mfg-renodx',trustedAdapter:true,version:'1.5.5',files:[{rel:'renodx-mfgunlock.addon64',sha256:sha}]}];
   const updater=new ComponentUpdates({root:os.tmpdir(),catalog:()=>({packages})});
   const candidate={component:'mfg-renodx',tag:'1.5.5',name:'renodx-mfgunlock.addon64',sha256:sha};
@@ -80,7 +80,7 @@ test('runtime metadata separates recommended independent MFG from its OptiScaler
   const packs=runtime.list(),current=packs.find(p=>p.id==='mfg-universal'),baseline=packs.find(p=>p.id==='mfg-optiscaler-170'),encore=packs.find(p=>p.id==='encore');
   assert.equal(current.engine.recommended,true);assert.equal(current.engine.version,'1.7.1');
   assert.equal(baseline.engine.compatible,true);assert.equal(baseline.engine.recommended,false);assert.equal(baseline.engine.version,'1.7.0');
-  assert.equal(encore.engine.recommended,true);assert.equal(encore.engine.version,'2.4.1');
+  assert.equal(encore.engine.recommended,true);assert.equal(encore.engine.version,'2.5.0');
   for(const pack of [current,baseline,encore]){assert.equal(pack.compatibility.kind,'route');assert.equal(pack.compatibility.ready,false);}
   const updater=new ComponentUpdates({root:os.tmpdir(),catalog:()=>({packages:[]})});
   const candidates=[current,baseline,encore].map((pack,i)=>({id:String(i),component:pack.component,name:path.basename(new URL(pack.url).pathname),sha256:pack.sha256}));

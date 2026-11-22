@@ -31,13 +31,21 @@ test('engine identity requires fingerprints, preserving supported originals with
 test('Encore official releases advertise support before download while an unknown update stays pending',t=>{
   const f=fixture(t),updater=new ComponentUpdates(f.library),engine=engines.recommended('encore');
   const release=(version,sha)=>({id:version,tag_name:'v'+version,assets:[{id:version,name:'RTX-Encore-v'+version+'.zip',digest:'sha256:'+sha,size:100,browser_download_url:'https://github.com/SilyNoMeta/rtx-encore/releases/download/v'+version+'/RTX-Encore-v'+version+'.zip'}]});
-  const rows=candidates([release('2.4.1',engine.archiveSha256),release('9.0.0','a'.repeat(64))],'encore');
+  const rows=candidates([release(engine.version,engine.archiveSha256),release('9.0.0','a'.repeat(64))],'encore');
   assert.equal(rows.length,2);assert.ok(rows.every(row=>row.component==='encore'&&row.downloadable));
   const view=updater.withLocalModels({candidates:rows});
   assert.equal(view.candidates[0].engine.recommended,true);assert.equal(view.candidates[1].compatibility.kind,'pending');
   assert.equal(view.candidates[0].pairedPackId,'encore');assert.equal(view.candidates[1].pairedPackId,undefined);
   fs.mkdirSync(f.library.root,{recursive:true});fs.writeFileSync(updater.cache,JSON.stringify({sourcesVersion:2,nextCheckAt:Date.now()+300000,candidates:[],errors:[],etags:{}}));
   assert.equal(updater.readIndex().nextCheckAt,0,'the added upstream is discoverable immediately on explicit check');
+});
+
+test('historical Encore DLLs retain the verified 2.3/2.4 notices after the 2.5 update',async()=>{
+  const old=engines.identify('encore','13ab03f79d56743c5c2f4481c91adde549ddb57e2e8b1003ca864d6b5be83c82');
+  assert.equal(old.version,'2.4.2');assert.equal(old.recommended,false);assert.equal(!!old.capabilities.spatialUpscaling,false);
+  const notice=await engines.legacyEncoreNotice();
+  assert.equal(await require('../src/core/component-library').digest(notice),'6263f24f369203089e617aad6be05f0c1103891e4f928d0da66da51ba1dc3939');
+  assert.equal(engines.recommended('encore').notice.sha256,'57ce4dda7399aa824025afa6eee08a13dd77151ef11680728764a38a207758c1');
 });
 
 test('missing recommended files request preparation without accepting a different payload',async t=>{
@@ -75,6 +83,24 @@ test('an engine notice is preserved without changing existing DLL package identi
   assert.equal(componentCompatibility(second).kind,'pending');
   await assert.rejects(engines.resolve({component:'encore',packageId:second.id,userDataDir:f.library.userData}),/尚未适配/);
   const mapped=await mapFiles(f.root,'encore');assert.equal(fs.readFileSync(mapped['THIRD-PARTY-NOTICES.md'],'utf8'),'test notice');
+});
+
+test('a mismatched notice cannot corrupt a verified Encore package or invalidate a saved selection',async t=>{
+  const f=fixture(t),original=await engines.resolve({component:'encore',payloadDir:payload.root});
+  const files={'rtx-encore.dll':original.filePath,'THIRD-PARTY-NOTICES.md':original.noticePath};
+  const selected=await f.library.importPackage({component:'encore',files});
+  const wrong=await engines.legacyEncoreNotice();
+  await assert.rejects(f.library.importPackage({component:'encore',files:{...files,'THIRD-PARTY-NOTICES.md':wrong}}),/原版第三方声明/);
+  const result=await engines.resolve({component:'encore',packageId:selected.id,userDataDir:f.library.userData,payloadDir:payload.root});
+  assert.equal(result.version,original.version);assert.equal(result.verified,true);
+  fs.writeFileSync(path.join(f.library.directory(selected),'rtx-encore.dll'),'damaged');
+  const repaired=await f.library.importPackage({component:'encore',files:{'rtx-encore.dll':original.filePath}});
+  assert.equal(repaired.id,selected.id);assert.equal(repaired.files.length,2);
+  const offline=await engines.resolve({component:'encore',packageId:selected.id,userDataDir:f.library.userData});
+  assert.ok(offline.noticePath,'repairing the DLL alone retains the valid original notice for offline use');
+  const bad={...selected,files:selected.files.map(file=>file.rel==='THIRD-PARTY-NOTICES.md'?{...file,sha256:'f'.repeat(64)}:file)};
+  assert.equal(componentCompatibility(bad).engine.compatible,false);assert.match(componentCompatibility(bad).reason,/原版第三方声明/);
+  assert.equal(f.library.catalog().packages.length,1);
 });
 
 test('OptiScaler retains its original 1.7.0 engine while the independent route recommends 1.7.1',async t=>{

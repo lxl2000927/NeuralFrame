@@ -22,6 +22,7 @@ function peFile(file, options = {}) {
   buf.writeUInt16LE(is64 ? 0x8664 : 0x014c, peAt + 4);
   buf.writeUInt16LE(options.version ? 1 : 0, peAt + 6);
   buf.writeUInt16LE(optSize, peAt + 20);
+  buf.writeUInt16LE(options.exe ? 0x0022 : 0x2022, peAt + 22);
   buf.writeUInt16LE(is64 ? 0x20b : 0x10b, optAt);
 
   if (options.version) {

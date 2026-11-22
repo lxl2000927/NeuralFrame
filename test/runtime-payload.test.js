@@ -11,6 +11,8 @@ test('MFG-only does not request neural model, SR or Streamline; off and restore 
  assert.deepEqual(requiredPacks({kind:'enhanced',config:{mfgMode:'off',neuralMode:'off'}}),[]);
  assert.deepEqual(requiredPacks({kind:'restore'}),[]);
  assert.deepEqual(requiredPacks({kind:'enhanced',config:{mfgMode:'x3'},target:{bitness:32}}),[]);
+ assert.deepEqual(requiredPacks({kind:'enhanced',config:{mfgMode:'x3'},scan:{chosen:{api:'dxgi',apiLabel:'DirectX 11',bitness:64}}}),[]);
+ assert.deepEqual(requiredPacks({kind:'enhanced',config:{mfgMode:'x3'},target:{api:'dxgi',apiLabel:'DirectX 12'}}),[]);
 });
 test('route planner includes feeder bootstrap and supports custom model and OptiScaler',()=>{
  const ids=requiredPacks({kind:'enhanced',route:'feeder',config:{neuralMode:'latest_compatible',runtimeStack:'oct2026-310.9.16'},customModel:true});
@@ -22,6 +24,23 @@ test('route planner includes feeder bootstrap and supports custom model and Opti
  const mixed=requiredPacks({kind:'enhanced',route:'native',mfgRoute:'optiscaler',config:{mfgMode:'x3',neuralMode:'latest_compatible'}});
  assert.ok(mixed.includes('mfg-optiscaler-170')&&mixed.includes('mfg-license')&&mixed.includes('mfg-renodx')&&mixed.includes('renodx-nr'));
  assert.deepEqual(requiredPacks({kind:'install',route:'optiscaler'}),['localization','nr-3108']);
+});
+
+test('XeMFG requires only its standalone engine, notices and pinned Intel runtime', t => {
+  for (const kind of ['install', 'enhanced']) {
+    assert.deepEqual(requiredPacks({kind, route:'xemfg', config:{neuralMode:'latest_compatible',mfgMode:'x4'}}),
+      ['mfg-universal', 'mfg-license', 'xemfg-intel']);
+  }
+  assert.deepEqual(requiredPacks({kind:'restore', route:'xemfg'}), []);
+  assert.deepEqual(requiredPacks({kind:'install',route:'xemfg-optiscaler'}), ['mfg-universal','mfg-license']);
+  const {root} = fixture(t);
+  const runtime = new RuntimePayload(root);
+  const pack = runtime.pack('xemfg-intel');
+  assert.equal(pack.url, 'https://github.com/intel/xess/releases/download/v3.0.2/XeSS_SDK_3.0.2.zip');
+  assert.equal(sha(JSON.stringify(pack.files)), pack.contentId);
+  assert.deepEqual(pack.files.map(f => f.archivePath).sort(), ['LICENSE.txt', 'bin/libxell.dll', 'bin/libxess_fg.dll', 'third-party-programs.txt']);
+  for (const file of pack.files) assert.equal(file.path, 'enhanced/xemfg-intel/' + path.basename(file.archivePath));
+  assert.equal(runtime.list().find(p => p.id === pack.id).compatibility.kind, 'route');
 });
 
 test('preserving or choosing a local engine does not prepare the new recommendation',()=>{

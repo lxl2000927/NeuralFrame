@@ -14,7 +14,7 @@ foreach ($arch in @('x86_64', 'x86')) {
   if ($LASTEXITCODE -ne 0) { throw 'ABI build failed' }
   & $zig cc -target "$arch-windows-msvc" -x c++ -std=c++17 -O2 -fno-exceptions -fno-rtti -nostdinc -nostdlib -c (Join-Path $root 'test/zh-cn-abi-fixture.cpp') -o $fixture
   if ($LASTEXITCODE -ne 0) { throw 'Fixture build failed' }
-  & $zig c++ -target "$arch-windows-gnu" -std=c++17 -O2 -static -fms-extensions -DWIN32_LEAN_AND_MEAN -DNOMINMAX -Wno-ignored-attributes -I $sdk (Join-Path $root 'test/zh-cn-native.cpp') $abi $fixture -o $exe
+  & $zig c++ -target "$arch-windows-gnu" -std=c++17 -O2 -static -fms-extensions -DWIN32_LEAN_AND_MEAN -DNOMINMAX -Wno-ignored-attributes -I $sdk (Join-Path $root 'test/zh-cn-native.cpp') $abi $fixture -lbcrypt -o $exe
   if ($LASTEXITCODE -ne 0) { throw 'Native test build failed' }
   & $exe
   if ($LASTEXITCODE -ne 0) { throw "$arch native regression failed" }

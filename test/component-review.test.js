@@ -22,6 +22,18 @@ function fixture(t) {
   const install = async () => { await backends.install(config); return { ok: true }; };
   return { root, game, payload, review, config, install, request: { kind: 'install' } };
 }
+test('inventory exposes architecture and deployment eligibility for individual runtime copies', async t => {
+  const {game,review} = fixture(t);
+  const nested=path.join('OptiScaler','plugins','nvngx_dlss.dll');
+  writePe(path.join(game,nested),{bitness:32,version:[2,5,0,0]});
+  writePe(path.join(game,'sl.interposer.dll'),{bitness:64,version:[2,14,0,0]});
+  const rows=(await review.inventory(game)).rows;
+  for (const [rel,bits] of [['nvngx_dlss.dll',64],[nested,32]]) {
+    const row=rows.find(item=>item.rel===rel);
+    assert.equal(row?.bitness,bits);assert.equal(row.selectionTarget,true);
+  }
+  assert.equal(rows.find(row=>row.name==='sl.interposer.dll').version,'2.14.0.0');
+});
 test('enhanced deployment preview includes detected anti-cheat and rechecks it on confirmation', async t => {
   const { game, review } = fixture(t);
   const target = path.join(game, 'ReShade.ini');

@@ -1,0 +1,54 @@
+.monitor-panel {
+  container: monitor / inline-size;
+  margin: 0 0 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.monitor-heading {display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border)}
+.monitor-heading > svg {color:var(--accent-text)}
+.monitor-heading h2 {margin:0;font-size:16px}
+.monitor-installed {display:inline-flex;align-items:center;gap:6px;margin-inline-start:auto;color:var(--muted);font-size:12px}
+.monitor-installed::before {content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.monitor-installed[data-installed="true"] {color:var(--accent-text)}
+.monitor-panel fieldset {min-inline-size:0;border:0;margin:0;padding:0}
+.monitor-panel .monitor-body {padding:16px 18px}
+.monitor-target,.monitor-editor {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 24px}
+.monitor-target label {display:grid;gap:5px;min-width:0}
+.monitor-target .select,.monitor-target .select-trigger {width:100%;min-width:0}
+.monitor-target label,.monitor-panel legend {font-size:13px;font-weight:600}
+.monitor-panel legend {padding:0;margin:0 0 6px}
+.monitor-editor {margin-top:16px;padding-top:14px;border-top:1px solid var(--border);align-items:start}
+.monitor-controls {display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+.monitor-modes {width:100%}
+.monitor-modes > div {display:flex;max-width:350px;padding:3px;gap:3px;border-radius:8px;border:1px solid var(--border);background:var(--bg)}
+.monitor-modes label,.monitor-screen label {position:relative;cursor:pointer}
+.monitor-modes label {flex:1;min-width:0;text-align:center}
+.monitor-modes input,.monitor-screen input {position:absolute;inset:0;margin:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.monitor-modes span {display:block;padding:5px 4px;border-radius:5px;color:var(--muted);font-size:13px}
+.monitor-modes input:checked + span {background:var(--selected);color:var(--accent-text);box-shadow:inset 0 0 0 1px var(--control-border)}
+.monitor-modes input:focus-visible + span,.monitor-screen input:focus-visible + span {outline:2px solid var(--accent-text);outline-offset:2px}
+.monitor-body:disabled label,.monitor-body:disabled input {cursor:default}
+.monitor-controls .monitor-keys {display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:0;color:var(--muted);font-size:12px}
+.monitor-keys kbd {border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 4px;color:var(--text);font:inherit}
+.monitor-keys kbd:not(:first-child) {margin-inline-start:5px}
+.monitor-position {width:100%}
+.monitor-screen {position:relative;isolation:isolate;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;min-height:118px;padding:7px;gap:6px;border:1px solid var(--control-border);border-radius:8px;background-color:var(--bg);background-image:radial-gradient(var(--border) 1px,transparent 1px);background-size:9px 9px}
+.monitor-screen-center {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--muted);font-size:11px;pointer-events:none}
+.monitor-screen label {display:flex;align-items:flex-start;min-width:0}
+.monitor-screen label:nth-of-type(even) {justify-content:flex-end;text-align:end}
+.monitor-screen label:nth-last-of-type(-n+2) {align-items:flex-end}
+.monitor-anchor {display:grid;padding:2px 6px;border:1px solid transparent;border-radius:5px;color:var(--muted);font-size:11px}
+.monitor-screen input:checked + .monitor-anchor {color:var(--accent-text);border-color:var(--accent-text);background:var(--selected)}
+.monitor-anchor small {font:10px/1.35 monospace;color:var(--text)}
+.monitor-issue {margin:12px 0 0;color:var(--muted)}
+.monitor-export {border-top:1px solid var(--border);padding:0 18px}
+.monitor-export summary {display:flex;align-items:center;gap:7px;cursor:pointer;width:fit-content;padding:10px 0;font-size:12px;color:var(--muted);list-style:none}
+.monitor-export summary::-webkit-details-marker {display:none}
+.monitor-export[open] summary svg:last-child {transform:rotate(180deg)}
+.monitor-files {display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 0 14px}
+.monitor-files small {color:var(--muted)}
+@container monitor (max-width:540px) {
+  .monitor-target,.monitor-editor {grid-template-columns:minmax(0,1fr);gap:12px}
+  .monitor-screen {min-height:128px}
+}

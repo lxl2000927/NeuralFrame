@@ -55,6 +55,11 @@ test('Encore debug IPC prepares exact dependencies, previews, applies changes an
   const saved=require('../src/core/backend-manager').loadProfile({gameDir:game,exePath:exe,api:'dxgi',route:'encore'});
   const priorSettings=require('../src/core/encore-config').read(saved['rtx-encore.jsonc']);
   assert.equal(priorSettings.mfgMode,'x4');assert.equal(priorSettings.neuralMode,'latest_compatible');
+  fs.mkdirSync(path.join(game,'EasyAntiCheat'));
+  const denied=await handlers.get('enhanced-apply')(event,game,switchPatch);
+  assert.equal(denied.ok,false);assert.match(denied.message,/反作弊/);assert.equal(denied.preview,undefined);
+  const deniedInstall=await handlers.get('install')(event,game,other,'encore','d3d11');
+  assert.equal(deniedInstall.ok,false);assert.match(deniedInstall.message,/反作弊/);assert.equal(deniedInstall.preview,undefined);
   const restore=await handlers.get('restore')(event,game);assert.ok(restore.preview,JSON.stringify(restore));
   assert.equal((await handlers.get('restore')(event,game,restore.preview.token)).ok,true);
   assert.equal(fs.existsSync(path.join(game,'version.dll')),false);assert.deepEqual(fs.readFileSync(native),bytes);

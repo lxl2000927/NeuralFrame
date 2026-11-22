@@ -1,0 +1,47 @@
+{
+  "B15": {
+    "adapters/pack.nrx": "136ce0356c78f05020afebe8dcaeda4c076c2dab72174f88d2b75fa61cf0bb9e",
+    "kernels/pack.nrx": "a65583fb682cd4109e3b0dfe5d8d07b71c99186f031189e51abc1825e55bea2c",
+    "kernels-portable/pack.nrx": "f5642e9a2d3c0b3203a540506175200a6946e68c56f7c5b810f8564b1464dc2c",
+    "nvngx_dlssg.dll": "ae7424b87d13a0e3a9a99dd02d1ea35b9de96c2caa9cd4300d73bac5bb0cf4e8",
+    "path_table.json": "6f6443928936103c311e48c0b2faa9627b71f19ac41c678bb3e495a91e48b4f4",
+    "programs/fg-lite-any-coopmat-pq10/pack.nrx": "96588c8922f23bdee9b43e19038e5f7b9056b3fc343c67f03e7caa06ebbf8b29",
+    "programs/fg-lite-any-coopmat-srgb8/pack.nrx": "7ff31cb45dc1d771c774399ce54411e65508005267ccdefc37f6cae2465832e4",
+    "programs/fg-lite-any-dp4a-pq10/pack.nrx": "602173add33160bfb36d6c7e215c5104c7c5282baca7c62aa68f25336d51c38d",
+    "programs/fg-lite-any-dp4a-srgb8/pack.nrx": "2e8b5a996753a5bb2f0ced680d6f68e296ba725c7bd633be8bb0ce7f101d8629",
+    "programs/fg-lite-any-packed-pq10/pack.nrx": "6d6983070aa0c4e78598dafe3453e9287a1992a05971ab6925998726722a646b",
+    "programs/fg-lite-any-packed-srgb8/pack.nrx": "36c3cad7d4f7dada76c818344d5f8a9cd6150ce76a112a0203004a5fce3fff83",
+    "programs/fg-lite-any-portable-linalg-pq10/pack.nrx": "42e8269e03e6476f541918e0176dfe28032d87f332c2b6bd3d6b231a3b3f8cf6",
+    "programs/fg-lite-any-portable-linalg-srgb8/pack.nrx": "6562aa1c1bdebcdbb83e683e2266fdb35de6778d78418097209d8cd3a2665ab3",
+    "programs/fg-lite-any-portable-pq10/pack.nrx": "36726f37da1da8d73f045855191d0275cb6c841517217bf590360ddc2759a01e",
+    "programs/fg-lite-any-portable-srgb8/pack.nrx": "77939d7a2f9320bf31cd326a03c1d36f878a3dc7ae45c3eac616171f8d61cc73",
+    "programs/fg-lite-any-portable-xmx-pq10/pack.nrx": "ecce6efb5c81bc30675d9ebb249c6e6b4b5c0118583ef18c337096c6b3efcf8a",
+    "programs/fg-lite-any-portable-xmx-srgb8/pack.nrx": "94fb8bf5715aeeacecad7eaf685b2115182c12dc7c7e69fd746aa48a5d1c2bdd"
+  },
+  "B16": {
+    "adapters/pack.nrx": "136ce0356c78f05020afebe8dcaeda4c076c2dab72174f88d2b75fa61cf0bb9e",
+    "nvngx_dlssg.dll": "c3f387823cbb345859921575d37ba20ec2fafcdc7bfde920c63a81427ba8a308",
+    "path_table.json": "168c7ad0769e187695faa0986a501cc2aaaa0277cafbbff763133c703206cb7e"
+  },
+  "B18": {
+    "adapters/pack.nrx": "20c034b695f1d8fcce32d8e0738680fa4a039bd1aa0c41ca49939e3c894d9744",
+    "kernels/pack.nrx": "8d8fd3236d3f78c73e0b1633cebddbdc72b6c00f7e95b75996af85c9d5873017",
+    "kernels-portable/pack.nrx": "22a0dadec6b4d3a61087bd84b2bf3676a3a126148ded7fb4907922a59242369f",
+    "nr_fg.ini": "68bc047729ecd40558a328b7a56510569ff71d6259eb932f6f18f513226f93d3",
+    "nvngx_dlssg.dll": "c60669b2cc04921181ef06a7575d243ba5b08638b121f7abd4861bc1d2d41a12",
+    "path_table.json": "d7d4e22a06072bbb9ad368020bcd2e2ecf522ef0276603f83452d3ab2b986c85",
+    "programs/fg-lite-any-coopmat-pq10/pack.nrx": "b20184ff57540dc831b8c5754162ac6cc32d760d6aad0da6b51f2d84800621d3",
+    "programs/fg-lite-any-coopmat-srgb8/pack.nrx": "9e494c9286fdd06f87ae30878719dcff8e83c1bf5e0400540a47b52c9ff87b4a",
+    "programs/fg-lite-any-dp4a-pq10/pack.nrx": "5e67cf54e919424fffa8a4fcb86b0f3721a8802327e253219bb5824cd61b9dd7",
+    "programs/fg-lite-any-dp4a-srgb8/pack.nrx": "453b378c0be4a50a7b5ecc8563faa27871ffdc2e9d98620b245de6d1b6b4a8d9",
+    "programs/fg-lite-any-packed-pq10/pack.nrx": "c9b2ab21834255d754a6d756d8bd5d4b746019cd5953d061c778c8a7c5ad2565",
+    "programs/fg-lite-any-packed-srgb8/pack.nrx": "2950244ebdad6806b8a1bf7d207ad55149ab3c729ab88d8d5c29bd2dd6193972",
+    "programs/fg-lite-any-portable-linalg-pq10/pack.nrx": "e1ab86d550fd957fc40f485d68a9c4d25fdbd3d317d17f776b68fd4e9a618d38",
+    "programs/fg-lite-any-portable-linalg-srgb8/pack.nrx": "53184f42b131df05d8aa747f7dfed90e2bb55cdf17017c4750ae7df8557cbbd8",
+    "programs/fg-lite-any-portable-pq10/pack.nrx": "42f6f7d121a7c7cbd319b12332c357872543c7399315992f26d8d92a52d4138a",
+    "programs/fg-lite-any-portable-srgb8/pack.nrx": "2cd458c0325b398cff0521fe9b90ff6d3abdcc330ff8889f21d583fbbcf32637",
+    "programs/fg-lite-any-portable-xmx-pq10/pack.nrx": "4670cfb77e99ffe32598d8c21b368c164e9a21754437c0e0bffcbe94d517ae3d",
+    "programs/fg-lite-any-portable-xmx-srgb8/pack.nrx": "d6e38a75b003507815d872c2d8242e97fbf13398a2aa60bc71005f16ae8c952c",
+    "size_table.json": "7c602f6709e14bbf972250d47b8b3dc55ce4dafd803723561120097e644e5478"
+  }
+}

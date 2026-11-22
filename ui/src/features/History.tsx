@@ -11,7 +11,7 @@ import {
 import { getBridge } from "../bridge";
 import { useWindowReturn } from "../useWindowReturn";
 import { Empty, Loading, Select } from "../components";
-import { errorText, profiles } from "../domain";
+import { errorText, frameRouteLabels, profiles } from "../domain";
 import type { HistoryRow } from "../types";
 
 const actionNames: Record<string, string> = {
@@ -35,6 +35,9 @@ const routeNames: Record<string, string> = {
   feeder: "Feeder",
   renodx: "RenoDX",
   optiscaler: "OptiScaler",
+  encore:"RTX Encore", anr:"ANR FG", "anr-addon":"ANR FG · OptiScaler Add-on",
+  ...frameRouteLabels,
+  sm86:"Dlssg_for_sm86", "sm86-delta":"Dlssg_for_sm86 · 三角洲 DX12 / Vulkan", hud:"F7 性能监控",
 };
 const configurationNames: Record<string, string> = {
   hardwareProfile: "硬件档位",

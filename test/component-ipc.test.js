@@ -3,6 +3,27 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {createRequire}=require('module');
 const {writePe}=require('./fixtures/pe');
 
+test('component location opens the containing plugin folder, and rejects missing or outside files', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(),'nf-open-component-'));
+  t.after(() => fs.rmSync(root,{recursive:true,force:true}));
+  const game = path.join(root,'Game'), plugin = path.join(game,'Engine','Plugins','Streamline');
+  fs.mkdirSync(plugin,{recursive:true});
+  fs.writeFileSync(path.join(plugin,'sl.interposer.dll'),'fixture');
+  const main = path.resolve(__dirname,'../main.js'), realRequire = createRequire(main), handlers = new Map(), opened = [];
+  const electron = {app:{setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>root},
+    ipcMain:{handle:(id,fn)=>handlers.set(id,fn)}, shell:{openPath:async dir=>{opened.push(dir);return '';}}};
+  const host = Object.create(process); host.on = () => host;
+  const context = vm.createContext({game, require:id=>id==='electron'?electron:realRequire(id), __dirname:path.dirname(main), process:host, Buffer, console});
+  vm.runInContext(fs.readFileSync(main,'utf8'),context,{filename:main});
+  vm.runInContext('lastGames = [{dir:game}]',context);
+  const open = handlers.get('open-component-folder'), rel = path.relative(game,path.join(plugin,'sl.interposer.dll'));
+  assert.equal((await open(null,game,rel,'game')).ok,true);
+  for (const [dir,file,scope] of [[game,'missing.dll','game'],[game,'../outside.dll','game'],[root,rel,'game'],[game,rel,'shared']]) {
+    assert.equal((await open(null,dir,file,scope)).ok,false);
+  }
+  assert.deepEqual(opened,[plugin]);
+});
+
 for (const phase of ['initialization','catalog read']) {
 test(`cancelling a component download during library ${phase} prevents the transfer and permits retry`, async () => {
   const main = path.resolve(__dirname, '../main.js'), realRequire = createRequire(main), handlers = new Map();
@@ -37,6 +58,32 @@ test(`cancelling a component download during library ${phase} prevents the trans
   assert.equal(downloads,1,'the next explicit request can start normally');
 });
 }
+
+test('queued runtime preparation honours owner cancellation before touching the cache', async () => {
+  const main = path.resolve(__dirname,'../main.js'), realRequire = createRequire(main), handlers = new Map();
+  const electron = {app:{setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>os.tmpdir()},
+    ipcMain:{handle:(id,fn)=>handlers.set(id,fn)}};
+  const host = Object.create(process); host.on = () => host;
+  const context = vm.createContext({require:id=>id==='electron'?electron:realRequire(id),__dirname:path.dirname(main),process:host,AbortController,Buffer,console});
+  vm.runInContext(fs.readFileSync(main,'utf8'),context,{filename:main});
+  let finishRead, starts = 0;
+  context.library = {initialized:true,list:()=>new Promise(resolve=>{finishRead=()=>resolve({ok:true});})};
+  context.runtime = {list:()=>[],pack:()=>({name:'fixture'}),prepare:async()=>{starts++;return {ok:true};}};
+  vm.runInContext('unifiedComponents=library; runtimeCache=runtime; componentUpdates={status:()=>({})}',context);
+  const event = {sender:{send(){},isDestroyed:()=>false}}, other = {sender:{}};
+  const prepare = sender=>handlers.get('component-prepare')(sender,['runtime:fixture']);
+  const read = handlers.get('library-components')();
+  const pending = prepare(event);
+  assert.equal((await prepare(other)).code,'errJobBusy');
+  handlers.get('component-cancel-prepare')(other);
+  handlers.get('component-cancel-prepare')(event);
+  finishRead();
+  await read;
+  assert.equal((await pending).cancelled,true);
+  assert.equal(starts,0);
+  assert.equal((await prepare(event)).ok,true);
+  assert.equal(starts,1);
+});
 
 test('component browsers share reads during update checks and wait for committed game writes', async () => {
   const main = path.resolve(__dirname, '../main.js');
@@ -75,6 +122,34 @@ test('component browsers share reads during update checks and wait for committed
   await write;
   assert.equal(reads, 3);
   assert.equal(invalidations, 1);
+});
+test('the F7 file picker exports the selected bundled architecture only after checksum verification',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'export-f7-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const main=path.resolve(__dirname,'../main.js'),realRequire=createRequire(main),handlers=new Map();
+ let choice;
+ const electron={app:{setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>root},
+   BrowserWindow:{fromWebContents:()=>null},ipcMain:{handle:(n,f)=>handlers.set(n,f)},
+   dialog:{showSaveDialog:async()=>choice}};
+ const context=vm.createContext({require:name=>name==='electron'?electron:realRequire(name),__dirname:path.dirname(main),process,Buffer,console});
+ vm.runInContext(fs.readFileSync(main,'utf8'),context,{filename:main});
+ const save=bits=>handlers.get('save-monitor-addon')({sender:{}},bits);
+ const files=[32,64].map(bits=>{
+   const name='dlss5-zh-cn.addon'+bits, bytes=Buffer.from('fixture '+bits);
+   fs.writeFileSync(path.join(root,name),bytes);
+   return {path:name,size:bytes.length,sha256:require('crypto').createHash('sha256').update(bytes).digest('hex')};
+ });
+ context.runtime={bundledRoot:root,pack:()=>({files})};
+ vm.runInContext('runtimeCache=runtime',context);
+ choice={canceled:true};assert.equal((await save(64)).cancelled,true);
+ choice={filePath:path.join(root,'export')};
+ for(const bits of [32,64]){
+   assert.equal((await save(bits)).ok,true);
+   assert.equal(fs.readFileSync(choice.filePath,'utf8'),'fixture '+bits);
+ }
+ fs.writeFileSync(path.join(root,files[0].path),'tampered');
+ assert.equal((await save(32)).ok,false);
+ assert.equal(fs.readFileSync(choice.filePath,'utf8'),'fixture 64');
 });
 test('real main IPC previews before install, records only committed work, enforces tokens and persisted lock',async t=>{
  require('./fixtures/payload').use(t);

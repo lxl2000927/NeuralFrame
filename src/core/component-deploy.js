@@ -15,6 +15,9 @@ function executableStamp(file) {
   }
 }
 function resolveManagedSelection(lib, selected, request) {
+  if (request.config?.performanceMonitor !== undefined || request.config?.route === 'hud' ||
+      require('./optional-graphics').isRoute(request.config?.route || request.requestedRoute))
+    return {selection:{}, request};
   if ((request.requestedRoute === 'encore' || request.route === 'encore' || request.config?.route === 'encore') && Object.keys(selected).some(id => id !== 'dlss-nr'))
     throw fail('Encore 使用固定配套运行库，请先在组件与版本中清除其他组件的版本覆盖；原选择不会自动删除。');
   if (request.kind !== 'enhanced' || !selected['dlss-nr']) return { selection: selected, request };
@@ -53,6 +56,10 @@ async function prepare(lib,selection){
   for(const [component,id] of Object.entries(selection||{})){
     const p=lib.package(id);if(p.component!==component||!lib.compatibility(p).ready)throw fail('所选组件尚未适配');
     await lib.verify(p);
+    for (const file of p.files) {
+      if (/\.(dll|asi|addon32|addon64)$/i.test(file.rel) &&
+          !pe.getBitness(safe(lib.directory(p),file.rel),{dllOnly:true})) throw fail('不是有效的游戏 DLL 或插件：'+file.rel);
+    }
     if(component==='dlss-fg'&&!/^310\.9\.(0|1|16)\.0$/.test(p.files[0].version||''))throw fail('当前 MFG 适配层不支持这个帧生成运行库');
     if(component==='dlss-nr'){
       const models=require('./neural-models'),info=models.inspectNeuralModelBinary(safe(lib.directory(p),p.files[0].rel));
@@ -67,7 +74,7 @@ function match(p,filename){const name=path.basename(filename).toLowerCase();retu
 // Only the install call that owns this async context sees the selected versions.
 // Configuration writes and the localized/F8 adapters keep their existing sources.
 function resolveSource(gameDir,src,dest){const c=context.getStore();if(!c||!same(c.dir,gameDir)||/[_]DLSS5_Backup[\\/]/i.test(dest))return src;
-  for(const p of c.packages){const f=match(p,dest);if(f&&pe.getBitness(src)===f.bitness)return safe(c.lib.directory(p),f.rel);}return src;
+  for(const p of c.packages){const f=match(p,dest);if(f&&pe.getBitness(src,{dllOnly:true})===f.bitness)return safe(c.lib.directory(p),f.rel);}return src;
 }
 async function managed(lib,dir,selection,work){
   const owner = {lib, dir, packages:await prepare(lib,selection), selected:selection || {}, remaining:selection};
@@ -80,18 +87,49 @@ async function managed(lib,dir,selection,work){
     ? await applySelection(lib,dir,owner.remaining,{strict:false}) : {ok:true,changed:0};
   return result&&typeof result==='object'?{...result,componentUpdate:applied}:result;
 }
-async function targets(dir,packages){
-  const {scanGame}=require('./scan'),scan=await scanGame(dir),manifest=require('./backend-manager').readManifest(dir);
-  if(!scan.chosen)throw fail('未找到游戏主程序');
+function routeFileHashes(manifest) {
+  return new Map(Object.entries({...manifest?.encore?.files, ...manifest?.graphicsRoute?.files, ...manifest?.performanceMonitor?.files})
+    .map(([rel, sha256]) => [path.normalize(rel).toLowerCase(), sha256]));
+}
+function candidateFiles(dir, scan, manifest, acceptsName) {
   const files=new Set((scan.dlssFiles||[]).map(f=>f.path));
   for(const rel of [...(manifest?.added||[]),...(manifest?.replaced||[]).map(f=>f.rel)])files.add(journal.safePath(dir,rel));
+  if (!scan.chosen) return files;
   const base=path.dirname(scan.chosen.path);
-  for(const folder of [base,path.join(base,'host64'),path.join(base,'OptiScaler/plugins')])if(fs.existsSync(folder))for(const name of fs.readdirSync(folder)){
-    const file=path.join(folder,name);if(packages.some(p=>match(p,file)))files.add(journal.safePath(dir,path.relative(dir,file)));
+  for (const folder of [base, path.join(base,'host64'), path.join(base,'OptiScaler/plugins')]) {
+    if (!fs.existsSync(folder)) continue;
+    journal.safePath(dir, path.relative(dir, path.join(folder, '.component-check')));
+    for (const name of fs.readdirSync(folder)) {
+      if (acceptsName(name)) files.add(journal.safePath(dir,path.relative(dir,path.join(folder,name))));
+    }
   }
-  const rows=[];
-  for(const file of files)if(fs.existsSync(file)&&fs.statSync(file).isFile())for(const p of packages){const f=match(p,file);if(f&&pe.getBitness(file)===f.bitness)rows.push({file,p,f});}
-  return{scan,manifest,rows};
+  return files;
+}
+async function targets(dir,packages){
+  const manifest=require('./backend-manager').readManifest(dir);
+  const installedExe = manifest && journal.safePath(dir,manifest.game.exe);
+  const scan = await require('./scan').scanGame(dir,installedExe);
+  if(!scan.chosen)throw fail('未找到游戏主程序');
+  if (installedExe && path.relative(installedExe, scan.chosen.path) !== '') throw fail('原安装的游戏主程序已变化，请重新选择安装目标。');
+  const files = candidateFiles(dir, scan, manifest, name => packages.some(p => match(p, name)));
+  const wuwa = require('./wuthering-waves'), isProtected = wuwa.protectedComponentFiles(wuwa.gameRoot(dir, scan.chosen.path));
+  const rows=[], pinnedPackages=new Set(), protectedPackages=new Set(), mismatchedPackages=new Set(), pins=routeFileHashes(manifest);
+  for (const file of files) {
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) continue;
+    for (const p of packages) {
+      const f = match(p,file);
+      if (!f || pe.getBitness(file,{dllOnly:true}) !== f.bitness) continue;
+      if (isProtected(file)) protectedPackages.add(p.id);
+      else if (pins.has(path.relative(dir,file).toLowerCase())) pinnedPackages.add(p.id);
+      else if (hasFeatureMismatch(file)) mismatchedPackages.add(p.id);
+      else rows.push({file,p,f});
+    }
+  }
+  return{scan,manifest,rows,pinnedPackages,protectedPackages,mismatchedPackages};
+}
+function hasFeatureMismatch(file) {
+  const feature = pe.nvidiaFeatureForName(file);
+  return !!feature && !pe.matchesNvidiaFeature(file, feature);
 }
 function updateModelIdentity(dir, manifest, paths) {
   if (!manifest.neuralRendering || manifest.neuralRendering.mode === 'off') return false;
@@ -113,8 +151,11 @@ function updateModelIdentity(dir, manifest, paths) {
   return changed;
 }
 async function applySelection(lib,dir,selection,{strict=false,previousSelection}={}){
-  const packages=await prepare(lib,selection),{scan,manifest,rows}=await targets(dir,packages);
+  const packages=await prepare(lib,selection),{scan,manifest,rows,pinnedPackages,protectedPackages,mismatchedPackages}=await targets(dir,packages);
   const missing=packages.filter(p=>!rows.some(r=>r.p.id===p.id));
+  if (strict && missing.some(p=>protectedPackages.has(p.id))) throw fail('当前组件受游戏启动器保护，请通过游戏页管理。');
+  if (strict && missing.some(p=>pinnedPackages.has(p.id))) throw fail('此运行库由已安装路线管理，请在游戏页修改。');
+  if (strict && missing.some(p=>mismatchedPackages.has(p.id))) throw fail('已检测到同名文件，但组件身份不匹配。');
   if(strict&&missing.length)throw fail('请先通过安装路线启用这些组件，再独立更新：'+missing.map(p=>p.component).join('、'));
   const exeBefore=executableStamp(scan.chosen.path),manifestBefore=JSON.stringify(manifest),observed=rows.map(r=>({...r,beforeHash:digest(r.file)}));
   const changed=observed.filter(r=>r.beforeHash!==r.f.sha256);
@@ -192,4 +233,4 @@ async function rollback(lib,dir,snapshotId){
   try { await fs.promises.rmdir(journal.safePath(dir, folder)); } catch { /* An unused directory can remain. */ }
   return result;
 }
-module.exports={prepare,resolveSource,resolveManagedSelection,claimGraphicsModel,managed,applySelection,rollback};
+module.exports={prepare,resolveSource,resolveManagedSelection,claimGraphicsModel,managed,applySelection,rollback,candidateFiles,routeFileHashes,hasFeatureMismatch};

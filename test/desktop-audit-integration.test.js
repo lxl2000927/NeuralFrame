@@ -24,6 +24,22 @@ test('the desktop companion-addon entry preserves unrelated disabled plug-ins',t
  vm.runInContext('enableAddon',f.context)(f.game,'extra.addon64');
  assert.equal(fs.readFileSync(file,'utf8'),'[ADDON]\r\nDisabledAddons=extra-tools,other.addon64\r\n');
 });
+test('cards and details report only loadable 64-bit host runtimes and invalidate stale scan rules',async t=>{
+ const f=fixture(t), {writePe}=require('./fixtures/pe');
+ const exe={path:path.join(f.game,'Game.exe'),rel:'Game.exe',bitness:32,api:'d3d9',apiLabel:'DirectX 9'};
+ const host=writePe(path.join(f.game,'host64','nvngx_dlss.dll'),{bitness:32,version:[3,1,2,0]});
+ f.context.scanFixture={chosen:exe,exeCandidates:[exe],dlssFiles:[],streamlineFiles:[],reshade:{installed:false}};
+ vm.runInContext("gameInspection={run:async task=>task==='scan'?scanFixture:{scan:scanFixture}}",f.context);
+ const card=()=>f.handlers.get('scan')({},f.game);
+ const details=()=>f.handlers.get('details')({},f.game);
+ assert.equal((await card()).hasDlss,false);
+ assert.equal((await details()).currentDlss,null);
+ writePe(host,{bitness:64,version:[3,1,2,0]});
+ const valid=await card();
+ assert.equal(valid.dlss,'3.1.2.0');
+ assert.ok(valid.rules>10);
+ assert.equal((await details()).currentDlss.version,'3.1.2.0');
+});
 test('desktop diagnostics exports only the confirmed files and reports that actual count',async t=>{
  const f=fixture(t),output=path.join(f.root,'report.txt');
  fs.writeFileSync(path.join(f.game,'ReShade.log'),'APPROVED_CONTENT');

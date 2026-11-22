@@ -34,37 +34,52 @@ class ComponentReview {
     return data;
   }
   async save(dir, record) { await journal.atomicJson(this.file(dir), record); }
-  async inventory(dir, inspectFile = diskInfo, recoveredManifest) {
+  async inventory(dir, inspectFile = diskInfo, recoveredManifest, includeTargets = true) {
     if (!path.isAbsolute(dir) || !fs.existsSync(dir)) throw err('errUnsafeTarget', '无效的游戏目录');
-    const scan = await scanGame(dir), record = this.read(dir);
+    const record = this.read(dir);
     const manifest = recoveredManifest === undefined ? readManifest(dir) : recoveredManifest;
+    const installedExe = manifest?.game?.exe && journal.safePath(dir, manifest.game.exe);
+    const scan = await scanGame(dir, installedExe);
     const files = new Map();
     const add = rel => { const file = journal.safePath(dir, rel); files.set(key(file), file); };
-    for (const item of [...(scan.dlssFiles || []), ...(scan.streamlineFiles || []), ...(scan.upscalerFiles || [])]) add(path.relative(dir, item.path));
-    for (const item of manifest?.replaced || []) add(item.rel);
-    for (const rel of manifest?.added || []) add(rel);
+    const deploy = require('./component-deploy'), pinned = deploy.routeFileHashes(manifest);
+    const candidates = new Set();
+    for (const file of deploy.candidateFiles(dir, scan, manifest, known)) {
+      if (fs.existsSync(file) && !fs.statSync(file).isFile()) continue;
+      add(path.relative(dir, file));
+      candidates.add(key(file));
+    }
+    const scannedRoles = new Map();
+    for (const item of [...(scan.dlssFiles || []), ...(scan.streamlineFiles || []), ...(scan.upscalerFiles || [])]) {
+      add(path.relative(dir, item.path));
+      scannedRoles.set(key(item.path), !!item.featureMismatch);
+    }
     for (const rel of Object.keys(record.receipts)) add(rel);
     for (const rel of Object.keys(record.lock?.files || {})) add(rel);
     const exeDir = scan.chosen ? path.dirname(scan.chosen.path) : null;
-    if (exeDir && require('./wuthering-waves').gameRoot(dir, scan.chosen.path)) {
+    const wuwa = require('./wuthering-waves'), protectedRoot = exeDir && wuwa.gameRoot(dir, scan.chosen.path);
+    const isProtected = includeTargets && wuwa.protectedComponentFiles(protectedRoot);
+    if (protectedRoot) {
       const proxy = path.join(exeDir, 'version.dll');
       if (fs.existsSync(proxy)) add(path.relative(dir, proxy));
-    }
-    if (exeDir) for (const folder of [exeDir, path.join(exeDir, 'host64'), path.join(exeDir, 'OptiScaler', 'plugins')]) {
-      if (!fs.existsSync(folder)) continue;
-      journal.safePath(dir, path.relative(dir, path.join(folder, '.component-check')));
-      for (const name of fs.readdirSync(folder)) if (known(name) && fs.statSync(path.join(folder, name)).isFile()) add(path.relative(dir, path.join(folder, name)));
     }
     const rows = [];
     for (const file of files.values()) {
       const rel = path.relative(dir, file), info = inspectFile(file), receipt = record.receipts[rel];
+      const relKey = path.normalize(rel).toLowerCase();
       const original = (manifest?.replaced || []).find(r => r.rel.toLowerCase() === rel.toLowerCase());
       let backup = null;
       if (original) {
         const saved = require('./apply').originalPath(dir, manifest, rel);
         if (fs.existsSync(saved)) backup = { version: original.oldVersion || pe.getFileVersion(saved) || null };
       }
-      rows.push({ rel, scope:'game', name: path.basename(file), category: category(file), ...info, present: !!info,
+      const featureMismatch = !!info && !pinned.has(relKey) && (scannedRoles.get(key(file)) ?? deploy.hasFeatureMismatch(file));
+      rows.push({ rel, scope:'game', name: path.basename(file), category: category(file), ...info, present: !!info, featureMismatch,
+        routeSha256: pinned.get(relKey),
+        recordedVersion: original?.newVersion || undefined,
+        selectionTarget: includeTargets && !!scan.chosen && (!installedExe || key(scan.chosen.path) === key(installedExe)) &&
+          candidates.has(key(file)) && !featureMismatch && !pinned.has(relKey) && !isProtected(file),
+        bitness: includeTargets && info && binary(file) ? pe.getBitness(file, {dllOnly:true}) : null,
         source: receipt && receipt.sha256 === info?.sha256 ? receipt.source : original ? '游戏原有文件（曾由管理器替换）' : (manifest?.added || []).includes(rel) ? '管理器安装记录' : '现有文件，来源未记录',
         writtenAt: receipt && receipt.sha256 === info?.sha256 ? receipt.writtenAt : null,
         loaded: 'unknown', backup,
@@ -178,11 +193,18 @@ class ComponentReview {
         recoveredManifest = recovery.result;
       }
     }
-    const inventory = await this.inventory(dir, inspectFile, recoveredManifest);
+    const inventory = await this.inventory(dir, inspectFile, recoveredManifest, false);
     const wuwa = require('./wuthering-waves');
     const gameRoot = wuwa.gameRoot(dir, inventory.exePath);
     if (gameRoot) wuwa.checkPreview(gameRoot, dir, rows, state, request.kind);
     require('./encore').checkPreview(dir, rows, request.kind);
+    if (['component-update','component-rollback'].includes(request.kind)) {
+      const record = readManifest(dir);
+      const owned = new Set(Object.keys({...record?.graphicsRoute?.files,...record?.performanceMonitor?.files}).map(rel => path.normalize(rel).toLowerCase()));
+      if (rows.some(row =>
+        row.scope === 'game' && row.action !== 'keep' && owned.has(path.normalize(row.rel).toLowerCase())))
+        throw err('errGraphicsRoute', '此运行库由已安装路线管理，请在游戏页修改。');
+    }
     for (const row of inventory.rows) {
       const planned = rows.find(r => r.scope === row.scope && r.rel.toLowerCase() === row.rel.toLowerCase());
       if (planned) planned.backup = row.backup || (row.present && planned.action === 'replace' ? { version: row.version, create: true } : null);

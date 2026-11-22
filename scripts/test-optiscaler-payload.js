@@ -22,11 +22,26 @@ function fakeExe(file) {
   bytes.write('D3D12CreateDevice', 0x1000, 'ascii');
   fs.writeFileSync(file, bytes);
 }
+
+async function prepareBuild(root, release) {
+  // ensureOptiScaler extracts in place. Other test processes may be reading
+  // the common fixture at the same time, so only share its input archive.
+  const cache = path.join(root,'cache'), name = 'OptiScaler-' + release.version;
+  const fixture = path.join(__dirname,'../vendor/runtime-tests/components',name);
+  const local = path.join(cache,'components',name);
+  fs.mkdirSync(local,{recursive:true});
+  if (fs.existsSync(fixture+'.zip')) fs.copyFileSync(fixture+'.zip',local+'.zip');
+  const license = 'OptiScaler-GPL-3.0.txt';
+  if (release.licenseHash && fs.existsSync(path.join(fixture,license)))
+    fs.copyFileSync(path.join(fixture,license),path.join(local,license));
+  return opti.ensureOptiScaler(cache,release.version);
+}
+
 (async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opti-payload-test-'));
   try {
-    const source = scanSource(path.join(__dirname, '../payload'));
-    const optiRoot = await opti.ensureOptiScaler(path.join(__dirname, '../vendor/runtime-tests'));
+    const source = scanSource(require('../test/fixtures/payload').root);
+    const optiRoot = await prepareBuild(root,opti.RELEASE);
     for (const route of ['native', 'feeder']) {
       const dir = path.join(root, route);
       fs.mkdirSync(dir);
@@ -101,7 +116,7 @@ function fakeExe(file) {
     // neural pass silently does nothing.
     {
       const presr = opti.releaseFor('0.8.92-presr');
-      const forkRoot = await opti.ensureOptiScaler(path.join(__dirname, '../vendor/runtime-tests'), presr.version);
+      const forkRoot = await prepareBuild(root,presr);
       const dir = path.join(root, 'presr');
       fs.mkdirSync(dir);
       const exePath = path.join(dir, 'Game.exe'); fakeExe(exePath);
@@ -132,6 +147,13 @@ function fakeExe(file) {
       // And the app reports it as installed, which it did not while every build
       // was required to have a forwarder.
       assert.equal((await scanGame(dir)).install.optiscaler.installed, true);
+      await require('../src/core/neural-models').applyNeuralModelSelection(dir,{exePath,mode:'off',payloadDir:require('../test/fixtures/payload').root});
+      assert.equal((await scanGame(dir)).install.optiscaler.installed,true,'the installed host survives NR being switched off');
+      const model = path.join(dir,'nvngx_dlssnr.dll');
+      assert.equal(fs.existsSync(model),false);
+      await manager.install({...base,optiRoot:forkRoot,optiVersion:presr.version});
+      assert.equal(ini.getIni(ini.readText(path.join(dir,'OptiScaler.ini')),'DlssNr','Enabled'),'false');
+      assert.equal(fs.existsSync(model),false,'reinstall preserves an explicitly disabled model');
       await manager.restore(dir);
       for (const [name, hash] of Object.entries(originals)) assert.equal(digest(path.join(dir, name)), hash, name);
       assert.equal(fs.existsSync(path.join(dir, 'OptiScaler')), false);

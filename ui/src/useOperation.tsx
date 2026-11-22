@@ -2,7 +2,7 @@ import { locale, t } from "./i18n";
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Modal } from "./components";
-import type { DownloadKind } from "./features/DownloadAction";
+import type { DownloadKind, QueueItem, QueueFailure } from "./features/DownloadAction";
 import { getBridge } from "./bridge";
 import { errorText, size } from "./domain";
 import type { Preview, Result } from "./types";
@@ -70,6 +70,11 @@ type Transfer = {
   total: number;
   index?: number;
   count?: number;
+  overallLoaded?: number;
+  overallTotal?: number;
+  source?: string;
+  sourceReason?: string;
+  connections?: number;
   speed: number;
   note?: string;
 };
@@ -95,6 +100,17 @@ export function useOperation(
   onCompleted?: () => void,
 ) {
   const running = useRef(false);
+  const transferTail = useRef<Promise<boolean>>(Promise.resolve(true));
+  const queued = useRef(new Map<string, QueueItem>());
+  const [queueItems,setQueueItems] = useState<QueueItem[]>([]);
+  const [completed,setCompleted] = useState(0);
+  const [recentFailures,setRecentFailures] = useState<QueueFailure[]>([]);
+  const failureAttempt = useRef(0);
+  const cancelMode = useRef<"pause"|"discard"|"cancel">("cancel");
+  const recordFailure = (kind:DownloadKind,id:string,name:string,detail:string) => {
+    const reason=detail.split(/\r?\n/)[0].slice(0,180)||t("下载失败");
+    setRecentFailures(current=>[{attempt:++failureAttempt.current,key:`${kind}:${id}`,kind,id,name,reason,detail,at:Date.now()},...current].slice(0,6));
+  };
   const rate = useRef({ key: "", at: 0, bytes: 0, speed: 0 });
   const lastPaint = useRef(0);
   const [busy, setBusy] = useState(false),
@@ -104,7 +120,7 @@ export function useOperation(
   // A single monotonic sample per asset keeps the speed honest when ranges
   // arrive in parallel and the reported byte count jumps.
   const absorb = (next: Omit<Transfer, "speed">) => {
-    const key = `${next.name}|${next.stage}`;
+    const key = `${next.name}|${next.stage}|${next.index ?? 0}|${next.total > 0}|${(next.overallTotal ?? 0) > 0}`;
     const now = Date.now();
     const seen = rate.current;
     if (seen.key !== key) rate.current = { key, at: now, bytes: next.loaded, speed: 0 };
@@ -165,6 +181,9 @@ export function useOperation(
             total: p.total || 0,
             index: p.index,
             count: p.count,
+            overallLoaded: p.overallLoaded,
+            overallTotal: p.overallTotal,
+            source: p.source, sourceReason:p.sourceReason, connections:p.connections,
             note: p.stage === "verify" ? t("正在校验下载内容，请稍候。")
               : p.stage === "ready" ? t("已就绪，正在写入缓存…") : undefined,
           }),
@@ -172,6 +191,7 @@ export function useOperation(
         try {
           const prepared = await getBridge().componentPrepare(
             result.dependencies,
+            sourceOptions(),
           );
           if (prepared.cancelled) return false;
           if (!prepared.ok)
@@ -256,34 +276,77 @@ export function useOperation(
       setBusy(false);
     }
   }
-  const runTransfer = (kind: DownloadKind, id: string, cached: boolean) => run(async () => {
+  const sourceOptions = () => ({mirror:localStorage.getItem("neuralframe.githubMirror") || "",
+    priority:(localStorage.getItem("neuralframe.downloadSourcePriority") === "official" ? "official" : "mirror") as "mirror"|"official"});
+  const executeTransfer = (kind: DownloadKind, id: string, cached: boolean) => run(async () => {
     const bridge = getBridge();
+    let displayName=id;
+    cancelMode.current="cancel";
     rate.current = { key: "", at: 0, bytes: 0, speed: 0 };
     setCancelling(false);
     const subscribe = kind === "library" ? bridge.onLibraryProgress : bridge.onComponentProgress;
-    const dispose = subscribe(p => absorb({
-      kind, id,
-      name: p.name || t("组件"),
-      stage: p.stage || "download",
-      loaded: p.loaded || 0,
-      total: p.total || 0,
-      note: p.stage === "verify" ? t("正在校验下载内容，请稍候。") : undefined,
-    }));
-    absorb({ kind, id, name: t("组件"), stage: cached ? "checking" : "queued", loaded: 0, total: 0 });
+    const dispose = subscribe(p => {
+      displayName=p.name||id;
+      absorb({
+        kind, id,
+        name: displayName,
+        stage: p.stage || "download",
+        loaded: p.loaded || 0,
+        total: p.total || 0,
+        source: p.source, sourceReason:p.sourceReason, connections:p.connections,
+        index: p.index,
+        count: p.count,
+        overallLoaded: p.overallLoaded,
+        overallTotal: p.overallTotal,
+        note: p.stage === "verify" ? t("正在校验下载内容，请稍候。") : undefined,
+      });
+    });
+    absorb({ kind, id, name: id, stage: cached ? "checking" : "queued", loaded: 0, total: 0 });
     try {
-      return kind === "library" ? await bridge.libraryDownload(id) : await bridge.componentPrepare(["runtime:" + id]);
+      const result=kind === "library" ? await bridge.libraryDownload(id, sourceOptions()) : await bridge.componentPrepare(["runtime:" + id], sourceOptions());
+      if(result.cancelled){
+        const mode=cancelMode.current as "pause"|"discard"|"cancel";
+        onMessage(t(mode==="discard"?"已取消下载并清理临时分段。":mode==="pause"?"已暂停下载，已保留可续传数据。":"已取消下载。"));
+      }else if(!result.ok){
+        recordFailure(kind,id,displayName,result.message||result.code||t("下载失败"));
+      }else{
+        setRecentFailures(current=>current.filter(failure=>failure.key!==`${kind}:${id}`));
+      }
+      return result;
+    } catch(error) {
+      recordFailure(kind,id,displayName,errorText(error));
+      throw error;
     } finally {
       dispose();
       setProgress(null);
       setCancelling(false);
     }
   });
+  const runTransfer = (kind: DownloadKind, id: string, cached: boolean) => {
+    const key = `${kind}:${id}`;
+    if (queued.current.has(key)) return Promise.resolve(true);
+    if (!running.current && !queued.current.size) setCompleted(0);
+    const item = {key, kind, id, cached};
+    queued.current.set(key, item);
+    setQueueItems([...queued.current.values()]);
+    const execute = async () => {
+      if (queued.current.get(key) !== item) return false;
+      queued.current.delete(key);
+      setQueueItems([...queued.current.values()]);
+      try { return await executeTransfer(kind, id, cached); }
+      finally { setCompleted(value=>value+1); }
+    };
+    const result = transferTail.current.then(execute, execute);
+    transferTail.current = result.catch(() => false);
+    return result;
+  };
   const downloadVersion = (id: string, cached = false) => runTransfer("library", id, cached);
   const downloadRuntime = (id: string, cached: boolean) => runTransfer("runtime", id, cached);
-  const cancelProgress = () => {
+  const cancelProgress = (discard = false) => {
     if (!progress || cancelling || (progress.stage === "queued" && progress.kind !== "library")) return;
+    cancelMode.current=discard?"discard":progress.stage==="download"?"pause":"cancel";
     setCancelling(true);
-    void (progress.kind === "library" ? getBridge().libraryCancel() : getBridge().componentCancelPrepare())
+    void (progress.kind === "library" ? getBridge().libraryCancel({discard}) : getBridge().componentCancelPrepare({discard}))
       .catch(error => { setCancelling(false); onMessage(errorText(error), "error"); });
   };
   const dialog = (
@@ -320,11 +383,14 @@ export function useOperation(
         return (
           <Modal
             title={t("准备组件")}
-            onClose={cancelProgress}
+            onClose={()=>cancelProgress(false)}
             footer={
-              <button onClick={cancelProgress} disabled={cancelling || progress.stage === "queued"}>
-                {t(cancelling ? "正在取消…" : "取消下载")}
-              </button>
+              <>
+                <button onClick={()=>cancelProgress(false)} disabled={cancelling || progress.stage === "queued"}>
+                  {t(cancelling ? (downloading ? "正在暂停…" : "正在取消…") : (downloading ? "暂停下载" : "取消下载"))}
+                </button>
+                {downloading && <button className="danger" onClick={()=>cancelProgress(true)} disabled={cancelling}>{t("取消并清理")}</button>}
+              </>
             }
           >
             <div className="transfer">
@@ -333,7 +399,7 @@ export function useOperation(
                   {progress.count && progress.count > 1 && progress.index
                     ? `${progress.index}/${progress.count} · `
                     : ""}
-                  {progress.name}
+                  {t(progress.name)}
                 </span>
                 <span className="transfer-stage">{stageLabel}</span>
               </p>
@@ -342,11 +408,20 @@ export function useOperation(
                 value={downloading ? percent : undefined}
                 aria-label={t("下载进度")}
               />
+              {!!progress.count && progress.count > 1 && !!progress.overallTotal && (
+                <div className="transfer-overall">
+                  <small>{t("整体进度")}</small>
+                  <progress max={100} value={Math.min(100, (progress.overallLoaded || 0) / progress.overallTotal * 100)} aria-label={t("整体下载进度")} />
+                  <small>{size(progress.overallLoaded || 0)} / {size(progress.overallTotal)}</small>
+                </div>
+              )}
               <p className="transfer-meta">
                 {downloading && progress.total > 0 && (
                   <span>{size(progress.loaded)} / {size(progress.total)} · {percent.toFixed(0)}%</span>
                 )}
                 {downloading && progress.speed > 0 && <span>{speedText(progress.speed)}</span>}
+                {downloading && !!progress.connections && <span>{t("{0} 连接",[progress.connections])}</span>}
+                {progress.source && <span title={progress.sourceReason}>{progress.source}</span>}
                 {eta && <span>{eta}</span>}
                 {progress.note && <span>{progress.note}</span>}
               </p>
@@ -356,7 +431,15 @@ export function useOperation(
       })()}
     </>
   );
+  const removeQueued = (key:string) => {
+    const item=queued.current.get(key);
+    if(!item)return;
+    queued.current.delete(key);
+    setQueueItems([...queued.current.values()]);
+    onMessage(t("已移出队列：{0}",[item.id]));
+  };
+  const clearFailure = (attempt:number) => setRecentFailures(current=>current.filter(failure=>failure.attempt!==attempt));
   const row = progress && progress.kind !== "prepare" && progress.id
-    ? { ...progress, kind: progress.kind, id: progress.id, cancelling, cancel: cancelProgress } : null;
-  return { run, ask, busy, dialog, downloadVersion, downloads: { row, downloadRuntime } };
+    ? { ...progress, kind: progress.kind, id: progress.id, cancelling, cancel:()=>cancelProgress(false), discard:()=>cancelProgress(true) } : null;
+  return { run, ask, busy, dialog, downloadVersion, downloads: { row, downloadRuntime, queueItems, completed, recentFailures, removeQueued, clearFailure } };
 }

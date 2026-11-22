@@ -18,6 +18,7 @@ function minimalPe(file, { bitness = 32, marker = null } = {}) {
   buf.writeUInt16LE(bitness === 64 ? 0x8664 : 0x014c, 0x84);
   buf.writeUInt16LE(0, 0x86); // sections
   buf.writeUInt16LE(bitness === 64 ? 240 : 224, 0x94);
+  buf.writeUInt16LE(/\.dll$/i.test(file) ? 0x2022 : 0x0022, 0x96);
   buf.writeUInt16LE(bitness === 64 ? 0x20b : 0x10b, 0x98);
   if (marker) buf.write(marker, 0x1000, 'ascii');
   fs.mkdirSync(path.dirname(file), { recursive: true });

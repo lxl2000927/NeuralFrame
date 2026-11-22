@@ -22,6 +22,22 @@ test('unsupported PE optional headers never become a 32-bit game candidate', asy
   }
 });
 
+test('only playable x86/x64 images are offered, including in a GDK layout', async t => {
+  const { writePe } = require('./fixtures/pe');
+  const { scanGame } = require('../src/core/scan');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-game-images-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  const arm = writePe(path.join(root, 'Arm.exe'), {text:'D3D12CreateDevice'});
+  const bytes = fs.readFileSync(arm);
+  bytes.writeUInt16LE(0xaa64, bytes.readUInt32LE(0x3c) + 4);
+  fs.writeFileSync(arm, bytes);
+  fs.renameSync(writePe(path.join(root, 'Helper.dll'), {text:'D3D12CreateDevice'}), path.join(root,'Helper.exe'));
+  writePe(path.join(root, 'OptiScaler', 'Preview.exe'), {text:'D3D12CreateDevice'});
+  const playable = writePe(path.join(root, 'Game.exe'), {text:'D3D11CreateDevice'});
+  fs.writeFileSync(path.join(root, 'MicrosoftGame.config'), '<Game><Executable Name="Arm.exe"/><Executable Name="Helper.exe"/></Game>');
+  assert.deepEqual((await scanGame(root)).exeCandidates.map(exe => exe.path), [playable]);
+});
+
 test('batched PE marker search preserves overlap, literal metacharacters and chunk boundaries', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-marker-search-'));
   t.after(() => fs.rmSync(dir, {recursive:true,force:true}));

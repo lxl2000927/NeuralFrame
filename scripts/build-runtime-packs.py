@@ -18,8 +18,9 @@ repo = json.loads((source / 'package.json').read_text(encoding='utf-8'))['distri
 # Engine releases remain the authors' immutable original archives. Rebuilding
 # unrelated runtime packs must not downgrade them or replace their source URLs.
 current_catalog = json.loads((source / 'src/core/runtime-catalog.json').read_text(encoding='utf-8'))
-upstream_engines = [p for p in current_catalog['packs'] if p['id'] in ['mfg-universal', 'mfg-optiscaler-170', 'encore']]
-if len(upstream_engines) != 3:
+engine_ids = {'mfg-universal', 'mfg-optiscaler-170', 'encore', 'anr', 'anr-addon', 'sm86', 'sm86-delta', 'xemfg-intel'}
+upstream_engines = [p for p in current_catalog['packs'] if p['id'] in engine_ids]
+if {p['id'] for p in upstream_engines} != engine_ids:
     raise ValueError('Missing verified original engine release records')
 groups = {}
 
@@ -50,14 +51,31 @@ add('reshade','ReShade 加载器','reshade','6.8.0',under('reshade-vulkan')+['Re
 for key, component, file, license, version in [('mfg-renodx','mfg-renodx','renodx-mfgunlock.addon64','MFGAdaUnlock-RenoDx-LICENSE.txt','1.5.5')]:
     add(key,'MFG 解锁 '+version,component,version,['enhanced/mfg/'+file,'enhanced/mfg/licenses/'+license])
 add('mfg-license','MFG Unlocker 开源许可','mfg-universal','1.7.1',['enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt'],True)
-add('localization','中文适配与预加载桥接','localization','zh1.10',
+add('localization','中文适配与预加载桥接','localization','zh1.12',
     ['enhanced/zh-cn/dlss5-zh-cn.addon32','enhanced/zh-cn/dlss5-zh-cn.addon64','enhanced/zh-cn/winmm.dll'],True)
 
 def sha(data): return hashlib.sha256(data).hexdigest()
 
 packs=[]
 for key, group in groups.items():
-    data={p:((source/'assets/licenses/MFG-Unlocker-LICENSE.txt') if key=='mfg-license' else (payload/p)).read_bytes() for p in group.pop('paths')}
+    paths = group.pop('paths')
+    if key == 'localization':
+        # The F7 add-ons and legacy bridge are built from this tree. A full
+        # upstream payload can contain older binaries at these same paths.
+        pinned = next(p for p in current_catalog['packs'] if p['id'] == key)
+        data = {}
+        for item in pinned['files']:
+            rel = item['path']
+            for path in (bootstrap / rel, payload / rel):
+                if path.is_file():
+                    blob = path.read_bytes()
+                    if sha(blob) == item['sha256']:
+                        data[rel] = blob
+                        break
+            else:
+                raise ValueError('Missing verified bootstrap file: ' + rel)
+    else:
+        data = {p: ((source/'assets/licenses/MFG-Unlocker-LICENSE.txt') if key == 'mfg-license' else (payload/p)).read_bytes() for p in paths}
     if key=='mfg-license' and any(sha(blob)!='433da96087fd9b91afd44c6350ca92da53167c9636a0a71e428f71036d8c372f' for blob in data.values()):
         raise ValueError('MFG Unlocker licence fingerprint mismatch')
     if not group['bundled']:

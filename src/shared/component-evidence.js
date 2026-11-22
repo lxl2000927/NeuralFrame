@@ -8,7 +8,16 @@ const SOURCES = {
   renodx190: { label: 'RenoDX MFG 1.9.0 版本说明', url: 'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/blob/1.9.0/docs/releases/1.9.0.md' },
   renodx155: { label: 'RenoDX MFG 1.5.5 版本说明', url: 'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/blob/1.5.5/docs/releases/1.5.5.md' },
   universal171: { label: 'MFG Unlocker 1.7.1 项目说明', url: 'https://github.com/dashdogy/MFG-Unlocker/blob/v1.7.1/README.md' },
+  xemfg171: { label: 'MFG Unlocker 1.7.1 XeMFG 输入与设置', url: 'https://github.com/dashdogy/MFG-Unlocker/blob/v1.7.1/docs/xemfg.md' },
+  intel302: { label: 'Intel XeSS SDK 3.0.2 发行版', url: 'https://github.com/intel/xess/releases/tag/v3.0.2' },
   universal170: { label: 'MFG Unlocker 1.7.0 项目说明', url: 'https://github.com/dashdogy/MFG-Unlocker/blob/v1.7.0/README.md' },
+  encore242: {label:'Encore 2.4.2 更新记录',url:'https://github.com/SilyNoMeta/rtx-encore/releases/tag/v2.4.2'},
+  encore250: {label:'Encore 2.5.0 空间超分指南',url:'https://github.com/SilyNoMeta/rtx-encore/blob/v2.5.0/docs/GAMES-WITHOUT-DLSS.md'},
+  anrB18: {label:'ANR FG B18 发布说明',url:'https://github.com/apex-compute/ANR/releases/tag/FG-V.B18'},
+  anrB20: {label:'ANR FG B20 发布说明',url:'https://github.com/apex-compute/ANR/releases/tag/FG-V.B20'},
+  sm86042: {label:'Dlssg_for_sm86 0.4.2 发布说明',url:'https://github.com/sdli1995/dlssg_for_sm86/releases/tag/0.4.2'},
+  pipo10: {label:'Pipo sm86-10 作者发布说明',url:'https://github.com/pipotoufikxyz-lgtm/dlssg_for_sm86-MFG-version/releases/tag/sm86-10'},
+  delta436: {label:'RTX-FG-Manager 4.3.36 发布说明',url:'https://github.com/pandaligx/RTX-FG-Manager/releases/tag/v4.3.36'},
   encore241: { label: 'Encore 2.4.1 更新记录', url: 'https://github.com/SilyNoMeta/rtx-encore/blob/v2.4.1/CHANGELOG.md#241' },
   encore230: { label: 'Encore 2.3.0 项目说明', url: 'https://github.com/SilyNoMeta/rtx-encore/blob/v2.3.0/README.md' },
   feeder117: { label: 'DLSS5 Feeder 1.17.0 版本说明', url: 'https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v1.17.0' },
@@ -19,8 +28,8 @@ const SOURCES = {
 };
 const catalog = new Map();
 const record = (scope, status, detail) => ({ scope, status, detail });
-function add(component, versions, label, summary, records, sourceIds) {
-  const evidence = { label, summary, records, sources: sourceIds.map(id => SOURCES[id]), checkedAt: CHECKED_AT };
+function add(component, versions, label, summary, records, sourceIds, checkedAt = CHECKED_AT) {
+  const evidence = { label, summary, records, sources: sourceIds.map(id => SOURCES[id]), checkedAt };
   for (const version of versions) catalog.set(`${component}:${version}`, evidence);
 }
 
@@ -46,7 +55,12 @@ add('mfg-universal', ['1.7.1'], '已整理项目支持说明',
     nativeIntegration,
     record('DLSS 5 神经渲染', '需要模型与游戏输入', '要求可用的 SR / DLAA / RR 路径及匹配显卡的模型；1.7.1 新增的 DX11 菜单和神经渲染支持不等于 DX11 DLSS 多帧生成支持。'),
     record('独立 XeMFG', '实验性路线', '可通过独立路线或 OptiScaler 使用；这是另一条帧生成路径，不能替代 DLSS 多帧生成的原生集成要求。'),
-  ], ['universal171']);
+  ], ['universal171', 'xemfg171'], '2026-11-19');
+add('xemfg-intel', ['3.0.2'], '已整理版本说明与验证范围',
+  '独立 XeMFG 使用此版本的 Intel 帧生成与低延迟运行库。游戏需要提供运动矢量和深度。', [
+    record('DirectX 12', '实验性路线', 'DX12 可使用游戏启用的 DLSS-G、DLSS 超分或光线重建、XeSS 或 FSR 3.1 及更新版超分输入。'),
+    record('Vulkan', '独立 XeMFG', '独立版从 Vulkan 游戏的 DLSS 超分或光线重建获取输入。OptiScaler 插件需要与 Vulkan 适配的宿主。'),
+  ], ['intel302', 'xemfg171'], '2026-11-19');
 add('mfg-universal', ['1.7.0'], '已整理项目支持说明',
   '1.7.0 将 RTX 20 的 DLSS 多帧生成列为实验性；神经渲染需要另备兼容模型，未沿用后续版本的 DX11 新增说明。', [
     native50,
@@ -55,6 +69,33 @@ add('mfg-universal', ['1.7.0'], '已整理项目支持说明',
     record('DLSS 5 神经渲染', '模型不包含在组件中', '通过 SR / DLAA / RR 路径接入；项目不提供或自动下载模型，需另备匹配显卡的模型文件。'),
   ], ['universal170']);
 
+add('encore', ['2.5.0'], '已整理版本说明与验证范围',
+  'MWSR 是 2.5.0 新增的空间超分引擎。也可选择 NIS 或 FSR 1，并调整锐化和抗锯齿。', [
+    record('空间超分', '待游戏内验证', 'DX11 / DX12 需要较低的同宽高比窗口分辨率，Vulkan 需要兼容的呈现方式。'),
+  ], ['encore250'], '2026-11-20');
+add('encore', ['2.4.2'], '已整理版本说明与验证范围',
+  '2.4.2 修复原生 Streamline 帧生成倍率受限，以及 DX12 中 XeFG 与超分同时开启时停在 1× 的问题。', [
+    record('天国：拯救 II', '原作者游戏内检查', '原作者在这款游戏中检查了修复。其他游戏和显卡的结果仍需分别验证。'),
+  ], ['encore242'], '2026-11-16');
+for (const component of ['anr','anr-addon']) {
+  add(component, ['B20'], '已整理版本说明与验证范围',
+    'B20 新增 FP16 scRGB HDR 帧生成。发行包包含通用和 3840×2160 的 Blackwell 模型。', [
+      record('DLSS 帧生成输入', '需要游戏提供', '完整包自带 OptiScaler，附加包复用已有安装。游戏中启用 NVIDIA 帧生成。'),
+    ], ['anrB20'], '2026-11-20');
+  add(component, ['B18'], '已整理版本说明与验证范围',
+    'B18 沿用 B16 模型，修复 Windows 上 AMD 显卡遇到 24 位深度缓冲时关闭帧生成的问题。', [
+      record('DLSS 帧生成输入', '需要游戏提供', '完整包自带 OptiScaler，附加包复用已有安装。游戏中启用 NVIDIA 帧生成。'),
+    ], ['anrB18'], '2026-11-16');
+}
+add('sm86', ['0.4.2'], '已整理版本说明与验证范围',
+  'DX12 游戏的可选 DLSS 或 XeSS 帧生成后端，需要游戏提供 DLSS 帧生成输入。', [
+    record('倍率上限', 'DLSS 6× · XeSS 4×', '游戏、驱动和所选引擎共同决定实际倍率。'),
+    record('独立分支 Pipo sm86-10', '仅收录发布资料', 'Pipo 的 DX12 包默认预设 C、内核模式 2，标准版默认 A、1。Pipo 作者以 RTX 3070 测试。该分支的帧数设置优先于驱动限制，尚未确认能完整保留驱动限制的配置。'),
+  ], ['sm86042', 'pipo10'], '2026-11-20');
+add('sm86-delta', ['0.4.2+rtxfg.1'], '已整理版本说明与验证范围',
+  '三角洲行动专用 DX12 / Vulkan 包，通过独立运行库加载。', [
+    record('倍率上限', 'DLSS 6× · XeSS 4×', '游戏、驱动和所选引擎共同决定实际倍率。'),
+  ], ['delta436'], '2026-11-16');
 add('encore', ['2.4.1'], '已整理版本说明与验证范围',
   '2.4.1 新增神经渲染多阶段控制并修复帧生成启动问题；发布记录明确区分自动检查、早期测试反馈和仍待游戏内确认的修复。', [
     record('神经渲染多阶段控制', '实验性功能', '提供 pre / post / final 阶段与最多 4 轮处理；实际可用输入与功能取决于游戏和渲染接口，不能由菜单选项推断生效。'),

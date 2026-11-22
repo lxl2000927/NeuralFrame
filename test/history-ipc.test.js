@@ -51,7 +51,7 @@ test('install/restore IPC records all backends, not failures/cancels, and valida
     } },
     './src/core/compatibility': { assertSafeTarget() {}, hasAntiCheat: () => protectedTarget },
     './src/core/install-guards': { assertGameClosed: async () => {}, antiCheatPresent: () => false, gpuInfo: async () => [{}], gpuSupported: () => true, gpuModelSupported: () => true, driverSupported: () => true },
-    './src/shared/install-routes': { nativeDlssPresent: () => true, routesFor: () => ['native', 'feeder', 'optiscaler'], recommendedRoute: () => 'native' },
+    './src/shared/install-routes': { ...require('../src/shared/install-routes'), nativeDlssPresent: () => true, routesFor: () => ['native', 'feeder', 'optiscaler'], recommendedRoute: () => 'native' },
     './src/core/runtime-components.js': { missingVCRuntime: () => [], ensureLumenite: async () => null },
     // releaseFor picks which pinned build a game asked for (#238); the stub
     // has to answer it now that the install path consults it.

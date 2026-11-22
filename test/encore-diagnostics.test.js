@@ -8,13 +8,17 @@ function fixture(t) {
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const exe=writePe(path.join(dir,'game.exe'),{text:'D3D11CreateDevice',size:131072});
   const files={};
-  for(const name of ['version.dll','sl.interposer.dll','sl.common.dll','sl.dlss_g.dll','sl.reflex.dll','sl.pcl.dll','nvngx_dlssg.dll']) {
+  const payload=require('./fixtures/payload').root;
+  fs.copyFileSync(path.join(payload,'enhanced/encore/rtx-encore.dll'),path.join(dir,'version.dll'));
+  const engine=require('../src/core/engine-packages').recommended('encore');
+  files['version.dll']=engine.sha256;
+  for(const name of ['sl.interposer.dll','sl.common.dll','sl.dlss_g.dll','sl.reflex.dll','sl.pcl.dll','nvngx_dlssg.dll']) {
     const file=writePe(path.join(dir,name),{version:name==='nvngx_dlssg.dll'?[310,9,16,0]:[2,14,16,0]});
     files[name]=crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   }
   fs.writeFileSync(path.join(dir,'rtx-encore.jsonc'),JSON.stringify({configVersion:4,
     frameGeneration:{frameGenerationWithoutGameFg:true,mode:'fixed',multiplier:3},renderingEngines:{frameGenerationEngine:'dlss-fg'}}));
-  const manifest={version:1,route:'encore',game:{exe:'game.exe',api:'dxgi',bitness:64},added:[...Object.keys(files),'rtx-encore.jsonc'],replaced:[],encore:{version:'2.3.0',proxy:'version.dll',files}};
+  const manifest={version:1,route:'encore',game:{exe:'game.exe',api:'dxgi',bitness:64},added:[...Object.keys(files),'rtx-encore.jsonc'],replaced:[],encore:{version:engine.version,proxy:'version.dll',files}};
   fs.mkdirSync(path.join(dir,'_DLSS5_Backup'));fs.writeFileSync(path.join(dir,'_DLSS5_Backup','manifest.json'),JSON.stringify(manifest));
   const hardware={gpu:{name:'NVIDIA GeForce RTX 4070 Laptop GPU',driver:'621.14',vramTotalMB:8192,architecture:{code:'ada',sm:'89'}}};
   const inspect=extra=>inspectCombinedStatus(dir,{payloadDir:path.join(dir,'empty-payload'),userDataDir:path.join(dir,'profile'),detectedHardware:hardware,...extra});
@@ -47,8 +51,18 @@ test('Encore status preserves model architecture failures rather than replacing 
 });
 test('inspecting another executable does not attach the installed Encore backend to it',async t=>{
   const f=fixture(t),other=writePe(path.join(f.dir,'Other','Another.exe'),{text:'D3D12CreateDevice',size:131072});
+  f.manifest.hardwareProfile='rtx50_desktop';
+  f.manifest.neuralRendering={runtimeStack:'oct2026-310.9.16'};
+  fs.writeFileSync(path.join(f.dir,'_DLSS5_Backup','manifest.json'),JSON.stringify(f.manifest));
+  const primary=await f.inspect();
+  assert.equal(primary.installedRoute,'encore');
+  assert.equal(primary.hardwareProfile,'rtx50_desktop');
+  assert.equal(primary.configuredRuntimeStack,'oct2026-310.9.16');
   const scan=await scanGame(f.dir,other),status=await f.inspect({scanResult:scan});
   assert.equal(status.exePath,other);assert.equal(status.encore.installed,false);assert.equal(status.encore.error,undefined);
+  assert.equal(status.installedRoute,null);
+  assert.equal(status.hardwareProfile,'rtx40_laptop');
+  assert.equal(status.configuredRuntimeStack,null);
   assert.notEqual(status.mfg.currentConfig.backend,'encore');
   assert.doesNotMatch(status.neural.overallBadge,/Encore 配置已读取/);
 });

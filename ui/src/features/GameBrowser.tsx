@@ -1,13 +1,20 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Search, SlidersHorizontal } from "lucide-react";
 import { Artwork, Empty, Select } from "../components";
-import { groupByLauncher } from "../domain";
+import { groupByLauncher, launcherLabel } from "../domain";
 import { locale, t } from "../i18n";
 import type { Game } from "../types";
 import { gameMenuEvents, type GameMenuHandler } from "../GameCard";
 import * as filters from "../../../src/renderer/game-filters.js";
 
 const all = { api: "all", dlss: "all", addon: "all" };
+const widthKey = "neuralframe.gameListWidth";
+const clampWidth = (width: number, { min, max }: { min: number; max: number }) => Math.max(min, Math.min(max, Math.round(width)));
+const widthLimits = (list: HTMLElement) => {
+  const min = Math.min(180, parseFloat(getComputedStyle(list).getPropertyValue("--game-list-default")) || 290);
+  const max = Math.max(min, Math.min(520, Math.floor((list.parentElement?.clientWidth || 0) * 0.45)));
+  return { min, max };
+};
 const apiNames: Record<string, string> = {
   pending: "待扫描",
   unknown: "API 未识别",
@@ -32,6 +39,33 @@ export function GameBrowser({
 }) {
   const [query, setQuery] = useState("");
   const [criteria, setCriteria] = useState(all);
+  const asideRef = useRef<HTMLElement>(null);
+  const separatorRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ id: number; startX: number; startWidth: number; pending: number; min: number; max: number } | null>(null);
+  const frame = useRef<number | null>(null);
+  const displayWidth = (width: number) => {
+    asideRef.current?.style.setProperty("--game-list-width", `${width}px`);
+    separatorRef.current?.setAttribute("aria-valuenow", String(width));
+  };
+  useLayoutEffect(() => {
+    const list = asideRef.current!;
+    const saved = Number(localStorage.getItem(widthKey));
+    if (Number.isFinite(saved) && saved >= 150 && saved <= 520) displayWidth(saved);
+    const sync = () => {
+      if (!list.offsetWidth) return;
+      const { min, max } = widthLimits(list);
+      separatorRef.current?.setAttribute("aria-valuemin", String(min));
+      separatorRef.current?.setAttribute("aria-valuemax", String(max));
+      separatorRef.current?.setAttribute("aria-valuenow", String(list.offsetWidth));
+    };
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(list.parentElement!);
+    return () => {
+      observer.disconnect();
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+    };
+  }, []);
   const [expanded, setExpanded] = useState(false);
   const listScroll = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -46,45 +80,58 @@ export function GameBrowser({
     [language],
   );
   const needle = query.normalize("NFKC").trim().toLowerCase();
-  const visible = games.filter(
-    (game) =>
-      filters.matches(game, criteria) &&
-      `${game.name} ${game.launcher}`
-        .normalize("NFKC")
-        .toLowerCase()
-        .includes(needle),
-  );
-  visible.sort((a, b) => collator.compare(a.name, b.name));
-  const groups = groupByLauncher(visible, grouped);
-  const apis = new Set([
-    "DirectX 12",
-    "DirectX 11",
-    "DirectX 10",
-    "DirectX 9",
-    "DirectX 8",
-    "Vulkan",
-    "OpenGL",
-    ...games.map(filters.apiKey),
-  ]);
-  const chips: [keyof typeof all, string, string][] = [
-    [
-      "api",
-      "DirectX 12",
-      `DirectX 12 · ${games.filter((g) => filters.apiKey(g) === "DirectX 12").length}`,
-    ],
-    [
-      "dlss",
-      "ready",
-      t("可配置 {0}", [games.filter(filters.canInstall).length]),
-    ],
-    [
-      "dlss",
-      "present",
-      t("有 DLSS {0}", [games.filter(filters.hasDlss).length]),
-    ],
-  ];
+  const visible = useMemo(() => games.filter(game =>
+    filters.matches(game, criteria) &&
+    (!needle || `${game.name} ${game.launcher} ${t(launcherLabel(game.launcher))}`.normalize("NFKC").toLowerCase().includes(needle)),
+  ).sort((a, b) => collator.compare(a.name, b.name)), [games, criteria, needle, collator]);
+  const groups = useMemo(() => groupByLauncher(visible, grouped), [visible, grouped]);
+  const counts = useMemo(() => {
+    if (!expanded) return null;
+    const apis = new Set(["DirectX 12", "DirectX 11", "DirectX 10", "DirectX 9", "DirectX 8", "Vulkan", "OpenGL"]);
+    let dx12 = 0, ready = 0, dlss = 0;
+    for (const game of games) {
+      const api = filters.apiKey(game);
+      apis.add(api);
+      if (api === "DirectX 12") dx12++;
+      if (filters.canInstall(game)) ready++;
+      if (filters.hasDlss(game)) dlss++;
+    }
+    return { apis, dx12, ready, dlss, versions: filters.versions(games) };
+  }, [games, expanded]);
+  const chips: [keyof typeof all, string, string][] = counts ? [
+    ["api", "DirectX 12", `DirectX 12 · ${counts.dx12}`],
+    ["dlss", "ready", t("可配置 {0}", [counts.ready])],
+    ["dlss", "present", t("有 DLSS {0}", [counts.dlss])],
+  ] : [];
+  const resize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || drag.current || !asideRef.current) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const startWidth = asideRef.current.offsetWidth;
+    drag.current = { id: event.pointerId, startX: event.clientX, startWidth, pending: startWidth, ...widthLimits(asideRef.current) };
+  };
+  const moveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (current?.id !== event.pointerId) return;
+    current.pending = clampWidth(current.startWidth + event.clientX - current.startX, current);
+    if (frame.current === null) frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      displayWidth(current.pending);
+    });
+  };
+  const finishResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (current?.id !== event.pointerId) return;
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+    const width = event.type === "pointerup" ? clampWidth(current.startWidth + event.clientX - current.startX, current) : current.pending;
+    if (width !== current.startWidth || asideRef.current?.offsetWidth !== width) displayWidth(width);
+    if (width !== current.startWidth) localStorage.setItem(widthKey, String(width));
+    drag.current = null;
+  };
   return (
-    <aside className="game-list">
+    <>
+    <aside className="game-list" ref={asideRef}>
       <div className="game-list-scroll" ref={listScroll}>
         <div className="game-search-bar">
           <div className="game-search search-box">
@@ -111,7 +158,7 @@ export function GameBrowser({
             </button>
           </div>
         </div>
-        {expanded && (
+        {counts && (
           <div id="game-list-filters" className="game-list-filters">
             <span>{t("渲染 API")}</span>
             <Select
@@ -121,7 +168,7 @@ export function GameBrowser({
               options={[
                 ["all", t("所有图形 API")],
                 ["dx11-dx12", "DirectX 11 / 12"],
-                ...Array.from(apis, (api) => [api, t(apiNames[api] || api)]),
+                ...Array.from(counts.apis, (api) => [api, t(apiNames[api] || api)]),
               ]}
             />
             <span>{t("DLSS 状态")}</span>
@@ -135,9 +182,7 @@ export function GameBrowser({
                 ["present", t("有 DLSS")],
                 ["absent", t("无 DLSS")],
                 ["installed", t("已安装")],
-                ...filters
-                  .versions(games)
-                  .map((v) => ["version:" + v, "DLSS " + v]),
+                ...counts.versions.map((v) => ["version:" + v, "DLSS " + v]),
               ]}
             />
             <span>{t("附加组件")}</span>
@@ -179,7 +224,7 @@ export function GameBrowser({
           <div key={name}>
             {name && (
               <h3 className="game-group-name">
-                {name === "Added by hand" ? t("手动添加") : name} ·{" "}
+                {t(launcherLabel(name))} ·{" "}
                 {list.length}
               </h3>
             )}
@@ -195,9 +240,7 @@ export function GameBrowser({
                 <span>
                   <strong>{game.name}</strong>
                   <small>
-                    {game.launcher === "Added by hand"
-                      ? t("手动添加")
-                      : game.launcher}
+                    {t(launcherLabel(game.launcher))}
                   </small>
                 </span>
               </button>
@@ -214,5 +257,18 @@ export function GameBrowser({
         {t("显示 {0} / {1}", [visible.length, games.length])}
       </div>
     </aside>
+    <div className="game-list-resizer" ref={separatorRef} role="separator" aria-label={t("调整游戏列表宽度")} aria-orientation="vertical" aria-valuemin={180} aria-valuemax={520} tabIndex={0}
+      onPointerDown={resize}
+      onPointerMove={moveResize}
+      onPointerUp={finishResize} onPointerCancel={finishResize} onLostPointerCapture={finishResize}
+      onKeyDown={event => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const list = asideRef.current!;
+        const width = clampWidth(list.offsetWidth + (event.key === "ArrowRight" ? 16 : -16), widthLimits(list));
+        displayWidth(width);
+        localStorage.setItem(widthKey, String(width));
+      }} />
+    </>
   );
 }

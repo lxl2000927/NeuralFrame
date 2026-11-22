@@ -7,16 +7,26 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 function protonCandidates(steamRoot, prefix) {
-  const common = path.join(steamRoot, 'steamapps', 'common');
-  let names = [];
-  try { names = fs.readdirSync(common); } catch { return []; }
-  let configured = '';
-  try { configured = fs.readFileSync(path.join(path.dirname(prefix), 'config_info'), 'utf8').trim(); } catch {}
-  return names
-    .filter((name) => /^Proton(?:\s|\d|[-_])/i.test(name))
-    .sort((a, b) => Number(b.includes(configured)) - Number(a.includes(configured)))
-    .map((name) => path.join(common, name, 'proton'))
-    .filter((file) => fs.existsSync(file));
+  const libraries = new Set([...require('../library').steamLibraries(steamRoot)].map(root => path.join(root, 'steamapps', 'common')));
+  libraries.add(path.resolve(prefix, '../../..', 'common'));
+  let configured = [];
+  try { configured = fs.readFileSync(path.join(path.dirname(prefix), 'config_info'), 'utf8').trim().split(/\r?\n/); } catch {}
+  const candidates = [];
+  for (const library of libraries) {
+    let names;
+    try { names = fs.readdirSync(library); } catch { continue; }
+    for (const name of names) {
+      if (!/^Proton(?:\s|\d|[-_])/i.test(name)) continue;
+      const dir = path.join(library, name);
+      const file = path.join(dir, 'proton');
+      if (!fs.existsSync(file)) continue;
+      // Valve writes the selected tool's fonts and library paths on separate
+      // lines. A single display name is also accepted for older prefixes.
+      const preferred = configured.some(line => line === name || line.startsWith(dir + path.sep));
+      candidates.push({file, preferred});
+    }
+  }
+  return candidates.sort((a, b) => Number(b.preferred) - Number(a.preferred)).map(item => item.file);
 }
 
 function contextForSteamGame(game) {
@@ -43,9 +53,9 @@ function createSetupRunner(context) {
     let output = '';
     child.stdout.on('data', (data) => { output += data.toString(); });
     child.stderr.on('data', (data) => { output += data.toString(); });
-    child.on('error', (error) => resolve({ code: -1, output: error.message }));
-    child.on('close', (code) => resolve({ code, output: output.trim() }));
-    setTimeout(() => { try { child.kill(); } catch {} }, 120000);
+    const timeout = setTimeout(() => { try { child.kill(); } catch {} }, 120000);
+    child.on('error', (error) => { clearTimeout(timeout); resolve({ code: -1, output: error.message }); });
+    child.on('close', (code) => { clearTimeout(timeout); resolve({ code, output: output.trim() }); });
   });
 }
 

@@ -26,7 +26,9 @@ export function useEngineLibrary(enabled:boolean, revision:number) {
 
 export function selectedEngine(library:Library|undefined, component:string, selection:string|undefined, current?:EngineInfo) {
   if (selection === undefined && current?.version) return current;
-  if (selection) return library?.packages.find(p=>p.id===selection && p.component===component)?.engine;
+  if (selection && library) return library.packages.find(p=>p.present && p.id===selection && p.component===component)?.engine ||
+    {verified:false,compatible:false,reason:"所选组件已不可用，请重新选择"};
+  if (selection) return undefined;
   return library?.runtimePacks.find(p=>p.component===component && p.engine?.recommended)?.engine;
 }
 

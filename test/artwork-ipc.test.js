@@ -632,3 +632,92 @@ test('library IPC exposes discovered local Steam artwork without fetching remote
   assert.equal(reopened.poster.tall,true);
   assert.equal(fs.readFileSync(f.state,'utf8'),before,'local portrait priority does not change the stored index');
 });
+
+function witcherFixture(t) {
+  const f = fixture(t);
+  const game = { launcher:'Steam', id:292030, dir:f.game, name:'The Witcher 3' };
+  const old = {};
+  for (const kind of ['cover', 'hero', 'tile']) {
+    old[kind] = pathToFileURL(saveImage(path.join(f.root, 'art', `old-${kind}.png`), kind)).href;
+  }
+  seedCache(f, { rules:RULES, appid:game.id, sourceIdentity:'steam:292030', fetchedAt:NOW, ...old });
+  return { f, game, old };
+}
+
+for (const custom of [false, true]) {
+  test(`292030 library prefers ${custom ? 'the user poster' : 'local Steam artwork'} over legacy cache`, async t => {
+    const { f, game } = witcherFixture(t);
+    const local = kind => saveImage(path.join(f.root, 'steam-cache', `${kind}.png`), kind);
+    game.poster = { file:local('cover'), tall:true };
+    game.artwork = { tile:local('tile'), hero:local('hero') };
+    const poster = custom ? saveImage(path.join(f.root, 'posters', 'custom.png'), 'custom') : game.poster.file;
+    if (custom) {
+      const state = JSON.parse(fs.readFileSync(f.state, 'utf8'));
+      state.posters = { [keyFor(f.game)]:poster };
+      fs.writeFileSync(f.state, JSON.stringify(state));
+    }
+    const before = fs.readFileSync(f.state, 'utf8');
+    const call = load(f.root, {}, { games:[game] });
+    const [shown] = await call('library');
+    assert.equal(fileURLToPath(shown.poster.url), poster);
+    assert.equal(shown.poster.custom, custom);
+    assert.equal(shown.tile, pathToFileURL(game.artwork.tile).href);
+    assert.equal(shown.hero, pathToFileURL(game.artwork.hero).href);
+    assert.equal(fs.readFileSync(f.state, 'utf8'), before);
+  });
+}
+
+const witcherCdn = 'https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/292030/';
+
+test('292030 replaces a legacy tile without local artwork and reuses the new tile after restart', async t => {
+  const { f, game, old } = witcherFixture(t), downloads = [];
+  const artwork = {
+    tileUrls:require('../src/steamart').tileUrls,
+    download:async (url, dest) => { downloads.push(url); return saveImage(dest, url); }
+  };
+  const call = load(f.root, artwork, { games:[game] });
+  assert.equal((await call('library'))[0].tile, null);
+  const { tile } = await call('art-fetch', game.dir, game.name, game.id, 'tile');
+  assert.notEqual(tile, old.tile);
+  const source = witcherCdn + 'capsule_616x353.jpg';
+  assert.deepEqual(downloads, [source]);
+  assert.ok(fs.readFileSync(fileURLToPath(tile)).includes(Buffer.from(source)));
+  assert.equal(savedRecord(f).tileSource, source);
+  const reopened = load(f.root, artwork, { games:[game] });
+  assert.equal((await reopened('library'))[0].tile, tile);
+  assert.equal((await reopened('art-fetch', game.dir, game.name, game.id, 'tile')).tile, tile);
+  assert.deepEqual(downloads, [source]);
+});
+
+test('292030 offline migration keeps cover and hero without reviving the legacy tile during cooldown', async t => {
+  const { f, game, old } = witcherFixture(t), clock = { now:NOW }, downloads = [];
+  const capsule = witcherCdn + 'capsule_616x353.jpg', header = witcherCdn + 'header.jpg';
+  let offline = true;
+  const artwork = {
+    tileUrls:require('../src/steamart').tileUrls,
+    download:async (url, dest) => {
+      downloads.push(url);
+      if (offline || url !== header) throw Error('fixture unavailable');
+      return saveImage(dest, url);
+    }
+  };
+  const open = () => load(f.root, artwork, { games:[game], clock });
+  const fetchTile = call => call('art-fetch', game.dir, game.name, game.id, 'tile');
+  const call = open();
+  assert.ok(!(await fetchTile(call)).tile);
+  assert.deepEqual(downloads, [capsule, header]);
+  offline = false;
+  clock.now += 10 * 60 * 1000 - 1;
+  const reopened = open();
+  const [fallback] = await reopened('library');
+  assert.equal(fallback.poster.url, old.cover);
+  assert.equal(fallback.hero, old.hero);
+  assert.equal(fallback.tile, null);
+  assert.ok(!(await fetchTile(reopened)).tile);
+  assert.deepEqual(downloads, [capsule, header]);
+  clock.now += 2;
+  const recovered = await fetchTile(reopened);
+  assert.ok(recovered.tile && recovered.tile !== old.tile);
+  assert.equal(savedRecord(f).tileSource, header);
+  assert.deepEqual(downloads, [capsule, header, capsule, header]);
+});

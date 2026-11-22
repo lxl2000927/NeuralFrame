@@ -56,6 +56,41 @@ function fixture(t) {
   return { dir, root, bin, src, sr, fg, srcHash: digest(src, 'sha256'), review, configure, resources };
 }
 
+test('runtime comparison respects launcher-owned copies and handles a missing resource list', async t => {
+  const f = fixture(t);
+  const extra = writePe(path.join(f.bin,'host64','nvngx_dlss.dll'),{bitness:64});
+  const copies = async () => (await f.review.inventory(f.dir)).rows.filter(row => row.name==='nvngx_dlss.dll');
+  const rows = await copies();
+  assert.equal(rows.find(row => row.rel===path.relative(f.dir,extra))?.selectionTarget,true);
+  assert.equal(rows.find(row => row.rel.includes('Engine'))?.selectionTarget,false);
+  fs.unlinkSync(path.join(f.root,'LocalGameResources.json'));
+  assert.ok((await copies()).every(row=>!row.selectionTarget));
+});
+test('Radeon cannot enable NVIDIA modes through the standalone adapter and turning them off preserves external XeMFG', async t => {
+  const f = fixture(t), config = {gpuName:'AMD Radeon RX 7800 XT', nvidiaPresent:false};
+  const proxy = path.join(f.bin,'version.dll'), control = path.join(f.bin,'RTXMFG-Universal.json');
+  for (const mfgMode of ['x2','dynamic','follow']) {
+    await assert.rejects(() => f.configure({...config,mfgMode}), /NVIDIA/);
+    assert.equal(fs.existsSync(proxy),false);
+    assert.equal(fs.existsSync(control),false);
+  }
+  fs.copyFileSync(f.src,proxy);
+  const external = {version:13, mode:'fixed', multiplier:3, followGame:false, xemfgStandalone:1, xemfgFrames:5, xemfgDynamic:1};
+  const source = JSON.stringify(external);
+  fs.writeFileSync(control,source);
+  const scanResult = {chosen:{path:path.join(f.bin,'Client-Win64-Shipping.exe'), apiLabel:'DirectX 12', bitness:64}, dlssFiles:[], streamlineFiles:[]};
+  const state = await mfg.inspectGameMfgStatus(f.dir,{...config,scanResult});
+  assert.equal(state.status,'incompatible');
+  assert.match(state.statusBadge,/外部 XeMFG 已配置/);
+  assert.match(state.effectiveMultiplier,/XeMFG/);
+  await assert.rejects(() => f.configure({...config,mfgMode:'x4'}), /NVIDIA/);
+  assert.equal(fs.readFileSync(control,'utf8'),source);
+  await f.configure({...config,mfgMode:'off'});
+  const after = JSON.parse(fs.readFileSync(control,'utf8'));
+  for (const key of ['xemfgStandalone','xemfgFrames','xemfgDynamic']) assert.equal(after[key],external[key]);
+  assert.deepEqual(fs.readFileSync(proxy),fs.readFileSync(f.src));
+});
+
 test('game status reports the native stack from launcher-listed files and ignores adjacent mod copies', async (t) => {
   const f = fixture(t);
   const index = path.join(f.root, 'LocalGameResources.json');

@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { navigateRadioGroup } from "../components";
 import { defaultStack, profiles } from "../domain";
 import type { HardwareProfile, HardwareProfileSource } from "../types";
 import "./HardwareProfileChoices.css";
@@ -78,8 +79,9 @@ export function HardwareProfileChoices({ catalog, profileId, source, disabled = 
       className="profile-cards wide"
       role="radiogroup"
       aria-label={t(game ? "硬件档位" : "默认硬件档位")}
+      onKeyDown={navigateRadioGroup}
     >
-      {profiles.map(([id, label]) => {
+      {profiles.map(([id, label], index) => {
         const info = catalog?.[id];
         const card = profileGuide[id];
         if (!card) return null;
@@ -89,6 +91,7 @@ export function HardwareProfileChoices({ catalog, profileId, source, disabled = 
             className={`profile-card ${profileId === id ? "active" : ""}`}
             role="radio"
             aria-checked={profileId === id}
+            tabIndex={profileId === id || (index === 0 && !profileGuide[profileId]) ? 0 : -1}
             disabled={disabled}
             onClick={() => onSelect(id)}
           >

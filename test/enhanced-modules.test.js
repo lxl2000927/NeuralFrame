@@ -17,6 +17,10 @@ const ROOT = path.resolve(__dirname, '..');
 const PAYLOAD_DIR = require('./fixtures/payload').root;
 test.beforeEach(t => require('./fixtures/payload').use(t));
 
+function addNativeFg(gameDir) {
+  fs.copyFileSync(path.join(PAYLOAD_DIR,'streamline','sl.dlss_g.dll'), path.join(gameDir,'sl.dlss_g.dll'));
+}
+
 test('模块 A：真实 nvngx_dlssnr.dll CUDA Fatbin 架构扫描与 RTX 4070 Laptop (sm_89) 兼容性校验', () => {
   const nrPath = path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlssnr.dll');
   const info = neuralModels.inspectNeuralModelBinary(nrPath);
@@ -89,6 +93,9 @@ test('模块 B：RTX 4070 Laptop MFG 能力检测、严禁未验证提前标为�
   assert.equal(check16.valid, true);
   assert.equal(check16.version, '310.9.16.0');
   assert.equal(check16.supportsMfgX3X4, true);
+  for (const name of ['nvngx_dlss.dll','nvngx_dlssd.dll','sl.common.dll']) {
+    assert.equal(mfgManager.inspectDlssgBinary(path.join(PAYLOAD_DIR,'streamline',name)).valid,false,name);
+  }
 
   // 伪造 dlssg_to_fsr3 替换文件，必须被识别为伪装包装器并拦截
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mfg-fake-'));
@@ -98,6 +105,29 @@ test('模块 B：RTX 4070 Laptop MFG 能力检测、严禁未验证提前标为�
   const fakeCheck = mfgManager.inspectDlssgBinary(fakeDlssg);
   assert.equal(fakeCheck.valid, false);
   assert.equal(fakeCheck.isFakeWrapper, true);
+});
+
+test('classic MFG requires a game input before downloading and validates the active ASI host', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(),'nf-classic-mfg-input-'));
+  t.after(() => fs.rmSync(root,{recursive:true,force:true}));
+  const exePath = require('./fixtures/pe').writePe(path.join(root,'Game.exe'),{text:'D3D12CreateDevice'});
+  const configFile = path.join(root,'OptiScaler.ini');
+  const config = '[FrameGen]\nFGInput=upscaler\nFGOutput=dlssg\n';
+  fs.writeFileSync(configFile,config);
+  fs.copyFileSync(path.join(PAYLOAD_DIR,'streamline','nvngx_dlss.dll'),path.join(root,'nvngx_dlss.dll'));
+  const files = fs.readdirSync(root);
+  await assert.rejects(combinedManager.applyCombinedConfiguration(root,{exePath,mfgMode:'x3',
+    requirePayload:() => assert.fail('invalid input requested a payload')}),{code:'errMfgInput'});
+  assert.deepEqual(fs.readdirSync(root),files);
+  const {chosen} = await require('../src/core/scan').scanGame(root,exePath);
+  assert.ok(mfgManager.classicMfgTarget(chosen,null,'mfg-unlocker-asi').issue);
+  fs.copyFileSync(path.join(PAYLOAD_DIR,'enhanced','anr','dxgi.dll'),path.join(root,'dxgi.dll'));
+  require('./fixtures/optiscaler-streamline').addPrivateStreamline(root);
+  assert.deepEqual(mfgManager.classicMfgTarget(chosen,null),{backend:'mfg-unlocker-asi',issue:null});
+  for (const unsupported of [config.replace('dlssg','xefg'),config.replace('upscaler','xefg')]) {
+    fs.writeFileSync(configFile,unsupported);
+    assert.ok(mfgManager.classicMfgTarget(chosen,null,'mfg-unlocker-asi').issue);
+  }
 });
 
 test('模块 C：模拟 64位 DX12 游戏从模式 A 到 F 的完整配置、双插件协同、运行时日志验证与一键无损还原', async (t) => {
@@ -113,6 +143,7 @@ test('模块 C：模拟 64位 DX12 游戏从模式 A 到 F 的完整配置、双
   const exePath = path.join(gameDir, 'GameDX12.exe');
   const exeBytes = Buffer.concat([fs.readFileSync(hostExeSrc), Buffer.from('\0D3D12CreateDevice\0')]);
   fs.writeFileSync(exePath, exeBytes);
+  addNativeFg(gameDir);
 
   const origDlssPath = path.join(gameDir, 'nvngx_dlss.dll');
   const origDlssBytes = fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlss.dll'));
@@ -159,6 +190,11 @@ test('模块 C：模拟 64位 DX12 游戏从模式 A 到 F 的完整配置、双
   assert.equal(ini.getIni(reshadeIniText, 'RenoDX.MFGUnlock', 'TemporalFix'), '1');
   assert.equal(ini.getIni(reshadeIniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode'), '1');
   assert.equal(resE.status.diagnostics.coExecution.slChainCheck.ok, true);
+  const activeConsumer = path.join(gameDir,'renodx-dlss5.addon64');
+  const expectedConsumer = fs.readFileSync(activeConsumer);
+  const damaged = Buffer.from(expectedConsumer);
+  damaged[damaged.length-1] ^= 1;
+  fs.writeFileSync(activeConsumer,damaged);
 
   // 模式 F：切换至 DLSS 5 + MFG x4 并模拟真实运行时日志写回，测试运行时生效验证
   await combinedManager.applyCombinedConfiguration(gameDir, {
@@ -176,6 +212,7 @@ test('模块 C：模拟 64位 DX12 游戏从模式 A 到 F 的完整配置、双
   ].join('\n'), 'utf8');
 
   const statusF = await combinedManager.inspectCombinedStatus(gameDir, { payloadDir: PAYLOAD_DIR, userDataDir });
+  assert.deepEqual(fs.readFileSync(activeConsumer),expectedConsumer,'reapplying NR repairs a same-size change to its managed addon');
   assert.equal(statusF.mfg.runtimeVerification.verifiedActive, false, 'a game folder log does not identify a live process');
   assert.equal(statusF.mfg.runtimeVerification.effectiveMultiplier, 4);
   assert.equal(statusF.mfg.status, statusF.mfg.gpuSupport.nativeX3X4 ? 'verified' : 'experimental');
@@ -199,6 +236,7 @@ test('applying MFG alone preserves tuning and restores the chosen stack on the n
   const writePe = require('./fixtures/pe').writePe;
   const exe = writePe(path.join(gameDir, 'Game.exe'), {text:'D3D11CreateDevice'});
   writePe(path.join(gameDir, 'nvngx_dlssnr.dll'));
+  addNativeFg(gameDir);
   fs.writeFileSync(path.join(gameDir, 'renodx-dlss5.addon64'), 'fixture');
   const iniPath = path.join(gameDir, 'ReShade.ini');
   fs.writeFileSync(iniPath, '[OVERLAY]\nUiLanguage=en-US\n[RenoDX.DLSS5]\nUiLanguage=en-US\nNRResolutionScale=0.625\nNRMaxWorksets=5\n');
@@ -296,6 +334,7 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
 
   const hostExeSrc = path.join(PAYLOAD_DIR, 'feeder', 'dlss5-feed-host64.exe');
   const exePath = path.join(gameDir, 'GameDesktopDX12.exe');
+  addNativeFg(gameDir);
   fs.writeFileSync(exePath, Buffer.concat([fs.readFileSync(hostExeSrc), Buffer.from('\0D3D12CreateDevice\0')]));
   fs.writeFileSync(path.join(gameDir, 'nvngx_dlss.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlss.dll')));
 
@@ -366,6 +405,28 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
   assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'RaiseFrameCeiling'), '1');
 });
 
+test('MFG and neural runtime deployment preserve incompatible DLLs beside the selected game', async t => {
+  const {writePe} = require('./fixtures/pe');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-runtime-bitness-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  for (const name of ['nvngx_dlssg.dll', 'nvngx_dlssnr.dll', 'nvngx_dlss.dll']) {
+    const game = path.join(root, name);
+    const exePath = writePe(path.join(game,'Game.exe'), {text:'D3D12CreateDevice'});
+    const runtime = writePe(path.join(game,name), {bitness:32});
+    addNativeFg(game);
+    const original = fs.readFileSync(runtime);
+    const config = {exePath, gpuName:'NVIDIA GeForce RTX 4070', payloadDir:PAYLOAD_DIR, userDataDir:path.join(root,'profile')};
+    const action = name === 'nvngx_dlssg.dll'
+      ? () => mfgManager.applyMfgConfiguration(game, {...config, mode:'x2'})
+      : () => neuralModels.applyNeuralModelSelection(game, config);
+    await assert.rejects(action, {code:'errRuntimeArchitecture'});
+    assert.deepEqual(fs.readFileSync(runtime), original);
+    assert.equal(fs.existsSync(path.join(game,'ReShade.ini')), false);
+    assert.equal(fs.existsSync(path.join(game,'_DLSS5_Backup','manifest.json')), false);
+    if (name !== 'nvngx_dlssnr.dll') assert.equal(fs.existsSync(path.join(game,'nvngx_dlssnr.dll')), false);
+  }
+});
+
 test('MFG preview and apply preserve other early ReShade addons and restore the original INI', async t => {
   const layer = require('../src/core/vulkan-layer');
   t.mock.method(layer, 'register', () => assert.fail('DirectX installs must not register a Vulkan layer'));
@@ -377,9 +438,11 @@ test('MFG preview and apply preserve other early ReShade addons and restore the 
   t.after(() => fs.rmSync(root, {recursive:true, force:true}));
   const game = path.join(root,'Game'), userDataDir = path.join(root,'Profile');
   writePe(path.join(game,'Play.exe'), {text:'D3D12CreateDevice'});
+  fs.copyFileSync(path.join(PAYLOAD_DIR,'streamline','nvngx_dlssg.dll'),path.join(game,'nvngx_dlssg.dll'));
   writePe(path.join(game,'nvngx_dlss.dll'), {version:[3,8,0,0]});
   const file = path.join(game,'ReShade.ini');
-  const original = '[ADDON]\r\nLoadFromDllMain=HDR.addon64,renodx-mfgunlock.addon64.backup,Overlay.addon64\r\n[OtherPlugin]\r\nLoadFromDllMain=third-party-setting\r\n';
+  writePe(path.join(game, 'sl.common.dll'), {bitness:32});
+  const original = '[ADDON]\r\nLoadFromDllMain=HDR.addon64,renodx-mfgunlock.addon64.backup,Overlay.addon64\r\n[OtherPlugin]\r\nLoadFromDllMain=third-party-setting\r\nEnableHooks=keep\r\n[RenoDX.DLSS5]\r\n EnableHooks = 1\r\n';
   fs.writeFileSync(file,original);
   const review = new ComponentReview(userDataDir);
   const run = async config => {
@@ -395,6 +458,8 @@ test('MFG preview and apply preserve other early ReShade addons and restore the 
     assert.equal(sha(written), iniChange.after.sha256);
     const text = written.toString('utf8');
     assert.equal(ini.getIni(text,'OtherPlugin','LoadFromDllMain'),'third-party-setting');
+    assert.equal(ini.getIni(text,'OtherPlugin','EnableHooks'),'keep');
+    if (config.neuralMode === 'latest_compatible') assert.equal(ini.getIni(text,'RenoDX.DLSS5','EnableHooks'),null);
     return ini.getIni(text,'ADDON','LoadFromDllMain').split(',');
   };
   const foreign = ['HDR.addon64','renodx-mfgunlock.addon64.backup','Overlay.addon64'];
@@ -403,12 +468,153 @@ test('MFG preview and apply preserve other early ReShade addons and restore the 
   assert.deepEqual(await run({mfgMode:'x3',neuralMode:'latest_compatible'}),expected);
   assert.deepEqual(await run({mfgMode:'off'}),foreign);
   await run({mfgMode:'x2'});
+  addNativeFg(game);
+  fs.copyFileSync(path.join(PAYLOAD_DIR,'enhanced','anr','dxgi.dll'),path.join(game,'d3d12.dll'));
+  require('./fixtures/optiscaler-streamline').addPrivateStreamline(game);
+  const hostFile = path.join(game,'OptiScaler.ini');
+  fs.writeFileSync(hostFile,'[FrameGen]\nFGOutput=dlssg\nFGInput=dlssg\n[DLSSG]\nOverrideInterpolationCount=3\nForceDMFG=true\n');
+  const control = path.join(game, 'RTXMFG-Universal.json');
+  const originalControl = '{"mode":"follow","followGame":true,"multiplier":4,"dlss5StructureIntensity":1.5}';
+  fs.writeFileSync(control,originalControl);
   await mfgManager.applyMfgConfiguration(game, {mode:'x2', backend:'mfg-unlocker-asi', payloadDir:PAYLOAD_DIR});
   assert.deepEqual(ini.getIni(fs.readFileSync(file,'utf8'),'ADDON','LoadFromDllMain').split(','), foreign);
+  assert.equal(ini.getIni(fs.readFileSync(hostFile,'utf8'),'DLSSG','OverrideInterpolationCount'),'1');
+  assert.equal(mfgManager.readCurrentMfgConfiguration(game).mode,'x2','OptiScaler controls the actual configured ratio');
+  assert.equal(fs.readFileSync(control,'utf8'),originalControl);
+  await mfgManager.applyMfgConfiguration(game, {mode:'off',payloadDir:PAYLOAD_DIR});
+  assert.equal(ini.getIni(fs.readFileSync(hostFile,'utf8'),'DLSSG','OverrideInterpolationCount'),'3');
+  assert.equal(ini.getIni(fs.readFileSync(hostFile,'utf8'),'DLSSG','ForceDMFG'),'true');
+  assert.equal(fs.readFileSync(control,'utf8'),originalControl);
   assert.equal(await backends.restore(game, undefined, undefined, {
     vulkanLayerTarget: path.join(userDataDir, 'reshade-vulkan')
   }), true);
   assert.deepEqual(fs.readFileSync(file), Buffer.from(original));
+});
+
+test('MFG inspection respects disabled host loaders and textual ReShade booleans', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(),'nf-mfg-disabled-'));
+  t.after(() => fs.rmSync(root,{recursive:true,force:true}));
+  const {writePe} = require('./fixtures/pe');
+  writePe(path.join(root,'OptiScaler','plugins','MFGUnlocker.asi'));
+  fs.writeFileSync(path.join(root,'OptiScaler.ini'),'[Plugins]\nLoadAsiPlugins=FALSE\n');
+  assert.equal(mfgManager.readCurrentMfgConfiguration(root).mode,'off');
+  for (const field of ['Enabled=false','FGOutput=XeFG','FGNvngxReplacement=Apex Neural Rendering FG']) {
+    fs.writeFileSync(path.join(root,'OptiScaler.ini'),'[DLSSG]\nOverrideInterpolationCount=2\n[FrameGen]\n'+field);
+    assert.equal(mfgManager.readCurrentMfgConfiguration(root).mode,'off',field);
+  }
+  writePe(path.join(root,'renodx-mfgunlock.addon64'));
+  fs.writeFileSync(path.join(root,'ReShade.ini'),'[RenoDX.MFGUnlock]\nEnabled=FALSE\nTemporalFix=False\n');
+  const state = mfgManager.readCurrentMfgConfiguration(root);
+  assert.equal(state.mode,'off');
+  assert.equal(state.settings.temporalFix,false);
+});
+
+test('an unrecognized addon beside a genuine DLSS-G runtime does not confirm an installed MFG stack', async t => {
+  const game = fs.mkdtempSync(path.join(os.tmpdir(),'nf-mfg-engine-identity-'));
+  t.after(()=>fs.rmSync(game,{recursive:true,force:true}));
+  const {writePe} = require('./fixtures/pe');
+  writePe(path.join(game,'Game.exe'),{text:'D3D12CreateDevice'});
+  writePe(path.join(game,'renodx-mfgunlock.addon64'),{version:[1,5,5,0]});
+  fs.copyFileSync(path.join(PAYLOAD_DIR,'streamline','nvngx_dlssg.dll'),path.join(game,'nvngx_dlssg.dll'));
+  const status = await mfgManager.inspectGameMfgStatus(game,{gpuName:'NVIDIA GeForce RTX 5090'});
+  assert.equal(status.currentConfig.recognizedBuild,false);
+  assert.equal(status.status,'untested');
+  assert.ok(status.conflicts.some(c=>c.code==='MFG_CONFIGURATION_UNVERIFIED'));
+});
+
+test('direct NR and MFG tuning keep an existing receipt on its original executable', async t => {
+  const {writePe} = require('./fixtures/pe');
+  const apply = require('../src/core/apply');
+  for (const [feature, configure] of [
+    ['NR', neuralModels.applyNeuralModelSelection], ['MFG', mfgManager.applyMfgConfiguration]
+  ]) await t.test(feature, async t => {
+    const game = fs.mkdtempSync(path.join(os.tmpdir(),'nf-receipt-target-'));
+    t.after(() => fs.rmSync(game,{recursive:true,force:true}));
+    const owner = writePe(path.join(game,'Primary','Primary.exe'),{text:'D3D12CreateDevice'});
+    const other = writePe(path.join(game,'Other','Other.exe'),{text:'D3D12CreateDevice'});
+    const receipt = apply.beginManifest(game,owner,'dxgi');
+    receipt.route = 'native';
+    await apply.saveActiveManifest(game,receipt);
+    const before = fs.readFileSync(path.join(game,'_DLSS5_Backup','manifest.json'));
+    await assert.rejects(() => configure(game,{exePath:other,mode:'off'}),/所选游戏程序/);
+    assert.deepEqual(fs.readFileSync(path.join(game,'_DLSS5_Backup','manifest.json')),before);
+    assert.deepEqual(fs.readdirSync(path.dirname(other)),['Other.exe']);
+  });
+});
+
+test('ASI releases only the host settings it wrote on Off, switch, retry and full restore', async t => {
+  const game = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-asi-settings-'));
+  t.after(() => fs.rmSync(game, { recursive: true, force: true }));
+  require('./fixtures/pe').writePe(path.join(game, 'Game.exe'), { text: 'D3D12CreateDevice' });
+  addNativeFg(game);
+  fs.copyFileSync(path.join(PAYLOAD_DIR,'enhanced','anr','dxgi.dll'),path.join(game,'dxgi.dll'));
+  require('./fixtures/optiscaler-streamline').addPrivateStreamline(game);
+  const file = path.join(game, 'OptiScaler.ini');
+  const original = '\uFEFF[Plugins]\r\nLoadAsiPlugins = false\r\n[FrameGen]\r\nFGInput=dlssg\r\nFGOutput=dlssg\r\nEnabled=false\r\nFGNvngxReplacement=auto\r\n[Other]\r\nValue=99';
+  fs.writeFileSync(file, original, 'utf16le');
+  const configure = (mode, backend = 'mfg-unlocker-asi') => mfgManager.applyMfgConfiguration(game, {
+    mode, backend, upgradeDlssg: false, payloadDir: PAYLOAD_DIR
+  });
+  const read = () => fs.readFileSync(file,'utf8');
+  await configure('off');
+  assert.equal(fs.readFileSync(file,'utf16le'), original);
+  await assert.rejects(() => configure('x2'), {code:'errMfgInput'});
+  assert.equal(fs.readFileSync(file,'utf16le'), original);
+  fs.writeFileSync(file,original,'utf8');
+  await configure('x2');
+  assert.equal(ini.getIni(read(), 'Plugins', 'LoadAsiPlugins'), 'true');
+  assert.equal(ini.getIni(read(), 'FrameGen', 'Enabled'), 'true');
+  assert.equal(ini.getIni(read(), 'FrameGen', 'FGNvngxReplacement'), 'none');
+  assert.equal(ini.getIni(read(), 'DLSSG', 'InterpolationCount'), '1');
+  await configure('x4');
+  await configure('off');
+  assert.equal(read(), original);
+  await configure('x2');
+  fs.writeFileSync(file, read().replace('InterpolationCount=1', 'InterpolationCount=auto').replace('Value=99', 'Value=120'), 'utf8');
+  await configure('x3');
+  fs.writeFileSync(file, read().replace('OverrideInterpolationCount=2', 'OverrideInterpolationCount=8'), 'utf8');
+  await configure('x3', 'renodx-mfgunlock');
+  const userText = read();
+  assert.equal(ini.getIni(userText, 'Plugins', 'LoadAsiPlugins'), 'false');
+  assert.equal(ini.getIni(userText, 'DLSSG', 'InterpolationCount'), 'auto');
+  assert.equal(ini.getIni(userText, 'DLSSG', 'OverrideInterpolationCount'), '8');
+  assert.equal(ini.getIni(userText, 'Other', 'Value'), '120');
+  assert.equal(ini.getIni(userText, 'MfgUnlock', 'Enabled'), null);
+  await configure('off');
+  assert.equal(read(), userText, 'a later Off leaves an already released external host alone');
+  await configure('x4');
+  await backends.restore(game);
+  assert.equal(read(), userText, 'full restore releases active ASI fields while preserving in-game changes');
+});
+
+test('ASI upgrades old receipts and restores absent settings separately from explicit auto values', async t => {
+  const game = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-asi-legacy-'));
+  t.after(() => fs.rmSync(game, { recursive: true, force: true }));
+  const exe = require('./fixtures/pe').writePe(path.join(game, 'Game.exe'), { text: 'D3D12CreateDevice' });
+  const apply = require('../src/core/apply');
+  const file = path.join(game, 'OptiScaler.ini');
+  const original = '[FrameGen]\nFGInput=upscaler\nFGOutput=dlssg\n[DLSSG]\nOverrideInterpolationCount=auto\n';
+  for (const dlssgReceipt of [true, false]) {
+    fs.writeFileSync(file, original);
+    const manifest = apply.beginManifest(game, exe, 'dxgi');
+    manifest.mfg = { backend: 'mfg-unlocker-asi', mode: 'x3', multiplier: 3 };
+    let active = original + '[Plugins]\nLoadAsiPlugins=true\n';
+    if (dlssgReceipt) {
+      manifest.mfg.optiDlssg = { InterpolationCount: 'auto', OverrideInterpolationCount: 'auto' };
+      active = active.replace('OverrideInterpolationCount=auto', 'OverrideInterpolationCount=2\nInterpolationCount=2');
+    } else {
+      fs.writeFileSync(path.join(game, 'RTXMFG-Universal.json'), '{"temporalFix":true}');
+      await apply.writeTracked(manifest, game, path.join(game, 'RTXMFG-Universal.json'), '{"temporalFix":false}', { kind:'config' });
+      active += '[MfgUnlock]\nEnabled=true\nForceMultiplier=3\nTemporalFix=false\n';
+    }
+    await apply.writeTracked(manifest, game, file, active, { kind:'config' });
+    if (dlssgReceipt) {
+      await mfgManager.applyMfgConfiguration(game, { mode: 'off' });
+      assert.equal(fs.readFileSync(file, 'utf8'), original);
+    }
+    await backends.restore(game);
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+  }
 });
 
 test('MFG-only rejects an unsupported DirectX 11 game before resolving payload or writing game files', async (t) => {
@@ -448,8 +654,9 @@ test('external 2.3.0 components survive disabling both modules, repeated Off, an
     await neuralModels.applyNeuralModelSelection(game, {mode:'off',payloadDir:PAYLOAD_DIR,userDataDir:root});
     await mfgManager.applyMfgConfiguration(game, {mode:'off',payloadDir:PAYLOAD_DIR});
     assert.equal(fs.readFileSync(path.join(game, 'nvngx_dlssnr.dll'), 'utf8'), 'game-supplied runtime');
-    for (const rel of ['renodx-dlss5.addon64', 'OptiScaler/plugins/MFGUnlocker.asi','RTXMFG-Universal.json'])
+    for (const rel of ['renodx-dlss5.addon64', 'OptiScaler/plugins/MFGUnlocker.asi'])
       assert.equal(fs.existsSync(path.join(game, rel)), false, rel);
+    assert.equal(fs.readFileSync(path.join(game,'RTXMFG-Universal.json'),'utf8'),pending.get('RTXMFG-Universal.json'));
   }
   assert.equal(await backends.restore(game), true);
   for (const [rel, text] of pending) assert.equal(fs.readFileSync(path.join(game, rel), 'utf8'), text, rel);

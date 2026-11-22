@@ -1,6 +1,5 @@
 const {_electron:electron}=require('@playwright/test');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
-// Browser plugin not available in the local CLI; exercise the actual Electron UI.
 const root=path.resolve(__dirname,'..');
 const out=process.env.NEURALFRAME_QA_OUT || fs.mkdtempSync(path.join(os.tmpdir(),'neuralframe-ui-'));
 const profile=path.join(out,'profile');fs.mkdirSync(profile,{recursive:true});
@@ -31,25 +30,41 @@ const env={...process.env,NEURALFRAME_USER_DATA:profile,DLSS5_LIGHTWEIGHT:'1'};d
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     const nav=page.getByRole('navigation');
     const started=performance.now();await nav.getByRole('button',{name:'游戏',exact:true}).click();
+    const graphicsReady = page.locator('.game-tab-content > fieldset, .game-tab-content > [role="alert"]').first();
+    await graphicsReady.waitFor();
+    const initialReadyMs=Math.round(performance.now()-started);
     const multiplier=page.getByRole('radiogroup',{name:'补帧倍率',exact:true});
-    await multiplier.waitFor();const initialReadyMs=Math.round(performance.now()-started);
-    const initial=await multiplier.getByRole('radio',{checked:true}).innerText();
-    const choice=multiplier.getByRole('radio',{name:/^(?:x3|3×)/});await choice.click();
+    // Some routes have their own editor; others expose only the Off option.
+    const alternative = multiplier.getByRole('radio',{name:/^(?:x[234]|[234]×)/,checked:false,disabled:false}).first();
+    if (!await alternative.count()) {
+      const games=page.locator('.game-list .game-row');
+      for (const tile of await games.all()) {
+        await tile.click();
+        await graphicsReady.waitFor();
+        if (await alternative.count()) break;
+      }
+    }
+    const selected = multiplier.getByRole('radio',{checked:true});
+    const draftAvailable = await alternative.count() > 0;
+    const initial = draftAvailable ? await selected.innerText() : '';
+    const edited = draftAvailable ? await alternative.innerText() : '';
+    if (draftAvailable) await alternative.click();
     await nav.getByRole('button',{name:'设置',exact:true}).click();
     await page.getByRole('region',{name:'硬件信息',exact:true}).locator('.hardware-information').waitFor();
     assert.equal(await page.getByRole('combobox',{name:'默认硬件档位',exact:true}).count(),0);
     assert.equal(await nav.getByRole('button',{name:'档位',exact:true}).count(),0);
     await nav.getByRole('button',{name:'游戏',exact:true}).click();
-    assert.equal(await choice.getAttribute('aria-checked'),'true','Navigation preserves the draft');
-    const undo=page.locator('.game-detail .apply-bar').getByRole('button',{name:'撤销',exact:true});
-    if(await undo.isEnabled())await undo.click();
-    assert.equal(await multiplier.getByRole('radio',{checked:true}).innerText(),initial);
+    if (draftAvailable) {
+      assert.equal(await selected.innerText(),edited,'Navigation preserves the draft');
+      await page.locator('.game-detail .apply-bar').getByRole('button',{name:'撤销',exact:true}).click();
+      assert.equal(await selected.innerText(),initial);
+    }
     await page.screenshot({path:path.join(out,'games-desktop.png')});
     const testedGames=[];
     for(const pattern of [/Wuthering Waves|鸣潮/,/Star Rail|星穹铁道/]){
       const game=page.locator('.game-list').getByRole('button',{name:pattern}).first();
       if(!await game.count())continue;
-      await game.click();await multiplier.waitFor();testedGames.push(await game.innerText());
+      await game.click();await graphicsReady.waitFor();testedGames.push(await game.innerText());
       await page.getByRole('tab',{name:'运行诊断',exact:true}).click();
       await page.locator('.runtime-block').first().waitFor();
       await page.getByRole('tab',{name:'组件与版本',exact:true}).click();
@@ -97,7 +112,7 @@ const env={...process.env,NEURALFRAME_USER_DATA:profile,DLSS5_LIGHTWEIGHT:'1'};d
       await nav.getByRole('button',{name:'设置',exact:true}).click();
     }
     assert.deepEqual(errors,[]);
-    fs.writeFileSync(path.join(out,'ui-result.json'),JSON.stringify({initialReadyMs,testedGames,errors,checks:['real game reads','draft preservation','undo','runtime and inventory','navigation','960px layout','light/dark']},null,2));
+    fs.writeFileSync(path.join(out,'ui-result.json'),JSON.stringify({initialReadyMs,testedGames,errors,checks:['real game reads',...(draftAvailable?['draft preservation','undo']:[]),'runtime and inventory','navigation','960px layout','light/dark']},null,2));
     console.log('Real-library UI checks passed:',out);
   }finally{await app.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -1,8 +1,8 @@
-const {_electron:electron,expect}=require('@playwright/test');
+const { launchFixture } = require('../test/fixtures/launch-electron.cjs');
+const { expect } = require('@playwright/test');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
 const {componentCompatibility}=require('../src/core/component-compatibility');
 const {DEFINITIONS}=require('../src/core/component-definitions');
-const root=path.resolve(__dirname,'..'),env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
 const output=process.env.NEURALFRAME_QA_OUT;
 if(output)fs.mkdirSync(output,{recursive:true});
 const compatibility=(component,extra={})=>componentCompatibility({component,...extra});
@@ -40,7 +40,7 @@ const expectedFacts={
  selectable:[/游戏页预览.*检查游戏支持/,/校验|选择|支持/,/游戏页选择.*预览/],
 };
 (async()=>{
- const app=await electron.launch({executablePath:require('electron'),args:[path.join(root,'test/fixtures/neuralframe-flow-main.cjs')],env});
+ const { app, close } = await launchFixture();
  try {
   const p=await app.firstWindow();p.setDefaultTimeout(15000);
   const errors=[];p.on('pageerror',error=>errors.push(error.message));
@@ -57,7 +57,7 @@ const expectedFacts={
    const row=catalog.locator('[data-version-id]');await expect(row).toHaveCount(1);
    await expect(row).toHaveAttribute('data-version-id',id);
    await expect(row.locator('.component-status')).toHaveText(label);
-   await expect(row.locator('.component-condition')).not.toHaveText('');
+   await expect(row.locator('.component-status')).toHaveAttribute('title',/\S/);
    if(action)await expect(row.getByRole('button',{name:action,exact:true})).toBeEnabled();
    await row.locator('.component-status').click();
    const drawer=p.locator('.component-drawer');await expect(drawer).toBeVisible();
@@ -93,5 +93,5 @@ const expectedFacts={
   assert.equal(audit.libraryDownload,undefined,'Reviewing status must not trigger downloads');
   assert.deepEqual(errors,[]);
   console.log('Component status UI: 9 states, filters, reasons, next steps, action labels and compact layout passed.');
- } finally {await app.close();}
+ } finally {await close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1,8 +1,14 @@
-# RTX Encore 接入（调试版，推荐 2.4.1）
+# RTX Encore 接入（推荐 2.5.0）
 
-游戏页 → 画质与补帧 → 安装与运行环境 → 渲染后端选择 **RTX Encore**。引擎版本区分别显示已安装、推荐和上次检查得到的上游最新版本。首次安装推荐 2.4.1；已有安装默认保持原版，只有明确选择推荐或库内已适配版本才换版。保留原版 2.3.0 选择。选择本身不下载、不写游戏文件；调整参数后点击「预览并应用 Encore 配置」，按需准备组件、检查变更、确认后部署。需要关闭游戏，应用后重新启动，游戏内按 **Insert** 打开 Encore 面板。
+在游戏页的「画质与补帧 → 安装与运行环境」选择 **RTX Encore**。首次安装推荐 2.5.0，已有安装保持当前引擎。可显式选择推荐版本，或选择已入库的原版 2.3.0、2.4.1、2.4.2。关闭游戏后调整参数，点击「预览并应用 Encore 配置」，检查变更并确认。重新启动游戏后按 **Insert** 打开 Encore 面板。
 
 ## 当前范围
+
+Encore 仅供离线游戏使用。应用检查目标目录与程序附近的反作弊组件，发现已知保护时阻止预览和部署。无法由文件判断的在线模式请按作者要求避开。[上游安装说明](https://github.com/SilyNoMeta/rtx-encore/blob/v2.5.0/docs/INSTALLATION.md)
+
+在无原生 DLSS 超分的目标中，2.5.0 提供 **MWSR、NIS、FSR 1**。选择空间超分时将输出设为屏幕分辨率。DX11 / DX12 游戏需以同宽高比的小窗口运行，每个维度最多放大两倍。Vulkan 需要游戏使用兼容的呈现格式。只开启空间超分时，首次安装只部署 Encore、对应的第三方声明与 JSONC。参数可随 Encore 预设导出和导入。[上游使用指南](https://github.com/SilyNoMeta/rtx-encore/blob/v2.5.0/docs/GAMES-WITHOUT-DLSS.md)
+
+空间锐化范围为 0–100%，默认 30%。SMAA 1x 和 FXAA 3.11 都能在缩放前或缩放后运行，HUD 也参与处理。SMAA 另有低、中、高、极高四档。应用会保留其他锐化设置和游戏中的独立调参。游戏内效果取决于实际呈现路径。[上游配置字段](https://github.com/SilyNoMeta/rtx-encore/blob/v2.5.0/docs/SETTINGS.md#superresolutionsharpening)
 
 - 首批适配 Windows 上的 64 位 DX11、DX12、Vulkan、NVIDIA RTX 20/30/40/50 系列。游戏目录未发现原生 FG 文件才开放新增帧生成路线；这是文件检查，不是完整的引擎能力证明。
 - 新增 DLSS 帧生成 Off / 2–6×，5–6× 标记实验性；运动估计选择游戏矢量（缺失时回退）、Encore、vort Shader、NVIDIA Optical Flow 质量/速度。
@@ -13,9 +19,11 @@
 
 ## 部署与配置保护
 
-组件检查更新直接读取 [SilyNoMeta/rtx-encore](https://github.com/SilyNoMeta/rtx-encore/releases) 的 Releases。推荐 [v2.4.1](https://github.com/SilyNoMeta/rtx-encore/releases/tag/v2.4.1) 压缩包 SHA-256：`e5383604a9289c70c8a47e73e4c22503c9e5834d9ed0058dc4754b3d79409202`；主 DLL SHA-256：`9a6dcc15058919618959edfa4510f5ffb913f4facf265c99ca3c49bc49c170c2`。旧 2.3.0 DLL 指纹 `b668a747e5eba576b544e4c6a790ce9c2d52b80389fe4f6ec999b6020f612471` 继续适配。未知指纹版本可以下载留存，完成协议与加载适配前不开放应用；版本名称不能代替文件校验。保留上游第三方声明。公开仓库是文档和发布入口，不是引擎源码。
+组件检查更新读取作者的发行仓库。2.5.0 原包 SHA-256 为 `249a22ff63bbbeedc29d1509c1f7bb21570e18cf09a1ae3eeba775855beacbda`，主 DLL 为 `58fff4489e2222cb263e17142613693869acec458e0fa0b7ab260482fbf8c762`。清单另行校验该版第三方声明。历史引擎保留各自的文件指纹与声明，游戏页仅应用已适配的指纹。[官方 2.5.0 发行包](https://github.com/SilyNoMeta/rtx-encore/releases/tag/v2.5.0)
 
 加载文件按 `version.dll`、`dinput8.dll`、`winmm.dll`、`dxgi.dll` 顺序选择空闲名称，只部署一份。保留其他工具占用的代理；发现未知 Encore、MFG、OptiScaler、RenoDX NR 或 Feeder 冲突时拒绝叠装。首批尚无手动覆盖代理名称入口。
+
+开发环境可将作者的 `RTX-Encore-v2.5.0.zip` 放入 `vendor/component-cache/`。采集脚本校验压缩包、主 DLL 和声明，再写入 `payload/enhanced/encore/`。发行版仍通过组件库从作者的发行页按需获取。
 
 新增 FG 固定使用 `nvngx_dlssg.dll` 310.9.16 及 Streamline 2.14.16 的 `sl.interposer.dll`、`sl.common.dll`、`sl.dlss_g.dll`、`sl.reflex.dll`、`sl.pcl.dll`。这些文件位于所选 EXE 旁。未知同名文件不覆盖，原有深层 DLSS/Streamline 文件不替换。组件页可以准备 Encore 缓存，实际应用由游戏页统一管理；存在其他运行库版本覆盖时给出提示并保留原选择。
 

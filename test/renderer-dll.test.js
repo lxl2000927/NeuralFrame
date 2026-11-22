@@ -38,6 +38,40 @@ test('the executable has to match the renderer’s bitness', async (t) => {
   assert.equal(found.emptyReason, 'renderer-in-dll', 'still named, so the message is honest');
 });
 
+test('a UnityPlayer with two Direct3D backends does not qualify the game for DX12-only components', async t => {
+  const dir = temp(t);
+  writePe(path.join(dir,'Game.exe'));
+  writePe(path.join(dir,'UnityCrashHandler64.exe'),{text:'D3D12CreateDevice'});
+  const player = path.join(dir,'UnityPlayer.dll');
+  writePe(player,{text:'D3D11CreateDevice D3D12CreateDevice'});
+  const scan = await scanGame(dir);
+  assert.deepEqual(scan.exeCandidates.map(exe=>exe.name),['Game.exe']);
+  assert.equal(scan.chosen.apiLabel,'DirectX 11/12');
+  assert.equal(require('../src/shared/install-routes').supportsMfg(scan.chosen),false);
+  const wrapper = path.join(dir,'d3d12.dll');
+  writePe(wrapper,{text:'vkd3d vkGetInstanceProcAddr'});
+  assert.equal((await scanGame(dir)).chosen.apiLabel,'DirectX 11/12');
+  fs.unlinkSync(wrapper);
+  writePe(player,{text:'D3D11CreateDevice'});
+  assert.equal((await scanGame(dir)).chosen.apiLabel,'DirectX 11');
+});
+
+test('independent renderer modules describe each build alongside an already detected executable', async t => {
+  const dir = temp(t);
+  const main = writePe(path.join(dir,'Direct','Main.exe'), {text:'D3D12CreateDevice'});
+  const wrapped = writePe(path.join(dir,'Variant','Game.exe'));
+  writePe(path.join(dir,'Variant','CryRender.dll'), {text:'D3D11CreateDevice'});
+  writePe(path.join(dir,'Variant','d3d11.dll'), {text:'DXVK vkGetInstanceProcAddr'});
+  const legacy = writePe(path.join(dir,'Classic','Game.exe'), {bitness:32});
+  writePe(path.join(dir,'Classic','ClassicRender.dll'), {bitness:32,text:'Direct3DCreate9'});
+  const scan = await scanGame(dir);
+  assert.equal(scan.chosen.path, main);
+  const variant = file => scan.exeCandidates.find(exe => exe.path === file);
+  assert.equal(variant(wrapped)?.api, 'vulkan');
+  assert.deepEqual(variant(wrapped).apiChoices.map(choice => choice.label), ['Vulkan','DirectX 11']);
+  assert.equal(variant(legacy)?.apiLabel, 'DirectX 9');
+});
+
 test('a browser engine or a shader compiler is not a renderer', async (t) => {
   const dir = temp(t);
   writePe(path.join(dir, 'Tool.exe'), { bitness: 64 });

@@ -1,7 +1,4 @@
 'use strict';
-// Gathers everything the published build ships with into payload/, which
-// electron-builder then copies next to the executable as resources/payload.
-// Run it before a build: npm run payload
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -374,6 +371,19 @@ for (const name of ['ReShade64.dll', 'ReShade64.json', 'ReShade32.dll', 'ReShade
 }
 
 await collectFeeder(source);
+
+// Encore stays an optional original release. Stage a locally cached author
+// archive for development without putting it in the distributable bootstrap.
+const encorePack = require('../src/core/runtime-catalog.json').packs.find(pack=>pack.id==='encore');
+if (fs.existsSync(path.join(CACHE,encorePack.archive))) {
+  const folder = await extracted([encorePack.archive,encorePack.url,encorePack.sha256],'RTX-Encore-'+encorePack.version);
+  for (const entry of encorePack.files) {
+    const file = path.join(folder,entry.archivePath);
+    if (fs.statSync(file).size !== entry.size || sha256(file) !== entry.sha256)
+      throw new Error('Encore release file does not match the runtime catalog: '+entry.archivePath);
+  }
+  for (const entry of encorePack.files) copyFile(path.join(folder,entry.archivePath),path.join(PAYLOAD,entry.path));
+}
 
 // 收集增强版新增的组件载荷（MFG 解锁插件、2026年10月 DLSS 310.9.16 / Streamline 2.14.16.0 运行时及 Feeder 1.19.0）
 const ENHANCED_CACHE = path.join(ROOT, 'vendor', 'enhanced-cache');

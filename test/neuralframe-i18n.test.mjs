@@ -44,6 +44,23 @@ test('live language switching translates UI text and preserves opaque paths and 
   assert.equal(t('Settings'), '设置');
   assert.equal(t('Change cover: 鸣潮'), '更换封面：鸣潮');
 });
+test('exact Chinese catalog keys bypass dynamic message pattern matching', () => {
+  setLanguage('zh');
+  const original = RegExp.prototype[Symbol.match];
+  let calls = 0;
+  RegExp.prototype[Symbol.match] = function (...args) {
+    calls++;
+    return original.call(this, ...args);
+  };
+  try {
+    assert.equal(t('游戏'), '游戏');
+    assert.equal(calls, 0);
+    assert.equal(t('恢复 2 个 · 移除 8 个'), '恢复 2 个 · 移除 8 个');
+    assert.ok(calls > 0);
+  } finally {
+    RegExp.prototype[Symbol.match] = original;
+  }
+});
 test('interpolated messages translate in both directions without losing quantities', () => {
   setLanguage('en');
   assert.equal(t('恢复 {0} 个 · 移除 {1} 个', [2, 8]), '2 restored · 8 removed');

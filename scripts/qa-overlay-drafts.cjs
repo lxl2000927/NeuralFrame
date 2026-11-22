@@ -1,10 +1,9 @@
-const {_electron:electron}=require('@playwright/test');
-const path=require('node:path'),assert=require('node:assert/strict');
-const root=path.resolve(__dirname,'..'),env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+const { launchFixture } = require('../test/fixtures/launch-electron.cjs');
+const assert=require('node:assert/strict');
 (async()=>{
  const failures=[];
  for(const scenario of ['pristine refresh','invalid custom switch','invalid new custom switch']){
-  const app=await electron.launch({executablePath:require('electron'),args:[path.join(root,'test/fixtures/neuralframe-flow-main.cjs')],env});
+  const { app, close } = await launchFixture();
   try{
    const page=await app.firstWindow();page.setDefaultTimeout(12000);
    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].show());
@@ -51,7 +50,7 @@ const root=path.resolve(__dirname,'..'),env={...process.env};delete env.ELECTRON
    }
    console.log('PASS:',scenario);
   }catch(error){failures.push(scenario);console.error('FAIL:',scenario,error.message);}
-  finally{await app.close();}
+  finally{await close();}
  }
  assert.deepEqual(failures,[]);
 })().catch(error=>{console.error(error);process.exitCode=1;});

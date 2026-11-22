@@ -98,10 +98,12 @@ function cached(file, expected) {
   try { return digest(file) === expected; } catch { return false; }
 }
 
-async function fetchBytes(url, signal) {
+async function fetchBytes(url, signal, headers = {}) {
   const timeout = AbortSignal.timeout(600000);
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'DLSS5-Swapper/2.1' },
+  const networkFetch = process.versions.electron && process.type === 'browser'
+    ? (...args) => require('electron').net.fetch(...args) : fetch;
+  const response = await networkFetch(url, {
+    headers: { 'User-Agent': 'NeuralFrame', ...headers },
     // A component is tens of megabytes. Two minutes was a timeout for the
     // connection, not for the transfer, and slow or filtered links lost
     // OptiScaler every time (#370, #373).

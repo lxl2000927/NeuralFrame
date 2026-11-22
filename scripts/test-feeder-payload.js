@@ -13,13 +13,14 @@ const config = require('../src/core/feeder-config');
 const { ensureDgVoodoo } = require('../src/core/runtime-components');
 
 (async () => {
-  const source = scanSource(path.join(__dirname, '../payload'));
+  const fixture = require('../test/fixtures/payload');
+  const source = scanSource(fixture.root);
   assert.equal(source.feeder.releaseVerified, true);
   assert.equal(source.feeder.version, require("../src/core/feeder-release").version);
-  // Download/cache only within the project, never the user's application data.
-  source.feeder.dgVoodooDir = await ensureDgVoodoo(path.join(__dirname, '../vendor/runtime-tests'));
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-payload-test-'));
   try {
+    fixture.seedRuntimeComponents(temp);
+    source.feeder.dgVoodooDir = await ensureDgVoodoo(temp);
     for (const [bitness, api] of [[32, 'd3d8'], [32, 'd3d9'], [64, 'd3d9'], [32, 'dxgi'], [64, 'dxgi']]) {
       const dir = path.join(temp, `${bitness}-${api}`);
       fs.mkdirSync(dir);

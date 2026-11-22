@@ -8,7 +8,7 @@ test('Encore eligibility separates native SR, native FG and owned added FG; defa
   const target = {bitness:64,api:'dxgi',apiLabel:'DirectX 12',hasNativeFg:false,hasNativeDlss:true};
   assert.ok(routes.routesFor(target).includes('encore'));
   assert.equal(routes.recommendedRoute({chosen:target,primaryDlss:{rel:'nvngx_dlss.dll',version:'3.7.0.0'}}),'native');
-  for (const patch of [{bitness:32},{api:'opengl'},{apiLabel:'DirectX 10'},{hasNativeFg:true},{hasNativeFg:undefined},{launcherProtected:true}])
+  for (const patch of [{bitness:32},{api:'opengl'},{apiLabel:'DirectX 10'},{hasNativeFg:true},{hasNativeFg:undefined},{launcherProtected:true},{antiCheatWarning:true}])
     assert.ok(routes.encoreReason({...target,...patch}),JSON.stringify(patch));
   assert.equal(routes.encoreReason({...target,api:'vulkan',apiLabel:'Vulkan'}),null);
   const files = [{name:'nvngx_dlss.dll',rel:'nvngx_dlss.dll'},{name:'sl.reflex.dll',rel:'sl.reflex.dll'}];
@@ -65,8 +65,15 @@ test('Encore added FG reads upstream game-mode X2 and omitted fixed X4 without c
     const settings = config.read(original);
     assert.equal(settings.mfgMode,expected);
     assert.doesNotThrow(()=>config.validate(settings));
-    const edited = config.read(config.configure(original,{...settings,neuralMode:'latest_compatible'},false));
+    const changed = config.configure(original,{...settings,neuralMode:'latest_compatible'},false);
+    const edited = config.read(changed);
     assert.equal(edited.mfgMode,expected,'editing NR preserves the already-effective added FG multiplier');
+    assert.equal(config.document(changed).frameGeneration.mode,frameGeneration.mode);
+    assert.equal(config.document(changed).frameGeneration.multiplier,frameGeneration.multiplier);
+    assert.equal(config.document(changed).renderingEngines,undefined);
+    const adjusted=config.document(config.configure(changed,{...edited,mfgMode:'x5'},false));
+    assert.equal(adjusted.frameGeneration.mode,'fixed');assert.equal(adjusted.frameGeneration.multiplier,5);
+    assert.equal(adjusted.renderingEngines.frameGenerationEngine,'dlss-fg');
   }
   for (const value of [
     {frameGeneration:{frameGenerationWithoutGameFg:true,mode:'dynamic'}},
@@ -115,11 +122,38 @@ test('Encore SR custom-scale limits depend on the selected version and never con
 test('Encore uses its own pinned runtime group and does not change Wuthering Waves dependencies', () => {
   assert.deepEqual(requiredPacks({route:'encore',config:{mfgMode:'x3'}}),['encore','sl-modern','fg-modern']);
   assert.deepEqual(requiredPacks({route:'encore',config:{neuralMode:'latest_compatible',encore:{upscaling:'dlss'}}}),['encore','sl-modern','fg-modern','sr-modern','nr-3108']);
+  assert.deepEqual(requiredPacks({route:'encore',config:{encore:{upscaling:'mwsr'}}}),['encore']);
+  assert.deepEqual(requiredPacks({route:'encore',config:{mfgMode:'x3',encore:{upscaling:'mwsr'}}}),['encore','sl-modern','fg-modern']);
   assert.deepEqual(requiredPacks({route:'wuwa-proxy',config:{mfgMode:'x3'}}),['mfg-universal','mfg-license']);
   const pack = catalog.packs.find(p=>p.id==='encore');
-  assert.equal(pack.repository,'SilyNoMeta/rtx-encore');assert.equal(pack.version,'2.4.1');
+  assert.equal(pack.repository,'SilyNoMeta/rtx-encore');assert.equal(pack.version,'2.5.0');
   assert.doesNotThrow(()=>new RuntimePayload(__dirname));
   for (const patch of [{url:'https://github.com/wrong/repo/releases/download/v2.3.0/RTX-Encore.zip'},
     {files:pack.files.map(f=>({...f,archivePath:'../outside.dll'}))}])
     assert.throws(()=>new RuntimePayload(__dirname,{manifest:{...catalog,packs:[{...pack,...patch}]}}));
+});
+
+test('2.5 spatial reconstruction round trips without enabling FG or NR and preserves menu edits',()=>{
+  const original='\uFEFF{\r\n // a game menu edit\r\n "superResolutionSharpening":{"srSharpness":81,"private":true},"dlssSuperResolution":{"dlssWithoutGameDlssOutput":"game"}\r\n}';
+  for (const upscaling of ['mwsr','nis','fsr1']) {
+    const request={...config.read(original),upscaling,spatialSharpness:0,spatialAa:'smaa',spatialAaPlacement:'after',spatialAaQuality:'ultra'};
+    const out=config.configure(original,request,false,'2.5.0'),value=config.document(out),read=config.read(out);
+    assert.ok(out.startsWith('\uFEFF') && out.includes('// a game menu edit'));
+    assert.deepEqual({...value.superResolutionSharpening},{srSharpness:81,private:true,spatialSharpness:0,spatialAa:'smaa',spatialAaPlacement:'after',spatialAaQuality:'ultra'});
+    assert.equal(value.dlssSuperResolution.dlssWithoutGameDlssEngine,upscaling);assert.equal(value.dlssSuperResolution.dlssWithoutGameDlssOutput,'screen');
+    assert.equal(read.neuralMode,'off');assert.equal(read.mfgMode,'off');assert.equal(read.upscaling,upscaling);
+    assert.equal(config.configure(out,read,false,'2.5.0'),out);
+    assert.throws(()=>config.configure(original,request,true,'2.5.0'),/原生 DLSS/);
+    assert.throws(()=>config.configure(original,request,false,'2.4.2'),/2.5.0/);
+    for (const patch of [{spatialSharpness:101},{spatialSharpness:0.5},{spatialAa:'msaa'},{spatialAaQuality:'max'},{spatialAaPlacement:'present'}])
+      assert.throws(()=>config.configure(original,{...request,...patch},false,'2.5.0'),/抗锯齿参数无效/);
+    const off=config.document(config.configure(out,{...read,upscaling:'off'},false,'2.5.0'));
+    assert.deepEqual(off.superResolutionSharpening,value.superResolutionSharpening);
+    assert.equal(off.dlssSuperResolution.dlssWithoutGameDlss,false);
+  }
+  const old='{"superResolutionSharpening":{"spatialAa":"private-menu-mode","spatialSharpness":70}}';
+  for (const version of ['2.3.0','2.4.1','2.4.2','2.5.0']) {
+    const v=config.document(config.configure(old,{...config.read(old),mfgMode:'x3'},false,version));
+    assert.deepEqual(v.superResolutionSharpening,config.document(old).superResolutionSharpening);
+  }
 });

@@ -6,7 +6,7 @@ const path = require('path');
 const extractZip = require('extract-zip');
 const pe = require('./pe');
 const ini = require('./feeder-config');
-const { cached, fetchVerified } = require('./runtime-components');
+const { cached, fetchBytes, fetchVerified } = require('./runtime-components');
 const { safePath } = require('./file-journal');
 // More than one pinned build, because upgrading one broke a game and there was
 // no way back: No Man's Sky runs on 0.1.1.5 and crashes on 0.2.0-patch1, and
@@ -44,6 +44,9 @@ const DIRECT = Object.freeze({
 const RELEASES = Object.freeze([
   Object.freeze({
     version: '0.2.0-patch1',
+    nativeVulkanNr: true,
+    host: {size:25863680, sha256:'114a1d18e79d90a011406b9467b4b6dc4d4948487c4b30289311def311174bce'},
+    forwarder: {size:114688, sha256:'17cf51d25d142d0be15fcac945cc928c37849a1cb61011cb9c742d72df86647c'},
     url: 'https://github.com/Dagherbou/OptiScaler_DLSSNR/releases/download/v0.2.0-patch1/OptiScaler-DLSSNR-v0.2.0-onimusha-fix.zip',
     sha256: '5db547216fa8a7dbd8ab0a193da1e3bce0ea4bd71f91189afa4ed2ede8bb9561',
     licenseUrl: 'https://raw.githubusercontent.com/Dagherbou/OptiScaler_DLSSNR/393e070/LICENSE',
@@ -53,6 +56,8 @@ const RELEASES = Object.freeze([
   // The pre-SR multipass fork, pinned at the Feeder author's fixed build.
   Object.freeze({
     version: '0.8.92-presr',
+    nativeVulkanNr: true,
+    host: {size:26477568, sha256:'696308c0af61800124dcf59fb0cc131372024d275e2cdf8500e5b28dd9e494a7'},
     label: '0.8.92 - pre-SR multipass',
     url: 'https://github.com/jlrouzies-fr/OptiScaler-DLSSNR-PreSR-Multipass/releases/download/v0.8.92/OptiScaler-NR-v0.8.92.zip',
     sha256: '9605352af2378eeb5ef96aedf69c648b36152eea40a388cb5413ca6a408bf728',
@@ -62,6 +67,8 @@ const RELEASES = Object.freeze([
   // validation; kept for the titles the newer build regressed on.
   Object.freeze({
     version: '0.1.1.5-dlssnr',
+    host: {size:25712640, sha256:'365fd117fdcceedc9a75311243c0a3ef06d54252420547947d5782595aa35294'},
+    forwarder: {size:108032, sha256:'528591737f2c049d1c88b42aa0a48398e3795d92ee786be3325879c89aa4d3ae'},
     url: 'https://github.com/Dagherbou/OptiScaler_DLSSNR/releases/download/v0.1.1.5-dlssnr/OptiScaler-DLSSNR-v0.1.1.5-dlssnr.zip',
     sha256: '735b10b4077bc187ba4d07d607e864349aca386344c6126aba61ced746d27ece',
     licenseUrl: 'https://raw.githubusercontent.com/Dagherbou/OptiScaler_DLSSNR/393e070/LICENSE',
@@ -82,13 +89,98 @@ const LIBRARIES = [
 // The GPL text is written under one name whichever build supplied it.
 const GPL_AS = 'OptiScaler/licenses/LICENSE.GPL-3.0.txt';
 function fail(code, message = code) { return Object.assign(new Error(message), { code }); }
+const inputKeys = {
+  dlss:['EnableDlssInputs'], xess:['EnableXeSSInputs'], ffx:['EnableFfxInputs','UseFfxInputs'],
+  fsr2:['EnableFsr2Inputs','UseFsr2Inputs'], fsr3:['EnableFsr3Inputs','UseFsr3Inputs']
+};
+const nrConfigKeys = {dlssnr:['enabled'], processfilter:['targetprocessname','processexclusionlist'],
+  inputs:[...Object.values(inputKeys).flat().map(key => key.toLowerCase()),'usefsr2dx11inputs','usefsr2vulkaninputs'],
+  upscalers:['dx11upscaler','vulkanupscaler']};
+// The paired builds document Enabled=auto as false.
+const disabled = value => /^(?:false|auto|0)$/i.test(value);
+function validModel(file) {
+  return pe.getBitness(file,{dllOnly:true}) === 64 && pe.matchesNvidiaFeature(file,'nr') &&
+    require('./neural-models').inspectNeuralModelBinary(file).valid;
+}
+function hostConfig(exePath, api, receipt) {
+  try {
+    const {matches,configText,acceptsProcess} = require('./xemfg-optiscaler');
+    const dir = path.dirname(exePath), cached = !require('./preview-fs').active();
+    const hook = String(receipt.hook || '').toLowerCase();
+    if (!['dxgi.dll','winmm.dll'].includes(hook) || (api && hook !== hookFor(api))) return false;
+    const host = safePath(dir,hook);
+    // An old receipt without a build can still identify the exact installed
+    // release. An explicitly different build must not inherit its status.
+    const legacy = receipt.version == null || receipt.version === '';
+    const release = RELEASES.find(r => (legacy || r.version === receipt.version) && matches(host,r.host,cached));
+    if (!release) return false;
+    const forwarder = safePath(dir,FORWARDED.forwarder);
+    if (release.forwarder ? !matches(forwarder,release.forwarder,cached) : fs.existsSync(forwarder)) return false;
+    const config = configText(safePath(dir,'OptiScaler.ini'),nrConfigKeys);
+    if (!config || !/^\s*\[(?:DlssNr|Upscalers|FrameGen|ProcessFilter|Plugins)\]\s*$/im.test(config) || !acceptsProcess(config,exePath)) return false;
+    return {config, release};
+  } catch { return false; }
+}
+function installed(exePath, api, receipt) {
+  const host = hostConfig(exePath,api,receipt);
+  if (!host) return false;
+  const enabled = ini.getIni(host.config,'DlssNr','Enabled');
+  if (enabled === null || disabled(enabled)) return true;
+  try { return enabled.toLowerCase() === 'true' && validModel(safePath(path.dirname(exePath),'nvngx_dlssnr.dll')); }
+  catch { return false; }
+}
+function dx11Inputs(scan) {
+  const managed = new Set((scan.install?.added || []).map(rel => path.normalize(rel).toLowerCase()));
+  const types = [];
+  for (const file of [...scan.dlssFiles,...scan.upscalerFiles]) {
+    if (file.bitness !== 64 || file.featureMismatch || managed.has(path.normalize(file.rel).toLowerCase())) continue;
+    const name = file.name.toLowerCase();
+    if (name === 'nvngx_dlss.dll' && !/^1\./.test(file.version || '') &&
+        pe.hasExports(file.path,['NVSDK_NGX_D3D11_CreateFeature','NVSDK_NGX_D3D11_EvaluateFeature','NVSDK_NGX_D3D11_ReleaseFeature'])) types.push('dlss');
+    if (name === 'libxess_dx11.dll' && pe.hasExports(file.path,['xessD3D11CreateContext','xessD3D11Init','xessD3D11Execute'])) types.push('xess');
+  }
+  return types;
+}
+function supportsNrOutput(field, value, release) {
+  const output = value?.toLowerCase() || 'auto';
+  if (field === 'Dx11Upscaler') return ['dlss_12','xess_12','fsr21_12','fsr22_12','ffx_12'].includes(output);
+  if (['ffx_12','fsr21_12','fsr22_12'].includes(output)) return true;
+  if (output === 'dlss_12') return release.version === '0.8.92-presr';
+  // The post-upscale Vulkan pass and the pre-SR native Vulkan pass arrive
+  // after 0.1.1.5. That release evaluates NR in its D3D12 bridge.
+  return !!release.nativeVulkanNr && ['auto','dlss','fsr21','fsr22','ffx','xess'].includes(output);
+}
+function assertNeuralTarget(scan, manifest) {
+  const target = scan.chosen;
+  const host = target && scan.install?.exe && path.relative(path.resolve(scan.gameDir,scan.install.exe),target.path) === '' &&
+    hostConfig(target.path,target.api,manifest.optiscaler);
+  if (!host) throw fail('errOptiPayload','当前游戏程序的 OptiScaler 宿主、配套文件或配置已变化，请重新应用安装方式。');
+  const {config,release} = host;
+  const api = target.api === 'vulkan' ? 'vulkan' : target.api === 'dxgi' ? target.apiLabel : null;
+  let types = [];
+  if (target.bitness === 64 && !target.emulator) {
+    if (api === 'DirectX 12') types = target.optiFgInputs || [];
+    if (api === 'DirectX 11') types = dx11Inputs(scan);
+    if (api === 'vulkan') types = [...(target.classicVkUpscalerInputs || []), ...(target.hasXeMfgDlssSrVk ? ['dlss'] : [])];
+  }
+  const bridge = api === 'DirectX 11' ? 'Dx11Upscaler' : api === 'vulkan' ? 'VulkanUpscaler' : null;
+  if (bridge && !supportsNrOutput(bridge,ini.getIni(config,'Upscalers',bridge),release))
+    throw fail('errOptiPayload','当前 OptiScaler 的超分输出不能在所选渲染接口上运行神经渲染。');
+  const enabled = kind => inputKeys[kind]?.every(key => ini.getIni(config,'Inputs',key)?.toLowerCase() !== 'false') &&
+    (kind !== 'fsr2' || ['UseFsr2Dx11Inputs','UseFsr2VulkanInputs'].every(key => ini.getIni(config,'Inputs',key)?.toLowerCase() !== 'true'));
+  if (!types.some(enabled)) throw fail('errOptiNeedsDlss','当前游戏程序和渲染接口缺少已启用的 OptiScaler 超分输入。');
+}
 function validatePayload(root, release = RELEASE) {
   const layout = release.layout;
-  for (const rel of ['OptiScaler.dll', layout.forwarder, ...LIBRARIES.map(f => 'OptiScaler/' + f)].filter(Boolean)) {
-    if (pe.getBitness(safePath(root, rel)) !== 64) throw fail('errOptiPayload');
+  const {matches} = require('./xemfg-optiscaler'), cached = !require('./preview-fs').active();
+  if (!matches(safePath(root,'OptiScaler.dll'),release.host,cached) ||
+      (release.forwarder && !matches(safePath(root,layout.forwarder),release.forwarder,cached))) throw fail('errOptiPayload');
+  for (const name of LIBRARIES) {
+    if (pe.getBitness(safePath(root, 'OptiScaler/' + name),{dllOnly:true}) !== 64) throw fail('errOptiPayload');
   }
   for (const rel of ['OptiScaler.ini', layout.notes, layout.gpl, ...layout.licenses.map(f => 'Licenses/' + f)].filter(Boolean)) {
-    if (!fs.existsSync(safePath(root, rel))) throw fail('errOptiPayload');
+    const file = safePath(root, rel);
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw fail('errOptiPayload');
   }
 }
 async function ensureOptiScaler(cacheRoot, version, signal) {
@@ -108,7 +200,16 @@ async function ensureOptiScaler(cacheRoot, version, signal) {
   // inside. Either way what reaches the game is verified bytes.
   if (release.licenseUrl) {
     const license = path.join(base, 'OptiScaler-GPL-3.0.txt');
-    if (!cached(license, release.licenseHash)) await fetchVerified(release.licenseUrl, release.licenseHash, license, {signal});
+    if (!cached(license, release.licenseHash)) {
+      try {
+        await fetchVerified(release.licenseUrl, release.licenseHash, license, {signal, attempts:1});
+      } catch (error) {
+        if (error.code !== 'componentNetwork') throw error;
+        const api = 'https://api.github.com/repos/Dagherbou/OptiScaler_DLSSNR/contents/LICENSE?ref=393e070';
+        await fetchVerified(api, release.licenseHash, license, {signal,
+          fetchBytes:(url, abort) => fetchBytes(url, abort, {Accept:'application/vnd.github.raw+json'})});
+      }
+    }
   }
   validatePayload(base, release);
   require('./cache-proof').save(base, release.sha256);
@@ -118,17 +219,15 @@ function hookFor(api) { return api === 'vulkan' ? 'winmm.dll' : 'dxgi.dll'; }
 function configure(text, target) {
   let out = text;
   for (const [section, key, value] of [
-    ['DlssNr', 'Enabled', 'true'], ['Log', 'LogToFile', 'true'], ['Log', 'LogLevel', '2'],
-    ['Spoofing', 'Dxgi', 'false'], ['Plugins', 'LoadAsiPlugins', 'false'],
+    ['DlssNr', 'Enabled', target.neuralOff ? 'false' : 'true'], ['Log', 'LogToFile', 'true'], ['Log', 'LogLevel', '2'],
+    ['Spoofing', 'Dxgi', 'false'], ['Plugins', 'LoadAsiPlugins', target.keepAsi ? 'true' : 'false'],
     ['ProcessFilter', 'TargetProcessName', path.basename(target.exePath)]
   ]) out = ini.setIni(out, section, key, value);
-  // DX11/Vulkan NR needs the documented D3D12 bridge, not native DLSS output.
-  // Set defaults for all APIs: games can change renderer via launch arguments
-  // without changing their executable's import table or scanner result.
+  // Keep a supported custom backend. A game may change API via launch arguments.
   for (const field of ['Dx12Upscaler', 'Dx11Upscaler', 'VulkanUpscaler']) {
     const current = ini.getIni(out, 'Upscalers', field);
     const bridge = field !== 'Dx12Upscaler';
-    if (!current || current === 'auto' || (bridge && !current.endsWith('_12'))) {
+    if (!current || current === 'auto' || (bridge && !supportsNrOutput(field,current,releaseFor(target.optiVersion)))) {
       out = ini.setIni(out, 'Upscalers', field, bridge ? 'ffx_12' : 'dlss');
     }
   }
@@ -200,34 +299,42 @@ async function install(config, log) {
   // the manifest recorded the default no matter what was installed.
   const release = releaseFor(config.optiVersion);
   validatePayload(optiRoot, release);
-  const nr = source.payload.find(f => f.name.toLowerCase() === 'nvngx_dlssnr.dll');
-  if (!nr || pe.getBitness(nr.path) !== 64) throw fail('errNoNeuralRuntime');
   const manifest = beginManifest(gameDir, exePath, api);
+  const exeDir = path.dirname(exePath), model = safePath(exeDir,'nvngx_dlssnr.dll');
+  const file = safePath(exeDir,'OptiScaler.ini'), prior = config.profile?.[path.relative(gameDir, file)] ?? ini.readText(file);
+  const currentEnabled = ini.getIni(prior,'DlssNr','Enabled');
+  const neuralOff = currentEnabled == null
+    ? Boolean(prior) || (manifest.route === 'optiscaler' && manifest.neuralRendering?.mode === 'off')
+    : disabled(currentEnabled);
+  const existing = fs.existsSync(model);
+  let sourceModel;
+  if (!neuralOff) {
+    if (existing && !validModel(model)) throw fail('errInvalidNeuralModel','游戏目录中的 nvngx_dlssnr.dll 不是有效的 x64 神经渲染模型。');
+    if (!existing) {
+      const nr = source?.payload?.find(f => f.name.toLowerCase() === 'nvngx_dlssnr.dll');
+      if (!nr) throw fail('errNoNeuralRuntime');
+      sourceModel = require('./component-deploy').resolveSource(gameDir,nr.path,model);
+      if (!validModel(sourceModel)) throw fail('errInvalidNeuralModel','选中的 nvngx_dlssnr.dll 不是有效的 x64 神经渲染模型。');
+    }
+  }
   manifest.route = 'optiscaler';
   manifest.game.bitness = 64;
   manifest.game.apiLabel = config.apiLabel;
   manifest.optiscaler = { version: release.version, hook: hookFor(api) };
-  const exeDir = path.dirname(exePath);
   if (!release.layout.forwarder) await retireForwarder(manifest, gameDir, exeDir, log);
   for (const item of copyPlan(optiRoot, api, release)) {
     const rel = await copyTracked(manifest, gameDir, item.from, path.join(exeDir, item.to), { kind: 'optiscaler' });
     log({ code: 'added', params: { rel } });
   }
-  // The model that ships here is NVIDIA's stock one, which runs on Blackwell.
-  // Older architectures need a modded build, supplied by the person for their
-  // own card, and copying ours over it would quietly break exactly the setup
-  // they came here with. An existing model is left alone; ours is installed
-  // only when there is none.
-  const model = path.join(exeDir, nr.name);
-  if (fs.existsSync(model)) {
+  // Players can have a different valid model for their hardware.
+  if (!neuralOff && existing) {
     log({ code: 'neuralModelKept', params: { rel: path.relative(gameDir, model) } });
-  } else {
-    await copyTracked(manifest, gameDir, nr.path, model, { kind: 'runtime' });
+  } else if (sourceModel) {
+    await copyTracked(manifest, gameDir, sourceModel, model, { kind: 'runtime' });
   }
-  const file = path.join(exeDir, 'OptiScaler.ini');
-  const prior = config.profile?.[path.relative(gameDir, file)] ?? ini.readText(file);
-  await writeTracked(manifest, gameDir, file, configure(prior || ini.readText(path.join(optiRoot, 'OptiScaler.ini')), config), { kind: 'config' });
+  const keepAsi = manifest.mfg?.backend === 'mfg-unlocker-asi' && fs.existsSync(path.join(exeDir,'OptiScaler','plugins','MFGUnlocker.asi'));
+  await writeTracked(manifest, gameDir, file, configure(prior || ini.readText(path.join(optiRoot, 'OptiScaler.ini')), {...config,keepAsi,neuralOff}), { kind: 'config' });
   await saveActiveManifest(gameDir, manifest);
   return manifest;
 }
-module.exports = { RELEASE, RELEASES, releaseFor, LIBRARIES, ensureOptiScaler, validatePayload, configure, copyPlan, hookFor, checkConflicts, install };
+module.exports = { RELEASE, RELEASES, releaseFor, LIBRARIES, ensureOptiScaler, validatePayload, configure, copyPlan, hookFor, checkConflicts, installed, assertNeuralTarget, install };

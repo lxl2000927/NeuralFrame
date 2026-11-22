@@ -52,7 +52,18 @@ parentPort.on('message', async ({ id, task, dir, options }) => {
     }
     // The header and install routes only need the file scan. Send it before
     // hardware detection and model verification, without walking the game twice.
-    parentPort.postMessage({ id, phase: 'details', result: { scan, newDlss: bundledDlssVersion(options.payloadDir) } });
+    const {inspectPerformanceMonitor} = require('./optional-graphics');
+    const {apiPreferenceKey, setupTarget} = require('./game-api');
+    const renderingApi = require('../shared/rendering-api');
+    const setupTargets = {};
+    for (const exe of scan.exeCandidates) {
+      const api = options.apiOverrides?.[apiPreferenceKey(dir,exe.path)];
+      const apiOverride = renderingApi.valid(api) ? api : 'auto';
+      const target = setupTarget(dir,scan,exe,apiOverride);
+      setupTargets[exe.path] = {apiOverride,target};
+      exe.performanceMonitor = inspectPerformanceMonitor(dir,target,scan.install);
+    }
+    parentPort.postMessage({ id, phase: 'details', result: { scan, setupTargets, newDlss: bundledDlssVersion(options.payloadDir) } });
     let status;
     try { status = await inspectCombinedStatus(dir, { ...options, scanResult: scan }); }
     catch (error) { status = { ok: false, message: error.message }; }

@@ -54,6 +54,30 @@ function setIni(text, section, key, value) {
   return lines.join(newline).replace(/(?:\r?\n)*$/, newline);
 }
 
+function editIniField(text, section, key, value, created = []) {
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const trailing = text.endsWith('\n');
+  const lines = text ? text.split(/\r?\n/) : [];
+  if (trailing) lines.pop();
+  const bounds = sectionBounds(lines, section);
+  if (!bounds) {
+    if (value === null) return text;
+    lines.push(`[${section}]`, `${key}=${value}`);
+    if (!created.includes(section)) created.push(section);
+  } else {
+    const {start, end} = bounds;
+    const index = lines.findIndex((line, i) => i > start && i < end &&
+      line.split('=', 1)[0].trim().toLowerCase() === key.toLowerCase() && line.includes('='));
+    if (value !== null && index < 0) lines.splice(end, 0, `${key}=${value}`);
+    if (value !== null && index >= 0) lines[index] = lines[index].replace(/^(\s*[^=]+?\s*=\s*).*$/, (_line, prefix) => prefix + value);
+    if (value === null && index >= 0) {
+      lines.splice(index, 1);
+      if (section && created.includes(section) && !lines.slice(start + 1, end - 1).some(line => line.trim())) lines.splice(start, 1);
+    }
+  }
+  return lines.join(newline) + (lines.length && trailing ? newline : '');
+}
+
 function mergeNamedList(value, required, nameOf = (item) => item) {
   const current = String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
   const requiredNames = new Set(required.map((item) => nameOf(item).toLowerCase()));
@@ -263,7 +287,7 @@ function readText(file) {
 }
 
 module.exports = {
-  getIni, setIni, setEarlyAddon, enableAddons, configureGameReShade, configureHostReShade,
+  getIni, setIni, editIniField, setEarlyAddon, enableAddons, configureGameReShade, configureHostReShade,
   configurePreset, configureFeed, configureDgVoodoo, presetPath, readText,
   configureSearchPath, configureConsumer
 };

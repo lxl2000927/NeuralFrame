@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getBridge } from "../bridge";
-import { errorText } from "../domain";
+import { errorText, otherRunningExecutable } from "../domain";
 import { dateTime, t } from "../i18n";
 import type { ProxySettings, Runtime, Status } from "../types";
 import "./StandaloneStatus.css";
@@ -44,13 +44,14 @@ export function StandaloneRuntimeFacts({ runtime }: { runtime: Runtime }) {
   </div>;
 }
 
-export function StandaloneStatus({ dir, profile, enabled, active = true, onRuntime }: {
-  dir: string; profile: NonNullable<Status["standaloneProfile"]>; enabled: boolean; active?: boolean;
+export function StandaloneStatus({ dir, exePath, profile, enabled, active = true, onRuntime }: {
+  dir: string; exePath?: string; profile: NonNullable<Status["standaloneProfile"]>; enabled: boolean; active?: boolean;
   onRuntime?: (value: Runtime | null) => void;
 }) {
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  const [auto, setAuto] = useState(false);
   useEffect(() => {
     if (!active || !dir) return;
     let alive = true, pending = false;
@@ -67,22 +68,27 @@ export function StandaloneStatus({ dir, profile, enabled, active = true, onRunti
       } finally { pending = false; }
     }
     void probe();
-    const timer = setInterval(() => void probe(), 5000);
+    const timer = auto ? window.setInterval(() => void probe(), 5000) : undefined;
     document.addEventListener("visibilitychange", probe);
-    return () => { alive = false; clearInterval(timer); document.removeEventListener("visibilitychange", probe); };
-  }, [dir, active, profile.saved, retry, onRuntime]);
-  const current = runtime?.standalone;
+    return () => { alive = false; if (timer !== undefined) clearInterval(timer); document.removeEventListener("visibilitychange", probe); };
+  }, [dir, active, profile.saved, retry, auto, onRuntime]);
+  const other = otherRunningExecutable(runtime,exePath);
+  const current = other ? undefined : runtime?.standalone;
   const fresh = current && Date.now() - current.at <= 30000;
   const saved = profile.saved;
   const target: ProxySettings = { ...profile.target, dlss5: enabled };
   const readback: Record<string, unknown> = { ...current?.settings, dlss5: current?.enabled };
   const drift = fresh && Object.entries(target).some(([key, value]) => readback[key] !== value);
   return <section className="standalone-status" aria-label={t("独立加载参数与运行状态")}>
-    <header><h3>{t("独立加载参数与运行状态")}</h3><small>{runtime ? dateTime(runtime.checkedAt) : t("正在读取本次进程…")}</small></header>
+    <header><h3>{t("独立加载参数与运行状态")}</h3><div className="standalone-controls">
+      <small>{runtime ? dateTime(runtime.checkedAt) : t("正在读取本次进程…")}</small>
+      <label><input type="checkbox" checked={auto} onChange={event => setAuto(event.target.checked)} />{t("每 5 秒自动检测")}</label>
+      <button type="button" onClick={() => setRetry(v => v + 1)}>{t("刷新检测")}</button>
+    </div></header>
     {error ? <p className="error">{error} <button onClick={() => setRetry(v => v + 1)}>{t("重试")}</button></p>
-      : runtime && <StandaloneRuntimeFacts runtime={runtime} />}
+      : other ? <p className="path">{t("正在运行的是其他程序：{0}",[other])}</p> : runtime && <StandaloneRuntimeFacts runtime={runtime} />}
     <details className="standalone-parameters"><summary>{t("档位参数对照")}</summary>
-    <p className="muted">{t("待应用参数来自所选硬件档位；已保存来自配置文件；组件回读来自当前游戏进程。每 5 秒自动检测。")}</p>
+    <p className="muted">{t("待应用参数来自所选硬件档位；已保存来自配置文件；组件回读来自当前游戏进程。默认手动刷新，可开启每 5 秒自动检测。")}</p>
     <div className="standalone-table"><table><thead><tr><th scope="col">{t("神经渲染参数")}</th><th scope="col">{t("待应用")}</th><th scope="col">{t("已保存")}</th><th scope="col">{t("组件回读")}</th></tr></thead>
       <tbody>{rows.map(([label, key]) => <tr key={key}><th scope="row">{t(label)}</th><td>{format(key, target[key])}</td>
         <td>{format(key, saved?.[key])}</td><td>{format(key, fresh ? readback[key] : undefined)}</td></tr>)}</tbody></table></div>

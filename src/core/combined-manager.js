@@ -48,12 +48,13 @@ async function detectHardwareEnvironment(forceRefresh = false) {
   let powerMaxW = null;
 
   try {
-    const smiOut = await runCmd('nvidia-smi.exe', [
+    const smiOut = await require('./install-guards').queryNvidiaSmi([
       '--query-gpu=name,driver_version,memory.total,memory.used,memory.free,power.default_limit,power.max_limit',
       '--format=csv,noheader,nounits'
-    ]);
-    const fields = smiOut.split(/\r?\n/).map(line => line.split(',').map(value => value.trim()))
-      .find(row => row.length === 7 && row[0] && !/^(?:N\/A|unknown|\[.*\])$/i.test(row[0]));
+    ], runCmd);
+    const cards = smiOut.split(/\r?\n/).map(line => line.split(',').map(value => value.trim()))
+      .filter(row => row.length === 7 && row[0] && !/^(?:N\/A|unknown|\[.*\])$/i.test(row[0]));
+    const fields = cards.find(row => /\bRTX\b/i.test(row[0])) || cards[0];
     if (fields) {
       gpuName = fields[0];
       if (/^\d+(?:\.\d+)+$/.test(fields[1])) driverVersion = fields[1];
@@ -65,6 +66,12 @@ async function detectHardwareEnvironment(forceRefresh = false) {
     }
   } catch {}
 
+  let nvidiaPresent = true;
+  if (!gpuName) {
+    const adapters = await require('./install-guards').displayAdapters(runCmd);
+    gpuName = adapters.name;
+    nvidiaPresent = adapters.nvidiaPresent;
+  }
   const gpuArch = neuralModels.detectGpuArchitecture(gpuName);
   cachedHardwareInfo = {
     os: `${os.type()} ${os.release()} (${os.arch()})`,
@@ -73,6 +80,7 @@ async function detectHardwareEnvironment(forceRefresh = false) {
     ramGB: totalRamGB,
     gpu: {
       name: gpuName,
+      nvidiaPresent,
       detected: Boolean(gpuName),
       driver: driverVersion,
       architecture: gpuArch,
@@ -85,6 +93,12 @@ async function detectHardwareEnvironment(forceRefresh = false) {
     display: null
   };
   return cachedHardwareInfo;
+}
+
+function manifestForTarget(gameDir, scan, manifest) {
+  if (!manifest || !scan.chosen) return null;
+  if (!manifest.game?.exe) return scan.exeCandidates?.length === 1 ? manifest : null;
+  return path.relative(path.resolve(gameDir, manifest.game.exe), scan.chosen.path) === '' ? manifest : null;
 }
 
 function savedProfile(manifest) {
@@ -142,20 +156,44 @@ function estimateVramBudget({
 function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, hardwareProfile = 'rtx40_laptop',
   launcherProtected = Boolean(wuwa.gameRoot(gameDir, scan.chosen?.path))) {
   const exeDir = scan.chosen ? path.dirname(scan.chosen.path) : gameDir;
-  const bothActive = neuralStatus.mode !== 'off' && mfgStatus.currentConfig.mode !== 'off';
+  const exe = scan.chosen;
+  const manifest = backends.readManifest(gameDir);
+  const activeManifest = manifestForTarget(gameDir,scan,manifest);
+  const activeRoute = activeManifest?.route;
+  const config = mfgStatus.currentConfig;
+  const classicMfg = ['renodx-mfgunlock','mfg-unlocker-asi'].includes(config.backend);
+  const mfgActive = Boolean(config.installed && config.mode && !['off','unknown'].includes(config.mode) &&
+    (!classicMfg || (config.recognizedBuild && !mfgStatus.conflicts?.some(item=>item.code==='MFG_CONFIGURATION_UNVERIFIED'))));
+  const neuralActive = Boolean(neuralStatus.installed && neuralStatus.mode && neuralStatus.mode !== 'off');
 
   // 1. 各模块的 DLL 是否冲突（若当前未开启 MFG 补帧模块，则忽略仅针对 MFG 的 API/位数提示，防止 DX8/DX9/DX10/DX11/32位老游戏误报红色“不兼容”）
-  const mfgActive = Boolean(mfgStatus.currentConfig?.installed && mfgStatus.currentConfig?.mode && mfgStatus.currentConfig?.mode !== 'off');
   const dllConflicts = [...(mfgStatus.conflicts || [])].filter((c) => {
     if (!mfgActive && (c.code === 'UNSUPPORTED_API_FOR_MFG' || c.code === 'UNSUPPORTED_BITNESS_FOR_MFG')) {
       return false;
     }
     return true;
   });
-  const hasReshadeAddonNr = fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) ||
-    fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64'));
-  const hasReshadeAddonMfg = fs.existsSync(path.join(exeDir, 'renodx-mfgunlock.addon64'));
-  const hasOptiAsiMfg = fs.existsSync(path.join(exeDir, 'OptiScaler', 'plugins', 'MFGUnlocker.asi'));
+  const reshadeIni = path.join(exeDir, 'ReShade.ini');
+  const iniText = feederConfig.readText(reshadeIni);
+  const enabledAddon = name => feederConfig.enableAddons(iniText,[name]) === iniText;
+  const classicDx12 = !launcherProtected && exe?.bitness===64 && exe.api==='dxgi' && exe.apiLabel==='DirectX 12' &&
+    (['native','renodx'].includes(activeRoute) || (!activeRoute && (exe.hasNativeDlss || exe.hasNativeDlssFg)));
+  let proxy;
+  if (exe && exe.api !== 'vulkan' && (classicDx12 || classicMfg)) {
+    try { proxy = require('./optional-graphics').addonProxy(exe,'dxgi'); }
+    catch (error) { proxy = {issue:error.message}; }
+  }
+  const reshadeHost = !launcherProtected && (exe?.api==='vulkan'
+    ? !!activeManifest?.vulkanLayer?.manifest && require('./vulkan-layer').addonLayer(activeManifest.vulkanLayer.manifest,exe.bitness)
+    : !!proxy?.installed && !proxy.issue);
+  const renoNrNames = (neuralStatus.dependencies?.consumerAddons || []).filter(name=>['renodx-dlss5.addon64','renodx-dlss.addon64'].includes(name));
+  const usesRenoNr = renoNrNames.length > 0 && !neuralStatus.dependencies?.optiInstalled;
+  const hasReshadeAddonNr = neuralActive && usesRenoNr && reshadeHost && renoNrNames.some(enabledAddon);
+  const hasReshadeAddonMfg = mfgActive && config.backend==='renodx-mfgunlock' && reshadeHost && enabledAddon('renodx-mfgunlock.addon64');
+  const hasOptiAsiMfg = mfgActive && config.backend==='mfg-unlocker-asi' && !launcherProtected;
+  const configuredNr = neuralActive && (!(usesRenoNr && (classicDx12 || classicMfg)) || hasReshadeAddonNr);
+  const configuredMfg = classicMfg ? hasReshadeAddonMfg || hasOptiAsiMfg : mfgActive;
+  const bothActive = configuredNr && configuredMfg;
   if (hasReshadeAddonNr && hasOptiAsiMfg) {
     dllConflicts.push({
       severity: 'warning',
@@ -166,27 +204,29 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
   }
 
   // 2. Streamline、NGX 及注入链是否兼容
-  const reshadeIni = path.join(exeDir, 'ReShade.ini');
-  const iniText = feederConfig.readText(reshadeIni);
-  const runtimeSelectionMode = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode');
+  const runtimeSelectionMode = hasReshadeAddonMfg ? feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode') || '0' : undefined;
+  const streamlineFile = (name,symbols) => (scan.streamlineFiles || []).find(file=>file.name.toLowerCase()===name &&
+    !file.featureMismatch && file.bitness===exe?.bitness && pe.hasExports(file.path,symbols,name));
   const slCoherent = !bothActive || !hasReshadeAddonNr || !hasReshadeAddonMfg || runtimeSelectionMode === '1';
   const slChainCheck = {
-    ok: slCoherent && (mfgStatus.streamline.present || mfgStatus.dlssg.valid || mfgStatus.currentConfig.mode === 'off'),
-    runtimeSelectionMode: runtimeSelectionMode || '0',
+    ok: slCoherent && (config.mode==='off' || hasOptiAsiMfg || mfgStatus.dlssg.valid || !!streamlineFile('sl.interposer.dll',['slInit','slShutdown','slGetFeatureFunction']) ||
+      !!streamlineFile('sl.dlss_g.dll',['slGetPluginFunction'])),
+    runtimeSelectionMode,
     message: bothActive && hasReshadeAddonNr && hasReshadeAddonMfg
       ? (runtimeSelectionMode === '1'
-        ? '已配置 RuntimeSelectionMode=1 (LoadFromDllMain)；实际 Streamline / NGX 绑定是否成功需查看本次游戏运行诊断。'
+        ? '已配置 RuntimeSelectionMode=1，实际 Streamline / NGX 绑定是否成功需查看本次游戏运行诊断。'
         : '注意：RenoDX DLSS 5 与 MFGUnlock 同时存在时建议将 RuntimeSelectionMode 设为 1，以防止 NGX 上下文绑定错位。')
       : '未检测到需要检查的 ReShade 双插件组合；此处不判断运行时 NGX 上下文是否冲突。'
   };
 
   // 3. 神经渲染是否影响运动矢量与补帧质量
   const bamMode = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'BoundaryArtifactMitigationMode');
+  const mitigationConfigured = hasReshadeAddonMfg && (bamMode==='1' || bamMode==='2');
   const motionVectorCheck = {
-    ok: true,
-    configurationSupported: hasReshadeAddonMfg && !launcherProtected,
-    mitigationActive: hasReshadeAddonMfg && !launcherProtected && (bamMode === '1' || bamMode === '2'),
-    message: launcherProtected || !hasReshadeAddonMfg
+    ok: hasReshadeAddonMfg ? mitigationConfigured : undefined,
+    configurationSupported: hasReshadeAddonMfg,
+    mitigationActive: mitigationConfigured,
+    message: !hasReshadeAddonMfg
       ? '当前加载路线不提供 RenoDX 边界伪影缓解配置；运动矢量和插帧质量需在游戏中确认。'
       : bamMode === '1' || bamMode === '2'
         ? `已配置边界伪影缓解模式 ${bamMode}；实际插帧质量需在游戏中确认。`
@@ -194,33 +234,43 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
   };
 
   // 4. 多帧生成是否引发闪烁、HUD 异常或拖影
-  const qualityGuardMode = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'QualityGuardMode') || '0';
+  const qualityGuardMode = hasReshadeAddonMfg ? feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'QualityGuardMode') || '0' : undefined;
   const hudFlickerCheck = {
-    ok: true,
-    configurationSupported: hasReshadeAddonMfg && !launcherProtected,
+    ok: hasReshadeAddonMfg ? !mfgStatus.knownGame?.hdrFix || qualityGuardMode==='2' : undefined,
+    configurationSupported: hasReshadeAddonMfg,
     qualityGuardMode,
-    hdrGameNeedsGuard: Boolean(mfgStatus.knownGame && mfgStatus.knownGame.hdrFix && qualityGuardMode !== '2'),
-    message: mfgStatus.knownGame && mfgStatus.knownGame.hdrFix
+    hdrGameNeedsGuard: Boolean(hasReshadeAddonMfg && mfgStatus.knownGame?.hdrFix && qualityGuardMode !== '2'),
+    message: !hasReshadeAddonMfg ? '当前加载路线未配置 RenoDX QualityGuard。' : mfgStatus.knownGame?.hdrFix
       ? `该游戏在 HDR 下有 UI 保护建议；当前 QualityGuardMode=${qualityGuardMode}，实际效果需在游戏中确认。`
       : '按现有配置检查 HUD 输入策略，无法从磁盘文件确认画面稳定性。'
   };
 
   // 5. 是否超过目标显卡档位的显存预算限制
   const vramBudget = estimateVramBudget({
-    neuralMode: neuralStatus.mode,
+    neuralMode: configuredNr ? neuralStatus.mode : 'off',
     neuralModelId: neuralStatus.currentModel?.id || '310.8.SF-v2',
-    mfgMode: mfgStatus.currentConfig.mode,
+    mfgMode: configuredMfg ? config.mode : 'off',
     vramTotalMB: hardware?.gpu?.vramTotalMB,
     hardwareProfile
   });
 
   // 6. Reflex、帧同步和延迟控制是否仍有效
-  const hasReflexDll = Boolean(mfgStatus.streamline.reflexPluginVersion) ||
-    fs.existsSync(path.join(exeDir, 'sl.reflex.dll'));
+  let reflex = streamlineFile('sl.reflex.dll',['slGetPluginFunction']);
+  if (hasOptiAsiMfg) {
+    const customRoot = feederConfig.getIni(feederConfig.readText(path.join(exeDir,'OptiScaler.ini')),'Libraries','OptiDllPath');
+    const root = !customRoot || /^auto$/i.test(customRoot) ? 'OptiScaler' : customRoot.replace(/[\\/]/g,path.sep);
+    try {
+      const rel = path.relative(exeDir,path.resolve(exeDir,root,'streamline','sl.reflex.dll'));
+      const file = journal.safePath(exeDir,rel);
+      if (pe.getBitness(file,{dllOnly:true})===64 && pe.hasExports(file,['slGetPluginFunction'],'sl.reflex.dll'))
+        reflex = {version:pe.getFileVersion(file)};
+    } catch { /* An unavailable private path cannot establish Reflex availability. */ }
+  }
+  const hasReflexDll = !!reflex;
   const reflexCheck = {
-    ok: mfgStatus.currentConfig.mode === 'off' || hasReflexDll,
+    ok: hasReflexDll,
     hasReflexDll,
-    reflexVersion: mfgStatus.streamline.reflexPluginVersion,
+    reflexVersion: reflex?.version || null,
     hardwareFlipMetering: Boolean(mfgStatus.gpuSupport.hardwareFlipMetering),
     message: hasReflexDll
       ? '已检测到 Reflex DLL，是否执行需在游戏中验证。'
@@ -229,11 +279,9 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
   if (launcherProtected) {
     slChainCheck.message = '保留游戏原生 Streamline；独立加载器在运行时接入，是否成功请看本次进程的遥测。';
     hudFlickerCheck.message = '使用游戏原生输入；未配置 RenoDX QualityGuard，HUD 与 HDR 表现需要在游戏中验证。';
-    reflexCheck.message = '使用游戏及独立组件的 Reflex 与帧调度；此处的文件检查不代表低延迟控制已经生效。';
   }
 
   // 7. 游戏关闭后能否完整恢复原状
-  const manifest = backends.readManifest(gameDir);
   const pendingJournal = journal.hasPendingRecovery(gameDir);
   const archived = !manifest && !pendingJournal && scan.hasBackup ? apply.recoverableManifest(gameDir)?.manifest : null;
   const backupRecord = manifest || archived;
@@ -280,16 +328,16 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     (manifest && Array.isArray(manifest.added) ? manifest.added : [])
       .map((r) => path.normalize(String(r)).toLowerCase())
   );
-  const nativeDlssItems = (scan.dlssFiles || []).filter((f) => {
+  const originalFile = f => {
     const rel = path.normalize(path.relative(gameDir, f.path)).toLowerCase();
-    return !addedRelSet.has(rel) && /^(nvngx_dlss|_?nvngx)\.dll$/i.test(f.name);
-  });
-  const replacedDlssItems = (manifest && Array.isArray(manifest.replaced) ? manifest.replaced : [])
-    .filter((r) => /^(nvngx_dlss|_?nvngx)\.dll$/i.test(path.basename(String(r.rel || ''))));
+    return !!f.bitness && f.bitness===exe?.bitness && !f.featureMismatch && !addedRelSet.has(rel);
+  };
+  const nativeDlssItems = (scan.dlssFiles || []).filter(f => originalFile(f) && /^nvngx_dlss\.dll$/i.test(f.name) &&
+    ['D3D12','VULKAN','D3D11'].some(api=>pe.hasExports(f.path,['NVSDK_NGX_'+api+'_EvaluateFeature'],'nvngx_dlss.dll')));
+  const replacedDlssItems = (activeManifest?.replaced || []).filter(r=>nativeDlssItems.some(f=>
+    path.relative(path.resolve(gameDir,r.rel),f.path)===''));
   const hasDlss1x = nativeDlssItems.length > 0 && nativeDlssItems.every((f) => f.version && /^1\./.test(String(f.version).trim()));
-  const safeHookInfo = apply.selectSafeReShadeHook
-    ? apply.selectSafeReShadeHook(exeDir, scan.chosen?.api || 'dxgi', scan.chosen?.apiLabel || '', 'dxgi')
-    : { hook: 'dxgi.dll', avoidedConflict: null };
+  const safeHookInfo = classicDx12 ? proxy : apply.selectSafeReShadeHook(exeDir,exe?.api || 'dxgi',exe?.apiLabel || '','dxgi');
 
   let dlssCompatMode = 'native_ready';
   let dlssCompatSummary = '已检测到游戏原有 DLSS 文件，可预览兼容的组件更新；文件存在不代表神经渲染已经生效。';
@@ -301,7 +349,9 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     dlssCompatMode = 'dlss1x_feeder';
     dlssCompatSummary = `检测到 DLSS 1.x (${nativeDlssItems[0].version})，需要通过 Feeder 路线提供神经渲染输入；请先预览安装。`;
   } else if (nativeDlssItems.length === 0) {
-    const upscalerCount = (scan.upscalerFiles || []).length;
+    const upscalerCount = (scan.upscalerFiles || []).filter(f=>originalFile(f) &&
+      ((exe.apiLabel==='DirectX 12' && (f.optiFgDx12Input || f.xeMfgDx12Input)) || (exe.api==='vulkan' && f.xeMfgVkInput) ||
+        (exe.apiLabel==='DirectX 11' && /^libxess(?:_dx11)?\.dll$/i.test(f.name) && pe.hasExports(f.path,['xessD3D11Execute','xessGetVersion'])))).length;
     dlssCompatMode = 'no_dlss_feeder';
     dlssCompatSummary = upscalerCount > 0
       ? `未检测到游戏原有 DLSS 文件（检测到 ${upscalerCount} 个 FSR/XeSS 组件），可评估 Feeder 或 OptiScaler 路线；神经渲染与帧生成的支持条件分别检查。`
@@ -311,11 +361,13 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     dlssCompatMode = 'low_dlss_ready';
     dlssCompatSummary = `检测到游戏原有 DLSS ${lowVer.version}（${lowVer.rel}），可预览组件更新并保留原文件备份；运行库更新不等于启用神经渲染。`;
   }
-  if (manifest?.route === 'feeder' && ['dlss1x_feeder', 'no_dlss_feeder'].includes(dlssCompatMode))
+  if (activeRoute === 'feeder' && ['dlss1x_feeder', 'no_dlss_feeder'].includes(dlssCompatMode))
     dlssCompatSummary = '已记录 Feeder 安装路线；实际模型、工作分辨率和加载情况请查看游戏配置与运行诊断。';
   if (launcherProtected) {
     dlssCompatMode = 'wuwa-proxy';
     dlssCompatSummary = '鸣潮保留启动器校验的 DLSS 文件。神经渲染与补帧使用主程序旁的 version.dll。';
+  } else if (safeHookInfo.issue) {
+    dlssCompatSummary += ' ' + safeHookInfo.issue;
   } else if (safeHookInfo.avoidedConflict) {
     dlssCompatSummary += ` 检测到 ${safeHookInfo.avoidedConflict} 被其他组件占用，安装预览将评估 ${safeHookInfo.hook} 备用入口。`;
   }
@@ -348,7 +400,7 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
   const scan = withGameApi(detected, apiOverride || (require('../shared/rendering-api').valid(savedApi) ? savedApi : 'auto'));
   const gpuName = hardware.gpu.name;
   const driverVersion = hardware.gpu.driver;
-  const manifest = backends.readManifest(gameDir);
+  const manifest = manifestForTarget(gameDir, scan, backends.readManifest(gameDir));
   const selection = selectHardwareProfile({ requestedProfile: hardwareProfile, manifestProfile: savedProfile(manifest),
     defaultProfile: defaultHardwareProfile, gpu: hardware.gpu });
   const effectiveProfile = selection.id;
@@ -360,7 +412,7 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
   const protectedRoot = wuwa.gameRoot(gameDir, scan.chosen?.path);
   const [neuralStatus, mfgStatus, nativeRuntimeStack] = await Promise.all([
     neuralModels.inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuName, hardwareProfile: effectiveProfile, scanResult: scan }),
-    mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion, hardwareProfile: effectiveProfile, scanResult: scan }),
+    mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, nvidiaPresent:hardware.gpu.nvidiaPresent, driverVersion, hardwareProfile: effectiveProfile, scanResult: scan }),
     protectedRoot ? wuwa.inspectNativeStack(protectedRoot) : null
   ]);
   const encore = require('./encore').inspect(gameDir, scan, manifest);
@@ -390,6 +442,25 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     mfgStatus.statusBadge = encore.error ? '配置读取失败' : 'Encore 新增帧生成 · 待运行验证';
   }
 
+  const routeRecord = require('./optional-graphics').inspect(gameDir,manifest);
+  const graphicsRoute = routeRecord && routeRecord.route !== 'hud' && scan.chosen && path.relative(routeRecord.exePath,scan.chosen.path) === '' ? routeRecord : null;
+  if (graphicsRoute) {
+    let mode = graphicsRoute.multiplier ? 'x'+graphicsRoute.multiplier : 'unknown';
+    let effective = graphicsRoute.multiplier ? graphicsRoute.multiplier+'× (待进入游戏验证)' : '未知';
+    const hostControlsFrames = ['xemfg-optiscaler', 'optifg'].includes(graphicsRoute.route);
+    if (graphicsRoute.enabled === false) {
+      mode = 'off'; effective = '已关闭';
+    } else if (graphicsRoute.dynamic) {
+      mode = 'dynamic'; effective = '动态倍率，待游戏内验证';
+    } else if (hostControlsFrames) {
+      mode = 'host'; effective = '由 OptiScaler 游戏内菜单控制';
+    }
+    mfgStatus.currentConfig = {installed:graphicsRoute.filesPresent,backend:graphicsRoute.route,
+      mode,multiplier:/^x[2-6]$/.test(mode) ? graphicsRoute.multiplier : null};
+    mfgStatus.status = graphicsRoute.filesPresent && !graphicsRoute.error ? 'experimental' : 'untested';
+    mfgStatus.statusBadge = graphicsRoute.error || (graphicsRoute.filesPresent ? '已读取配置，待游戏内验证' : '配套文件尚不完整');
+    mfgStatus.effectiveMultiplier = effective;
+  }
   const coExecution = evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, effectiveProfile, Boolean(protectedRoot));
   if (protectedRoot && nativeRuntimeStack?.indexMissing)
     coExecution.dlssCompat.summary = '当前渠道未提供官服资源清单，使用独立加载保护：仅管理主程序旁的补丁文件，不替换游戏原有 DLSS / Streamline。';
@@ -404,6 +475,12 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
       summary:'Encore 尚无显存预算模型，请以游戏中的实际占用为准。'};
   }
 
+  if (graphicsRoute) {
+    coExecution.dlssCompat.summary = mfgStatus.statusBadge;
+    coExecution.slChainCheck = {ok:graphicsRoute.filesPresent,message:mfgStatus.statusBadge};
+    coExecution.vramBudget = {hardwareProfile:effectiveProfile,level:'unknown',vramTotalMB:hardware.gpu.vramTotalMB || null,
+      summary:'此后端未建立显存预算模型，请在游戏内读取实际占用。'};
+  }
   // 汇总错误日志
   const errorLogs = [
     ...(neuralStatus.logs.errors || []).map((e) => `[Neural Rendering] ${e.code}: ${e.message} (${e.file})`),
@@ -414,10 +491,11 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
   // 综合诊断状态徽章
   let combinedStatus = 'untested';
   let combinedBadge = '尚未测试';
-  if (coExecution.dllConflicts.some((c) => c.severity === 'error') || neuralStatus.overallStatus === 'incompatible') {
+  const usesNeuralModel = !graphicsRoute || graphicsRoute.neural === true || (neuralStatus.installed && neuralStatus.mode !== 'off');
+  if (coExecution.dllConflicts.some((c) => c.severity === 'error') || (neuralStatus.overallStatus === 'incompatible' && usesNeuralModel)) {
     combinedStatus = 'incompatible';
     combinedBadge = '不兼容';
-  } else if (neuralStatus.overallStatus === 'verified' && (mfgStatus.currentConfig.mode === 'off' || mfgStatus.status === 'verified')) {
+  } else if (!graphicsRoute && neuralStatus.overallStatus === 'verified' && (mfgStatus.currentConfig.mode === 'off' || mfgStatus.status === 'verified')) {
     combinedStatus = 'verified';
     combinedBadge = '已验证可用';
   } else if (neuralStatus.installed || mfgStatus.currentConfig.installed) {
@@ -432,7 +510,7 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     exePath: scan.chosen ? scan.chosen.path : null,
     graphicsApi: scan.chosen ? scan.chosen.apiLabel : 'Unknown',
     bitness: scan.chosen ? scan.chosen.bitness : null,
-    installedRoute: scan.install ? scan.install.route : null,
+    installedRoute: manifest ? scan.install?.route || manifest.route || null : null,
     hardwareProfile: effectiveProfile,
     hardwareProfileSource: selection.source,
     hardwareProfileInfo: neuralModels.getHardwareProfileInfo(effectiveProfile),
@@ -440,6 +518,7 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     launcherProtected: Boolean(protectedRoot),
     nativeRuntimeStack,
     encore,
+    graphicsRoute,
     standaloneProfile: protectedRoot ? {
       target: require('./wuwa-profile').neuralSettings(effectiveProfile),
       saved: mfgStatus.currentConfig?.backend === 'wuwa-proxy' ? mfgStatus.currentConfig.settings : null,
@@ -496,25 +575,67 @@ async function applyCombinedStages(gameDir, config, onLog) {
   const hardware = await detectHardwareEnvironment();
   const gpuName = hardware.gpu.name;
   const existingManifest = backends.readManifest(gameDir);
-  const effectiveProfile = resolveHardwareProfile(hardwareProfile, gpuName, savedProfile(existingManifest), config.defaultHardwareProfile, hardware.gpu.vramTotalMB);
+  const detected = await scanGame(gameDir, config.exePath);
+  const targetManifest = manifestForTarget(gameDir, detected, existingManifest);
+  const effectiveProfile = resolveHardwareProfile(hardwareProfile, gpuName, savedProfile(targetManifest), config.defaultHardwareProfile, hardware.gpu.vramTotalMB);
   // RTX 50 系列桌面卡默认优先启用 oct2026-310.9.16 运行时管线（除非调用方显式指定）
   const effectiveRuntimeStack = (effectiveProfile === 'rtx50_desktop' && !config.runtimeStack)
     ? 'oct2026-310.9.16'
     : runtimeStack;
 
-  const scan = withGameApi(await scanGame(gameDir, config.exePath), config.apiOverride);
+  if (detected.chosen && config.preferencesForExe)
+    config = {...config.preferencesForExe(detected.chosen.path), ...config};
+  const scan = withGameApi(detected, config.apiOverride);
   if (!scan.chosen) throw Object.assign(new Error('未在游戏目录中找到可执行文件'), { code: 'errNoExe' });
   if (config.exePath && path.resolve(config.exePath).toLowerCase() !== path.resolve(scan.chosen.path).toLowerCase())
     throw Object.assign(new Error('所选游戏程序已不在扫描列表中，请重新选择。'),{code:'errSelectedExeMissing'});
   const exePath = scan.chosen.path;
   const exeDir = path.dirname(exePath);
 
+  if (config.platformSetup) {
+    const route = config.performanceMonitor !== undefined ? 'hud' : config.route || targetManifest?.route;
+    config = {...config, setupRunner:config.platformSetup(scan.chosen.api,route)};
+  }
   await require('./install-guards').assertGameClosed(gameDir, exePath);
   const protectedRoot = wuwa.gameRoot(gameDir, exePath);
+  const optionalGraphics = require('./optional-graphics');
+  if (config.performanceMonitor !== undefined || config.route === 'hud') {
+    const monitor = config.performanceMonitor;
+    const installMonitor = monitor?.install === true;
+    const settingsOnly = !installMonitor && monitor !== null && typeof monitor === 'object';
+    if (settingsOnly && (Array.isArray(monitor) || (monitor.mode === undefined && monitor.corner === undefined)))
+      throw new Error('请选择监控显示模式或浮窗位置。');
+    const options = {gameDir, exePath, api:scan.chosen.api, apiLabel:scan.chosen.apiLabel, bitness:scan.chosen.bitness,
+      payloadDir:effectivePayloadDir, userDataDir, reshadeProxy:config.reshadeProxy, target:scan.chosen,
+      route:'hud', monitorMode:installMonitor || settingsOnly ? monitor.mode : monitor, monitorCorner:monitor?.corner,
+      monitorSettingsOnly:settingsOnly, antiCheatAcknowledged:config.antiCheatAcknowledged,
+      requirePayload:config.requirePayload};
+    optionalGraphics.validateTarget(options);
+    await backends.configurePerformanceMonitor(options);
+    return {ok:true,restartRequired:true};
+  }
+  if (optionalGraphics.isRoute(config.route)) {
+    if (protectedRoot) throw new Error('鸣潮使用独立加载路线。');
+    const options = {gameDir, exePath, route:config.route, target:scan.chosen, api:scan.chosen.api,
+      apiLabel:scan.chosen.apiLabel, bitness:scan.chosen.bitness, gpuName, payloadDir:effectivePayloadDir,
+      userDataDir, graphics:config.graphics, reshadeProxy:config.reshadeProxy, apiOverride:config.apiOverride,
+      hardwareProfile:effectiveProfile, runtimeStack:effectiveRuntimeStack,
+      antiCheatAcknowledged:config.antiCheatAcknowledged};
+    optionalGraphics.validateTarget(options);
+    if (config.requirePayload) await config.requirePayload({kind:'enhanced',route:config.route,config:{graphics:config.graphics,runtimeStack:effectiveRuntimeStack}});
+    await backends.install(options, onLog);
+    return {ok:true, restartRequired:true};
+  }
+  if (!config.route && optionalGraphics.isRoute(existingManifest?.route)) throw new Error('请在当前安装路线中修改参数。');
+  if (!config.route && existingManifest?.game?.exe &&
+      path.relative(path.resolve(gameDir, existingManifest.game.exe), exePath) !== '') {
+    throw new Error('请先在安装方式中切换到所选游戏程序，再修改图形参数。');
+  }
   if (protectedRoot && config.route === 'encore') throw Object.assign(new Error('鸣潮继续使用独立加载路线，不切换 Encore。'), {code:'errEncore'});
+  if (neuralMode && neuralMode !== 'off') require('./install-guards').assertNeuralGpu(hardware.gpu.nvidiaPresent);
   if (protectedRoot) {
     const result = await wuwa.configure(gameDir, protectedRoot, scan, {
-      ...config, payloadDir:effectivePayloadDir, gpuName, hardwareProfile:effectiveProfile,
+      ...config, payloadDir:effectivePayloadDir, gpuName, nvidiaPresent:hardware.gpu.nvidiaPresent, hardwareProfile:effectiveProfile,
     }, onLog);
     result.status = await inspectCombinedStatus(gameDir, {exePath, apiOverride:config.apiOverride, payloadDir:effectivePayloadDir,
       userDataDir, hardwareProfile:effectiveProfile});
@@ -533,6 +654,7 @@ async function applyCombinedStages(gameDir, config, onLog) {
       ...(config.neuralModelId ? {neuralModelId} : {})};
     let model;
     if (settings.neuralMode !== 'off') {
+      require('./install-guards').assertNeuralGpu(hardware.gpu.nvidiaPresent);
       const available = neuralModels.listNeuralModels({payloadDir:effectivePayloadDir,userDataDir,gpuName,hardwareProfile:effectiveProfile});
       model = neuralModels.findLocalModel(available,settings.neuralModelId,config.neuralModelSha256);
       if (!model && settings.neuralModelId !== '310.8.SF-v2') throw Object.assign(new Error('请先在模型库下载或导入所选神经渲染模型。'),{code:'errModelNotOnDisk'});
@@ -556,26 +678,43 @@ async function applyCombinedStages(gameDir, config, onLog) {
 
   // Match the setup page: FG/NR or Reflex/Streamline DLLs alone do not prove
   // native DLSS SR input. Exclude runtimes added by a previous deployment.
-  const prevManifest = backends.readManifest(gameDir);
-  const hasNativeDlss = require('../shared/install-routes').nativeDlssPresent({
-    ...scan, install: prevManifest || scan.install
-  });
+  const prevManifest = existingManifest;
+  const hasNativeDlss = scan.chosen.hasNativeDlss;
 
   const { scanSource } = require('./scan');
   const { ensureDgVoodoo, ensureLumenite } = require('./runtime-components');
   const target = scan.chosen;
+  if (!target.api && (neuralMode && neuralMode !== 'off' || mfgMode && mfgMode !== 'off')) {
+    throw Object.assign(new Error('未识别游戏的渲染 API，请先在游戏页面选择实际使用的 API。'), {code:'errApiChoice'});
+  }
   const targetBitness = target.bitness || 64;
   const targetApi = target.api || 'dxgi';
   const targetApiLabel = target.apiLabel || 'DirectX 12';
   const isLegacyApiOr32Bit = targetBitness === 32 ||
     ['ddraw', 'd3d8', 'd3d9', 'd3d10', 'opengl'].includes(targetApi) ||
-    targetApiLabel === 'DirectX 10' ||
-    targetApiLabel === 'DirectX 11';
-  const needsFullFeeder = !hasNativeDlss || isLegacyApiOr32Bit;
-  const canRunMfg = targetBitness === 64 &&
-    ['dxgi', 'vulkan'].includes(targetApi) &&
-    targetApiLabel !== 'DirectX 10' &&
-    targetApiLabel !== 'DirectX 11';
+    (targetApi === 'dxgi' && targetApiLabel !== 'DirectX 12');
+  const retainedConsumer = ['optiscaler','renodx'].includes(prevManifest?.route) ? prevManifest.route : null;
+  if (retainedConsumer === 'optiscaler' && neuralMode && neuralMode !== 'off')
+    require('./optiscaler').assertNeuralTarget(scan,prevManifest);
+  const needsFullFeeder = !retainedConsumer && (prevManifest?.route === 'feeder' || !hasNativeDlss || isLegacyApiOr32Bit);
+  const canRunMfg = require('../shared/install-routes').supportsMfg(target);
+  let mfgBackend;
+  if (canRunMfg && mfgMode && mfgMode !== 'off') {
+    mfgManager.assertMfgGpu(hardware.gpu.nvidiaPresent);
+    const plan = mfgManager.classicMfgTarget(target, targetManifest,'auto',true);
+    if (plan.issue) throw Object.assign(Error(plan.issue), {code:'errMfgInput'});
+    mfgBackend = plan.backend;
+  }
+  if (prevManifest?.route === 'hud' && (neuralMode && neuralMode !== 'off' || canRunMfg && mfgMode && mfgMode !== 'off')) {
+    // Enhanced controls can enable a backend directly on a monitor-only installation.
+    // Transfer its receipt before the following stages change the route.
+    if (prevManifest.game.exe.toLowerCase() !== path.relative(gameDir, exePath).toLowerCase() || prevManifest.game.api !== targetApi)
+      throw new Error('请先应用所选游戏程序和渲染 API 的安装方式。');
+    prevManifest.performanceMonitor = prevManifest.graphicsRoute;
+    delete prevManifest.graphicsRoute;
+    prevManifest.route = neuralMode && neuralMode !== 'off' && needsFullFeeder ? 'feeder' : 'native';
+    await journal.transaction(gameDir, () => apply.saveActiveManifest(gameDir, prevManifest));
+  }
   if (!canRunMfg && neuralMode === undefined && mfgMode && mfgMode !== 'off') {
     throw Object.assign(new Error('多帧生成需要 64 位 DirectX 12 或 Vulkan 游戏。'), { code: 'errMfgUnsupportedApi' });
   }
@@ -590,10 +729,9 @@ async function applyCombinedStages(gameDir, config, onLog) {
     if (release && !customModel) {
       throw Object.assign(new Error(`请先在模型库中将 ${release.version} 下载入库。`), {code:'errModelNotOnDisk'});
     }
-    const isOpti = prevManifest?.route === 'optiscaler' || scan.install?.optiscaler?.installed ||
-      (fs.existsSync(path.join(exeDir,'OptiScaler.ini')) && !fs.existsSync(path.join(exeDir,'renodx-dlss5.addon64')));
+    const isOpti = mfgBackend === 'mfg-unlocker-asi' || (!mfgBackend && targetManifest?.route === 'optiscaler');
     await config.requirePayload({kind:'enhanced',config:{...config,neuralModelId,hardwareProfile:effectiveProfile,runtimeStack:effectiveRuntimeStack},
-      route:neuralMode && neuralMode!=='off' ? (needsFullFeeder?'feeder':'native') : (isOpti?'optiscaler':'native'),
+      route:neuralMode && neuralMode!=='off' ? (retainedConsumer || (needsFullFeeder?'feeder':'native')) : (isOpti?'optiscaler':'native'),
       mfgRoute:isOpti?'optiscaler':'native',target,scan,customModel});
   }
   let neuralResult = null;
@@ -606,10 +744,11 @@ async function applyCombinedStages(gameDir, config, onLog) {
   // 注意：拥有原生 DLSS 的现代 64 位 DX12/Vulkan 游戏 (!needsFullFeeder) 保持原有黄金逻辑 100% 不变。
   if (needsFullFeeder && neuralMode !== undefined && neuralMode !== 'off' && effectivePayloadDir) {
     const probe = scanSource(effectivePayloadDir);
+    if (!probe.ok || !probe.feeder) throw Object.assign(new Error('缺少 Feeder 配套运行库，请先准备组件。'), {code:'errFeederSupportMissing'});
     // A user-imported model can bootstrap Feeder without downloading the
     // default model first. Feed the selected, locally validated file into the
     // same tracked installer; the later model selection still checks the GPU.
-    if (probe.ok && neuralModelId) {
+    if (neuralModelId) {
       const available = neuralModels.listNeuralModels({payloadDir:effectivePayloadDir,userDataDir:effectiveUserDataDir,gpuName,hardwareProfile:effectiveProfile});
       const model = neuralModels.findLocalModel(available, neuralModelId, config.neuralModelSha256);
       if (model) {
@@ -618,75 +757,77 @@ async function applyCombinedStages(gameDir, config, onLog) {
         probe.hasNeuralRendering=true;
       }
     }
-    if (probe && probe.ok && probe.feeder) {
-      if (['d3d8', 'd3d9', 'ddraw'].includes(targetApi)) {
-        probe.feeder.dgVoodooDir = await ensureDgVoodoo(effectiveUserDataDir);
-        onLog({ code: 'legacyWrapperReady', params: { api: targetApi, bitness: targetBitness } });
-      }
-      try {
-        probe.feeder.lumeniteRoot = await ensureLumenite(effectiveUserDataDir);
-        onLog({ code: 'motionProviderReady', params: { provider: 'LumeniteFX Kernel 2.0' } });
-      } catch (err) {
-        probe.feeder.lumeniteRoot = null;
-        onLog({ code: 'motionProviderFallback', params: { error: err.message } });
-      }
-      const enhDir = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0');
-      const enhAddon32 = path.join(enhDir, 'dlss5-feed.addon32');
-      if (fs.existsSync(enhAddon32)) probe.feeder.addon32 = enhAddon32;
-      const enhAddon64 = path.join(enhDir, 'dlss5-feed.addon64');
-      if (fs.existsSync(enhAddon64)) probe.feeder.addon64 = enhAddon64;
-      const enhHost64 = path.join(enhDir, 'host64', 'dlss5-feed-host64.exe');
-      if (fs.existsSync(enhHost64)) probe.feeder.host64 = enhHost64;
-      const enhFeedFx = path.join(enhDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
-      if (fs.existsSync(enhFeedFx)) probe.feeder.feedShader = enhFeedFx;
-      if (fs.existsSync(enhAddon32) || fs.existsSync(enhAddon64)) probe.feeder.version = '1.19.0';
-
-      const setupName = fs.existsSync(effectivePayloadDir)
-        ? fs.readdirSync(effectivePayloadDir).find((f) => /^ReShade_Setup_.*_Addon\.exe$/i.test(f))
-        : null;
-      const reshadeSetup = setupName ? path.join(effectivePayloadDir, setupName) : null;
-
-      await journal.transaction(gameDir, async () => {
-        const safeHook = apply.selectSafeReShadeHook
-          ? apply.selectSafeReShadeHook(exeDir, targetApi, targetApiLabel, config.reshadeProxy || 'dxgi')
-          : { proxy: config.reshadeProxy || 'dxgi' };
-        const mf = await apply.applySwap({
-          gameDir,
-          exePath: target.path,
-          api: targetApi,
-          apiLabel: targetApiLabel,
-          bitness: targetBitness,
-          route: 'feeder',
-          emulator: target.emulator,
-          source: probe,
-          reshadeSetup,
-          vulkanLayerTarget: path.join(effectiveUserDataDir, 'reshade-vulkan'),
-          reshadeProxy: safeHook.proxy || 'dxgi',
-          installReShade: true,
-          addMissingDlss: true,
-          addStreamline: false,
-          upgradeReShade: false
-        }, onLog);
-        if (fs.existsSync(enhFeedFx)) {
-          await apply.copyTracked(
-            mf,
-            gameDir,
-            enhFeedFx,
-            path.join(exeDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx'),
-            { kind: 'shader' }
-          );
-        }
-        mf.hardwareProfile = effectiveProfile;
-        await apply.saveActiveManifest(gameDir, mf);
-      });
-
-      feederDeployed = true;
-      const wrapperTag = ['d3d8', 'd3d9', 'ddraw'].includes(targetApi) ? 'dgVoodoo2 + ' : '';
-      const opticalTag = probe.feeder.lumeniteRoot ? 'LumeniteFX Kernel 2.0 光流' : 'vort_Motion 光流';
-      const hostTag = targetBitness === 32 ? ' + host64 跨进程桥接' : '';
-      feederSummary = `${targetBitness}位 ${targetApiLabel} (${wrapperTag}Feeder + ${opticalTag}${hostTag})`;
+    if (['d3d8', 'd3d9', 'ddraw'].includes(targetApi)) {
+      probe.feeder.dgVoodooDir = await ensureDgVoodoo(effectiveUserDataDir);
+      onLog({ code: 'legacyWrapperReady', params: { api: targetApi, bitness: targetBitness } });
     }
+    try {
+      probe.feeder.lumeniteRoot = await ensureLumenite(effectiveUserDataDir);
+      onLog({ code: 'motionProviderReady', params: { provider: 'LumeniteFX Kernel 2.0' } });
+    } catch (err) {
+      probe.feeder.lumeniteRoot = null;
+      onLog({ code: 'motionProviderFallback', params: { error: err.message } });
+    }
+    const enhDir = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0');
+    const enhAddon32 = path.join(enhDir, 'dlss5-feed.addon32');
+    if (fs.existsSync(enhAddon32)) probe.feeder.addon32 = enhAddon32;
+    const enhAddon64 = path.join(enhDir, 'dlss5-feed.addon64');
+    if (fs.existsSync(enhAddon64)) probe.feeder.addon64 = enhAddon64;
+    const enhHost64 = path.join(enhDir, 'host64', 'dlss5-feed-host64.exe');
+    if (fs.existsSync(enhHost64)) probe.feeder.host64 = enhHost64;
+    const enhFeedFx = path.join(enhDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
+    if (fs.existsSync(enhFeedFx)) probe.feeder.feedShader = enhFeedFx;
+    if (fs.existsSync(enhAddon32) || fs.existsSync(enhAddon64)) probe.feeder.version = '1.19.0';
 
+    const setupName = fs.existsSync(effectivePayloadDir)
+      ? fs.readdirSync(effectivePayloadDir).find((f) => /^ReShade_Setup_.*_Addon\.exe$/i.test(f))
+      : null;
+    const reshadeSetup = setupName ? path.join(effectivePayloadDir, setupName) : null;
+
+    await journal.transaction(gameDir, async () => {
+      const safeHook = apply.selectSafeReShadeHook
+        ? apply.selectSafeReShadeHook(exeDir, targetApi, targetApiLabel, config.reshadeProxy || 'dxgi')
+        : { proxy: config.reshadeProxy || 'dxgi' };
+      const mf = await apply.applySwap({
+        gameDir,
+        exePath: target.path,
+        api: targetApi,
+        apiLabel: targetApiLabel,
+        bitness: targetBitness,
+        route: 'feeder',
+        emulator: target.emulator,
+        source: probe,
+        reshadeSetup,
+        setupRunner: config.setupRunner,
+        vulkanLayerTarget: path.join(effectiveUserDataDir, 'reshade-vulkan'),
+        reshadeProxy: safeHook.proxy || 'dxgi',
+        installReShade: true,
+        addMissingDlss: true,
+        addStreamline: false,
+        upgradeReShade: false
+      }, onLog);
+      if (fs.existsSync(enhFeedFx)) {
+        await apply.copyTracked(
+          mf,
+          gameDir,
+          enhFeedFx,
+          path.join(exeDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx'),
+          { kind: 'shader' }
+        );
+      }
+      mf.hardwareProfile = effectiveProfile;
+      await apply.saveActiveManifest(gameDir, mf);
+    });
+
+    feederDeployed = true;
+    const wrapperTag = ['d3d8', 'd3d9', 'ddraw'].includes(targetApi) ? 'dgVoodoo2 + ' : '';
+    const opticalTag = probe.feeder.lumeniteRoot ? 'LumeniteFX Kernel 2.0 光流' : 'vort_Motion 光流';
+    const hostTag = targetBitness === 32 ? ' + host64 跨进程桥接' : '';
+    feederSummary = `${targetBitness}位 ${targetApiLabel} (${wrapperTag}Feeder + ${opticalTag}${hostTag})`;
+
+  }
+
+  if (neuralMode !== undefined) {
     neuralResult = await neuralModels.applyNeuralModelSelection(gameDir, {
       exePath,
       apiOverride: config.apiOverride,
@@ -697,55 +838,43 @@ async function applyCombinedStages(gameDir, config, onLog) {
       runtimeStack: effectiveRuntimeStack,
       hardwareProfile: effectiveProfile,
       payloadDir: effectivePayloadDir,
-      userDataDir: effectiveUserDataDir,
-      gpuName
-    }, onLog);
-  } else if (neuralMode !== undefined) {
-    // 1. 应用神经渲染设置（现代原生 DLSS 游戏与关闭模式保持原有逻辑 100% 不变）
-    neuralResult = await neuralModels.applyNeuralModelSelection(gameDir, {
-      exePath,
-      apiOverride: config.apiOverride,
-      mode: neuralMode,
-      modelId: neuralModelId,
-      expectedSha256: config.neuralModelSha256,
-      resetNeuralTuning: config.resetNeuralTuning === true,
-      runtimeStack: effectiveRuntimeStack,
-      hardwareProfile: effectiveProfile,
-      payloadDir: effectivePayloadDir,
-      userDataDir,
+      userDataDir: feederDeployed ? effectiveUserDataDir : userDataDir,
       gpuName
     }, onLog);
 
-    // 若启用了神经渲染且游戏为 64 位，自动补齐或升级 renodx-dlss5.addon64 (v8.5.0-rc10) 与 ReShade；
-    // 若游戏本身无原生 DLSS (!hasNativeDlss)，自动一并部署 Feeder 1.19.0 (dlss5-feed.addon64 + 着色器 + dlss5-feed.cfg)
-    if (neuralMode !== 'off' && scan.chosen.bitness === 64 && effectivePayloadDir) {
+    if (neuralMode !== 'off' && !feederDeployed && scan.chosen.bitness === 64 && effectivePayloadDir && retainedConsumer !== 'optiscaler') {
       await journal.transaction(gameDir, async () => {
         const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
         manifest.hardwareProfile = effectiveProfile;
         await apply.retireOldShaderCompiler(manifest, gameDir, exeDir, (code, params) => onLog({ code, params }));
 
-        const destConsumer = path.join(exeDir, 'renodx-dlss5.addon64');
-        const hasOtherConsumer = fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64')) ||
+        const multipass = retainedConsumer === 'renodx';
+        const consumerName = multipass ? 'renodx-dlss.addon64' : 'renodx-dlss5.addon64';
+        const destConsumer = path.join(exeDir, consumerName);
+        const hasOtherConsumer = (!multipass && neuralModels.hasNeuralAddon(exeDir, 'renodx-dlss.addon64')) ||
           Boolean(scan.install?.optiscaler?.installed);
-        const srcConsumer = path.join(effectivePayloadDir, 'renodx-dlss5.addon64');
-        const consumerNeedsUpdate = fs.existsSync(srcConsumer) && (
-          (!fs.existsSync(destConsumer) && !hasOtherConsumer) ||
-          (fs.existsSync(destConsumer) && fs.statSync(destConsumer).size !== fs.statSync(srcConsumer).size)
-        );
-
-        if (consumerNeedsUpdate || (!fs.existsSync(destConsumer) && !hasOtherConsumer)) {
-          if (fs.existsSync(srcConsumer)) {
-            if (apply.setAsideRivalConsumers) {
-              await apply.setAsideRivalConsumers(manifest, gameDir, exeDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }));
-            }
-            await apply.copyTracked(manifest, gameDir, srcConsumer, destConsumer, {
-              kind: 'addon',
-              newVersion: pe.getFileVersion(srcConsumer)
-            });
-            await apply.enableAddonInIni(exeDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
-          }
-        } else if (fs.existsSync(destConsumer)) {
-          await apply.enableAddonInIni(exeDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
+        const rel = path.relative(gameDir, destConsumer);
+        const savedConsumer = multipass && !fs.existsSync(destConsumer) && prevManifest?.replaced.find(entry =>
+          entry.kind === 'disabled-component' && path.relative(entry.rel, rel) === '');
+        const srcConsumer = savedConsumer ? apply.originalPath(gameDir, manifest, savedConsumer.rel)
+          : path.join(effectivePayloadDir, multipass ? 'feeder/host64' : '', consumerName);
+        const installed = neuralModels.hasNeuralAddon(exeDir,consumerName);
+        const needsConsumer = !installed && !hasOtherConsumer;
+        if (needsConsumer && !fs.existsSync(srcConsumer))
+          throw Object.assign(new Error('缺少神经渲染插件：' + consumerName), {code:'errNoNeuralRuntime'});
+        const managed = manifest.added.includes(rel) || manifest.replaced.some(entry=>entry.rel===rel);
+        const {digest} = require('./runtime-components');
+        if (needsConsumer || (!multipass && installed && fs.existsSync(srcConsumer) &&
+            (fs.statSync(destConsumer).size !== fs.statSync(srcConsumer).size || (managed && digest(destConsumer) !== digest(srcConsumer))))) {
+          if (!neuralModels.hasNeuralAddon(path.dirname(srcConsumer),consumerName))
+            throw Object.assign(new Error('神经渲染插件的文件身份不匹配：' + consumerName), {code:'errNoNeuralRuntime'});
+          await apply.setAsideRivalConsumers(manifest, gameDir, exeDir, consumerName, (code, params) => onLog({ code, params }));
+          await apply.copyTracked(manifest, gameDir, srcConsumer, destConsumer, {
+            kind: 'addon', newVersion: pe.getFileVersion(srcConsumer)
+          });
+        }
+        if (fs.existsSync(destConsumer)) {
+          await apply.enableAddonInIni(exeDir, consumerName, (code, params) => onLog({ code, params }), gameDir, manifest, effectivePayloadDir);
         }
 
         const srcDlss = effectiveRuntimeStack === 'oct2026-310.9.16'
@@ -758,143 +887,12 @@ async function applyCombinedStages(gameDir, config, onLog) {
           });
         }
 
-        const reshadeCheck = scan.reshade;
-        if (scan.chosen.api === 'vulkan') {
-          const vulkanLayer = require('./vulkan-layer');
-          const vkSrcDir = path.join(effectivePayloadDir, 'reshade-vulkan');
-          const vkTargetDir = path.join(
-            userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced'),
-            'reshade-vulkan'
-          );
-          if (fs.existsSync(path.join(vkSrcDir, 'ReShade64.dll'))) {
-            manifest.vulkanLayer = await vulkanLayer.register({
-              sourceDir: vkSrcDir,
-              targetDir: vkTargetDir,
-              gameDir,
-              bitness: 64
-            });
-          }
-          await apply.retireVulkanDxgi(manifest, gameDir, exeDir);
-        } else if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
-          const bundledReshade = path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll');
-          if (fs.existsSync(bundledReshade)) {
-            const safeHook = apply.selectSafeReShadeHook
-              ? apply.selectSafeReShadeHook(exeDir, scan.chosen.api, scan.chosen.apiLabel, config.reshadeProxy || 'dxgi')
-              : { hook: 'dxgi.dll' };
-            const hookName = safeHook.hook || 'dxgi.dll';
-            const hookFile = path.join(exeDir, hookName);
-            const hookExisted = fs.existsSync(hookFile);
-            await apply.copyTracked(manifest, gameDir, bundledReshade, hookFile, { kind: 'reshade' });
-            manifest.reshade.installedByUs = !hookExisted;
-            manifest.reshade.file = hookName;
-          }
-        }
+        await require('./optional-graphics').prepareReShadeHost({
+          gameDir,exe:scan.chosen,manifest,payloadDir:effectivePayloadDir,userDataDir:effectiveUserDataDir,
+          reshadeProxy:config.reshadeProxy,registryRunner:config.registryRunner
+        },onLog);
 
-        // 若该游戏不具备原生 DLSS 且未安装 OptiScaler，自动部署 Feeder 1.19.0 深度与运动矢量馈送管线
-        if (!hasNativeDlss && !Boolean(scan.install?.optiscaler?.installed)) {
-          const srcFeeder119 = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0', 'dlss5-feed.addon64');
-          const srcFeederFallback = path.join(effectivePayloadDir, 'feeder', 'dlss5-feed.addon64');
-          const srcFeeder = fs.existsSync(srcFeeder119) ? srcFeeder119 : srcFeederFallback;
-          const destFeeder = path.join(exeDir, 'dlss5-feed.addon64');
-          if (fs.existsSync(srcFeeder)) {
-            await apply.copyTracked(manifest, gameDir, srcFeeder, destFeeder, {
-              kind: 'feeder',
-              newVersion: pe.getFileVersion(srcFeeder)
-            });
-            await apply.enableAddonInIni(exeDir, 'dlss5-feed.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
-          }
-
-          // 部署 ReShade 馈送着色器与纹理 (DLSS5_Feed.fx + vort_Motion.fx / LumeniteFX)
-          const copyDirTracked = async (srcRoot, destRoot) => {
-            const queue = [''];
-            while (queue.length) {
-              const relDir = queue.shift();
-              const srcDir = path.join(srcRoot, relDir);
-              for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
-                const rel = path.join(relDir, entry.name);
-                if (entry.isDirectory()) queue.push(rel);
-                else if (entry.isFile()) {
-                  await apply.copyTracked(manifest, gameDir, path.join(srcRoot, rel), path.join(destRoot, rel), { kind: 'shader' });
-                }
-              }
-            }
-          };
-          const baseShaderRoot = path.join(effectivePayloadDir, 'feeder', 'reshade-shaders');
-          const destShaderRoot = path.join(exeDir, 'reshade-shaders');
-          if (fs.existsSync(baseShaderRoot)) {
-            await copyDirTracked(baseShaderRoot, destShaderRoot);
-          }
-          const enhancedFeedFx = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0', 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
-          if (fs.existsSync(enhancedFeedFx)) {
-            await apply.copyTracked(
-              manifest,
-              gameDir,
-              enhancedFeedFx,
-              path.join(destShaderRoot, 'Shaders', 'DLSS5_Feed.fx'),
-              { kind: 'shader' }
-            );
-          }
-
-          // 查找本机已缓存的 LumeniteFX 光流内核（若存在则使用 provider=3，否则回退至内置 vort_Motion.fx provider=2）
-          let provider = 2;
-          const compDir = path.join(
-            userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced'),
-            'components'
-          );
-          if (fs.existsSync(compDir)) {
-            try {
-              const findLumenite = (dir, depth = 0) => {
-                if (depth > 3) return null;
-                if (fs.existsSync(path.join(dir, 'Shaders', 'lumenite_Kernel.fx'))) return dir;
-                for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-                  if (ent.isDirectory() && /^lumenite/i.test(ent.name)) {
-                    const hit = findLumenite(path.join(dir, ent.name), depth + 1);
-                    if (hit) return hit;
-                  }
-                }
-                return null;
-              };
-              const lumRoot = findLumenite(compDir);
-              if (lumRoot) {
-                await copyDirTracked(path.join(lumRoot, 'Shaders'), path.join(destShaderRoot, 'Shaders'));
-                if (fs.existsSync(path.join(lumRoot, 'Textures'))) {
-                  await copyDirTracked(path.join(lumRoot, 'Textures'), path.join(destShaderRoot, 'Textures'));
-                }
-                provider = 3;
-              }
-            } catch { /* fallback to provider 2 */ }
-          }
-
-          const gameIniPath = path.join(exeDir, 'ReShade.ini');
-          let gameIni = feederConfig.configureGameReShade(feederConfig.readText(gameIniPath), provider);
-          gameIni = feederConfig.configureConsumer(gameIni, { host: false, xenia: false });
-          let presetFile = feederConfig.presetPath(exeDir, gameIni);
-          const presetRel = path.relative(gameDir, presetFile);
-          if (presetRel.startsWith('..') || path.isAbsolute(presetRel)) {
-            gameIni = feederConfig.setIni(gameIni, 'GENERAL', 'PresetPath', '.\\ReShadePreset.ini');
-            presetFile = path.join(exeDir, 'ReShadePreset.ini');
-          }
-          await apply.writeTracked(manifest, gameDir, gameIniPath, gameIni, { kind: 'config' });
-          await apply.writeTracked(
-            manifest,
-            gameDir,
-            presetFile,
-            feederConfig.configurePreset(feederConfig.readText(presetFile), provider, { xenia: false }),
-            { kind: 'config' }
-          );
-          const cfgPath = path.join(exeDir, 'dlss5-feed.cfg');
-          await apply.writeTracked(
-            manifest,
-            gameDir,
-            cfgPath,
-            feederConfig.configureFeed(feederConfig.readText(cfgPath)),
-            { kind: 'config' }
-          );
-          manifest.route = 'feeder';
-          manifest.feeder = { version: '1.19.0', provider };
-        } else {
-          if (!manifest.route) manifest.route = 'native';
-        }
+        if (!manifest.route) manifest.route = 'native';
         await apply.saveActiveManifest(gameDir, manifest);
       });
     }
@@ -907,6 +905,7 @@ async function applyCombinedStages(gameDir, config, onLog) {
         mfgResult = await mfgManager.applyMfgConfiguration(gameDir, {
           exePath,
           apiOverride: config.apiOverride,
+          nvidiaPresent:hardware.gpu.nvidiaPresent,
           mode: 'off',
           runtimeStack: effectiveRuntimeStack,
           hdrCompatibility,
@@ -932,7 +931,9 @@ async function applyCombinedStages(gameDir, config, onLog) {
         exePath,
         apiOverride: config.apiOverride,
         reshadeProxy: config.reshadeProxy,
+        registryRunner: config.registryRunner,
         gpuName,
+        nvidiaPresent:hardware.gpu.nvidiaPresent,
         mode: mfgMode,
         runtimeStack: effectiveRuntimeStack,
         hdrCompatibility,
@@ -947,37 +948,17 @@ async function applyCombinedStages(gameDir, config, onLog) {
     }
   }
 
-  // 3. 若两个模块同时处于激活状态且均使用 ReShade Addon，强制同步 LoadFromDllMain=renodx-mfgunlock.addon64 与 RuntimeSelectionMode=1；
-  //    并确保 [RenoDX.DLSS5] 保持 ConfigVersion=7 与对应档位的分辨率比例（对于自带 Streamline 的游戏自动写入 EnableHooks=1）
+  // NR settings belong to the selected consumer. A second pass here used to
+  // reset in-game tuning and even change the Feeder's hook to Streamline.
   const reshadeIni = path.join(exeDir, 'ReShade.ini');
-  const hasNrAddon = fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) ||
-    fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64'));
-  const hasMfgAddon = fs.existsSync(path.join(exeDir, 'renodx-mfgunlock.addon64'));
-  const hasNativeStreamline = fs.existsSync(path.join(exeDir, 'sl.interposer.dll')) ||
-    fs.existsSync(path.join(exeDir, 'sl.common.dll')) ||
-    (Array.isArray(scan.streamlineFiles) && scan.streamlineFiles.length > 0);
-  const isDesktopProfile = effectiveProfile === 'rtx40_desktop' || effectiveProfile === 'rtx50_desktop';
-  if ((hasNrAddon || hasMfgAddon) && fs.existsSync(reshadeIni)) {
+  if (fs.existsSync(path.join(exeDir, 'renodx-mfgunlock.addon64')) && fs.existsSync(reshadeIni)) {
     await journal.transaction(gameDir, async () => {
       const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
       manifest.hardwareProfile = effectiveProfile;
       let iniText = feederConfig.readText(reshadeIni);
       iniText = feederConfig.setIni(iniText, 'ADDON', 'AddonPath', '.\\');
-      if (hasMfgAddon) {
-        iniText = feederConfig.setEarlyAddon(iniText, 'renodx-mfgunlock.addon64', true);
-        iniText = feederConfig.setIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode', '1');
-      }
-      if (hasNrAddon && neuralMode !== undefined && neuralMode !== 'off') {
-        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'ConfigVersion', '7');
-        if (hasNativeStreamline) {
-          iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'EnableHooks', '1');
-        }
-        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRResolutionScale', isDesktopProfile ? '1' : '0.75');
-        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRFollowInputRes', '0');
-        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRHookPoint', '0');
-        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRMaxWorksets', isDesktopProfile ? '8' : '4');
-        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'UiLanguage', 'zh-Hans');
-      }
+      iniText = feederConfig.setEarlyAddon(iniText, 'renodx-mfgunlock.addon64', true);
+      iniText = feederConfig.setIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode', '1');
       await apply.writeTracked(manifest, gameDir, reshadeIni, iniText, { kind: 'config' });
       await apply.saveActiveManifest(gameDir, manifest);
     });

@@ -17,8 +17,8 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const SOURCE = process.argv[2] || path.join(ROOT, 'app_iocn.png');
-const OUT_DIR = path.join(ROOT, 'build');
+const OUT_DIR = path.join(ROOT, 'assets', 'neuralframe');
+const SOURCE = process.argv[2] || path.join(OUT_DIR, 'mark.png');
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
 
 // A hair of breathing room so anti-aliased edges are never clipped.
@@ -115,16 +115,12 @@ app.whenReady().then(() => {
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   const images = ICO_SIZES.map((size) => ({ size, png: render(square, size).toPNG() }));
-  const icoPath = path.join(OUT_DIR, 'icon.ico');
+  const icoPath = path.join(OUT_DIR, 'app.ico');
   fs.writeFileSync(icoPath, buildIco(images));
-  console.log(`wrote build/icon.ico with ${ICO_SIZES.join(', ')} px (${(fs.statSync(icoPath).size / 1024).toFixed(0)} KB)`);
-
-  // 1024 png kept for anything that wants a large source; 128 feeds the header.
-  const big = path.join(OUT_DIR, 'icon.png');
-  fs.writeFileSync(big, render(square, 1024).toPNG());
-  const badge = path.join(ROOT, 'src', 'renderer', 'icon.png');
+  console.log(`wrote ${icoPath} with ${ICO_SIZES.join(', ')} px`);
+  const badge = path.join(OUT_DIR, 'mark-ui.png');
   fs.writeFileSync(badge, render(square, 128).toPNG());
-  console.log('wrote build/icon.png (1024) and src/renderer/icon.png (128)');
+  console.log(`wrote ${badge} (128 px)`);
   console.log(`artwork now fills ${((1 - MARGIN * 2) ** 2 * 100).toFixed(1)}% of the icon`);
 
   app.exit(0);

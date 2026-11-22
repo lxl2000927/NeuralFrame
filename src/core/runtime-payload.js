@@ -6,21 +6,35 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { digest, safe } = require('./component-library');
-const { downloadAsset, sweepPartials } = require('./asset-download');
-const { unpack, allowedAsset } = require('./component-updates');
+const { allowedAsset, downloadWithSources } = require('./download-sources');
+const { sweepPartials } = require('./asset-download');
+const { unpack } = require('./component-archive');
+const routes = require('../shared/install-routes');
 const catalog = require('./runtime-catalog.json');
 const {componentCompatibility,modelRequirements}=require('./component-compatibility');
 const error = message => Object.assign(new Error(message), {code:'errRuntimeComponents'});
 const nonempty = value => value !== undefined && value !== 'off';
 
-function requiredPacks({kind, config = {}, route, mfgRoute, target = {}, scan = {}, customModel = false, reuseProxy = false} = {}) {
-  if (kind === 'restore') return [];
+function requiredPacks({kind, config = {}, route, mfgRoute, target, scan = {}, customModel = false, reuseProxy = false} = {}) {
+  if (kind === 'restore' || route === 'optifg') return [];
+  if (route === 'xemfg') return ['mfg-universal', 'mfg-license', 'xemfg-intel'];
+  if (route === 'xemfg-optiscaler') return ['mfg-universal', 'mfg-license'];
+  if (route === 'anr' && config.graphics?.neural)
+    return ['anr','renodx-nr','nr-3108',config.runtimeStack === 'oct2026-310.9.16' ? 'sr-modern' : 'sr-baseline','localization','reshade'];
+  if (route === 'hud') return ['localization', 'reshade'];
+  if (routes.componentRoutes.includes(route)) return [route];
   const ids = new Set();
   if (route === 'encore') {
     // A retained engine or a library selection is verified by its route. Do
     // not download/replace the recommended engine when only settings change.
     if (!reuseProxy && !config.encorePackageId) ids.add('encore');
-    ids.add('sl-modern'); ids.add('fg-modern');
+    const encore = config.encore || {};
+    const spatialOnly = require('../shared/encore-spatial').spatialOnly({
+      upscaling:encore.upscaling, mfgMode:config.mfgMode ?? encore.mfgMode ?? 'off', neuralMode:config.neuralMode ?? encore.neuralMode ?? 'off',
+    });
+    if (!spatialOnly) {
+      ids.add('sl-modern'); ids.add('fg-modern');
+    }
     if (config.encore?.upscaling === 'dlss') ids.add('sr-modern');
     if (nonempty(config.neuralMode) && !customModel) ids.add('nr-3108');
     return [...ids];
@@ -34,7 +48,8 @@ function requiredPacks({kind, config = {}, route, mfgRoute, target = {}, scan = 
   const modern = config.runtimeStack === 'oct2026-310.9.16' || (!config.runtimeStack && config.hardwareProfile === 'rtx50_desktop');
   const stack = modern ? 'modern' : 'baseline';
   const nr = kind === 'install' || nonempty(config.neuralMode);
-  const mfg = kind === 'enhanced' && nonempty(config.mfgMode) && target.bitness !== 32 && ['dxgi','vulkan'].includes(target.api || 'dxgi') && !['DirectX 10','DirectX 11'].includes(target.apiLabel);
+  const mfgTarget = target || scan.chosen;
+  const mfg = kind === 'enhanced' && nonempty(config.mfgMode) && (!mfgTarget || routes.supportsMfg(mfgTarget));
   if(nr || mfg) ids.add('localization');
   if (nr) {
     if (!customModel) ids.add('nr-3108');
@@ -69,7 +84,7 @@ class RuntimePayload {
     this.userData = path.resolve(userData);
     this.root = path.join(this.userData,'component-library-v1','runtime');
     this.catalog = manifest; this.bundledRoot = bundledRoot; this.legacyRoots = legacyRoots;
-    this.fetcher = fetcher; this.onProgress = onProgress; this.controller = null;
+    this.fetcher = fetcher; this.onProgress = onProgress; this.controller = null; this.discardOnAbort = false;
     this.proofs = new Map();
     if (manifest.schema !== 1 || !Array.isArray(manifest.packs)) throw error('无效的组件清单');
     this.packs = new Map(manifest.packs.map(p => [p.id,p]));
@@ -117,7 +132,7 @@ class RuntimePayload {
       downloads:missing.filter(p=>!p.bundled).map(p=>({name:p.name,size:p.size}))
     });
   }
-  cancel() { this.controller?.abort(); return {ok:true}; }
+  cancel({discard=false}={}) { if(discard)this.discardOnAbort=true;this.controller?.abort(); return {ok:true}; }
   async localCandidates() {
     const index = new Map();
     const add = (sha256,file) => {
@@ -149,7 +164,7 @@ class RuntimePayload {
     await fs.promises.copyFile(source,dest);
   }
   async obtain(p,index,temp,position={}) {
-    const tag={id:p.id,name:p.name,index:position.index,count:position.count};
+    const tag={id:p.id,name:p.name,index:position.index,count:position.count,overallTotal:position.overallTotal || p.size};
     let local=true;
     for(const f of p.files) {
       this.checkCancelled();
@@ -163,12 +178,12 @@ class RuntimePayload {
     if(p.bundled) throw error('中文适配组件不完整，请重新下载管理器。');
     const archive = safe(temp,'__archive.zip');
     try {
-      await downloadAsset(p, {
+      await downloadWithSources(p, {
         cacheRoot: this.root, destination: archive, fetcher: this.fetcher, signal: this.controller.signal,
-        // Stopping a transfer is a decision, not an accident: no partial
-        // ranges and no staging archive may outlive it.
-        purgeOnAbort: true,
-        onProgress: loaded => this.onProgress({stage:'download',...tag,loaded,total:p.size})
+        mirror:position.mirror || '', priority:position.priority || 'mirror',
+        purgeOnAbort: ()=>this.discardOnAbort,
+        onProgress: (loaded,source,sourceReason,connections) => this.onProgress({stage:'download',...tag,loaded,total:p.size,source,sourceReason,connections,
+          overallLoaded:(position.overallLoaded || 0) + loaded,overallTotal:position.overallTotal || p.size})
       });
     } catch (cause) { throw error(`无法下载 ${p.name}：${cause.message}`); }
     this.checkCancelled();this.onProgress({stage:'verify',...tag,loaded:p.size,total:p.size});
@@ -180,20 +195,22 @@ class RuntimePayload {
     }
     await fs.promises.rm(archive,{force:true});await fs.promises.rm(extracted,{recursive:true,force:true});
   }
-  async prepare(ids) {
+  async prepare(ids,{mirror='',priority='mirror'}={}) {
     if(this.controller)throw error('组件准备正在进行');
     const packs=[...new Set(ids)].map(id=>this.pack(id));
+    const overallTotal=packs.reduce((sum,p)=>sum+(p.size||0),0);
+    let overallLoaded=0;
     this.controller=new AbortController();
     try {
       await this.sweepStale();
       const index=await this.localCandidates();
       for(const [position,p] of packs.entries()) {
-        const at={index:position+1,count:packs.length};
+        const at={index:position+1,count:packs.length,mirror,priority,overallLoaded,overallTotal};
         this.checkCancelled();
         this.onProgress({stage:'verify',id:p.id,name:p.name,loaded:0,total:p.size||0,...at});
         const ready=await this.complete(this.payloadDir,p);
         this.checkCancelled();
-        if(ready)continue;
+        if(ready){overallLoaded+=p.size||0;continue;}
         const stored=this.directory(p);
         const storedReady=await this.complete(stored,p);
         this.checkCancelled();
@@ -221,18 +238,20 @@ class RuntimePayload {
         }
         // A completed rename remains cached, but a late stop must not report ready.
         this.checkCancelled();
-        this.onProgress({stage:'ready',id:p.id,name:p.name,loaded:p.size||0,total:p.size||0,...at});
+        this.onProgress({stage:'ready',id:p.id,name:p.name,loaded:p.size||0,total:p.size||0,...at,overallLoaded:overallLoaded+(p.size||0)});
+        overallLoaded+=p.size||0;
       }
       this.checkCancelled();
       return {ok:true};
     } catch(e) {
       // A cancellation is a normal outcome the caller reports in place, not a
       // failure that has to reach the person as an error string.
-      if(this.controller.signal.aborted) return {ok:false,cancelled:true,message:'组件下载已取消，游戏文件未修改。'};
+      if(this.controller.signal.aborted) return {ok:false,cancelled:true,discarded:this.discardOnAbort,message:this.discardOnAbort?'组件下载已取消，临时分段已清理，游戏文件未修改。':'组件下载已暂停，已保留进度；再次准备将继续，游戏文件未修改。'};
       throw e;
     }
     finally {
       this.controller=null;
+      this.discardOnAbort=false;
       // The parent is only a container; leaving an empty one behind invites
       // the next crash to look like a leak.
       await fs.promises.rmdir(safe(this.root,'staging')).catch(()=>{});

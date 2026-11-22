@@ -16,7 +16,7 @@ test('acquisition can verify an offline cached release even when another same-fi
   assert.equal(result.candidate.id,'offline');assert.equal(result.cached,true);assert.equal(result.disabled,false);
   assert.match(result.notice,/校验/);
   cached.present=false;
-  assert.equal(versionAcquisition(row).disabled,true);assert.match(versionAcquisition(row).notice,/重新检查更新/);
+  assert.equal(versionAcquisition(row).disabled,false);assert.match(versionAcquisition(row).notice,/SHA-256/);
   row.releases=[{id:'unverified',downloadable:false}];
   assert.match(versionAcquisition(row).notice,/SHA-256/);
   row.compatibility={kind:'pending',ready:false,assessment:'verify'};
@@ -82,6 +82,16 @@ test('missing cached files do not become present through a release link; models 
   assert.equal(result.length,1);
   assert.equal(result[0].versions[0].packages[0].present,false);
   assert.equal(result[0].versions[0].releases[0].id,'download');
+});
+
+test('model view skips unrelated package links and release metadata before grouping', () => {
+  const unrelated = {component:'dlss-fg',get id(){throw Error('unrelated component was indexed')}};
+  const data=library([{id:'nr',component:'dlss-nr',packageIds:['cached']},unrelated],[unrelated,local('cached')]);
+  const release={id:'update',component:'dlss-nr',cachedPackageId:'cached'};
+  const [group]=groupLibrary(data,[unrelated,release],true);
+  assert.equal(group.versions.length,1);
+  assert.equal(group.versions[0].pack.id,'nr');
+  assert.deepEqual(group.versions[0].releases,[release]);
 });
 
 test('multi-version route pack retains every linked local variant without duplicate cards', () => {

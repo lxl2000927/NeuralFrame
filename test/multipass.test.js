@@ -50,7 +50,7 @@ test('the two consumers have different names, so one can never overwrite the oth
   // cannot drift apart.
   assert.match(apply, /const addonSource = multipass \? source\.feeder\.multipassAddon : source\.addon;/);
   assert.match(apply, /const addonName = addonSource \? path\.basename\(addonSource\) : null;/);
-  assert.match(apply, /enableAddonInIni\(exeDir, addonName, log, gameDir, manifest\)/,
+  assert.match(apply, /enableAddonInIni\(exeDir, addonName, log, gameDir, manifest, source\.payloadRoot\)/,
     'and ReShade.ini enables that same name, not source.addon');
 });
 

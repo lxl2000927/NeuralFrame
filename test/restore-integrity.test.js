@@ -11,6 +11,11 @@ const backend = require('../src/core/backend-manager');
 const journal = require('../src/core/file-journal');
 const layer = require('../src/core/vulkan-layer');
 
+test('four-part PE revisions are ordered for runtime replacement and omitted revisions compare as zero', () => {
+  assert.ok(core.compareVersions('310.9.16.7','310.9.16.0') > 0);
+  assert.equal(core.compareVersions('6.8.0.0','6.8.0'),0);
+});
+
 function fixture(t) {
   const game = fs.mkdtempSync(path.join(os.tmpdir(), 'restore-integrity-'));
   t.after(() => {
@@ -86,6 +91,24 @@ test('transaction JSON leaves existing temporary hard links and neighboring file
   t.mock.method(crypto, 'randomUUID', () => 'collision');
   await assert.rejects(journal.atomicJson(file, {}), {code:'EEXIST'});
   assert.equal(fs.readFileSync(collision, 'utf8'), 'important bytes');
+});
+
+test('journal publication tolerates a transient Windows lock and preserves old bytes on a persistent lock', {skip:process.platform !== 'win32'}, async t => {
+  const {game} = fixture(t);
+  const target = journal.pendingPath(game);
+  await journal.atomicJson(target, {step:1});
+  let attempts = 0, locked = false;
+  const rename = fs.promises.rename.bind(fs.promises);
+  t.mock.method(fs.promises, 'rename', async (from,to) => {
+    if (to === target && (++attempts === 1 || locked)) throw Object.assign(new Error('in use'), {code:'EPERM'});
+    return rename(from,to);
+  });
+  await journal.atomicJson(target, {step:2});
+  assert.equal(attempts, 2);
+  locked = true;
+  await assert.rejects(journal.atomicJson(target, {step:3}), {code:'EPERM'});
+  assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), {step:2});
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), [path.basename(target)]);
 });
 
 test('failed full restore reverses files and empty-directory removal before a successful retry', async t => {

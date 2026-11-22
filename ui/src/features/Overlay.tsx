@@ -1,3 +1,4 @@
+import { PerformanceMonitor, type MonitorControls } from "./PerformanceMonitor";
 import {
   useCallback,
   useEffect,
@@ -101,10 +102,12 @@ export function Overlay({
   message,
   active = true,
   refreshToken = 0,
+  monitor,
 }: {
   message: (s: string) => void;
   active?: boolean;
   refreshToken?: number;
+  monitor: MonitorControls;
 }) {
   const [prefs, setPrefs] = useState<OverlayPrefs | null>(null);
   const [library, setLibrary] = useState<OverlayLibrary | null>(null);
@@ -332,6 +335,7 @@ export function Overlay({
           </button>
         </details>
       </div>
+      <PerformanceMonitor {...monitor} active={active} refreshToken={refreshToken}/>
       <div className="overlay-health" role="group" aria-label={t("面板状态")}>
         <div data-state={bridge?.addon === false ? "error" : "neutral"}>
           <span>{t("插件文件")}</span>

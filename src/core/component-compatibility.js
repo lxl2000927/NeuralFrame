@@ -1,5 +1,22 @@
 'use strict';
 const { DEFINITIONS } = require('./component-definitions');
+const runtimePacks = require('./runtime-catalog.json').packs;
+const path = require('node:path');
+
+function matchesPairedBinary(p, def) {
+  if (def?.files.length !== 1) return false;
+  const packs = runtimePacks.filter(pack=>pack.component === p.component);
+  // Runtime groups include their licenses and may contain two copies of the
+  // same binary. Local packages carry only the component's declared files.
+  if (p.contentId && Array.isArray(p.files) && packs.some(pack=>pack.id===p.id && pack.contentId===p.contentId &&
+      pack.files.length===p.files.length && pack.files.every((f,i)=>p.files[i]?.path===f.path && p.files[i].sha256===f.sha256))) return true;
+  const binary = Array.isArray(p.files)
+    ? p.files.length === 1 && p.files[0]
+    : {rel:p.name,sha256:p.sha256};
+  if (!binary?.rel || binary.rel.toLowerCase() !== def.files[0].toLowerCase()) return false;
+  return packs.some(pack => pack.files.some(file =>
+    path.basename(file.path).toLowerCase() === binary.rel.toLowerCase() && file.sha256 === binary.sha256));
+}
 
 // Acquisition and game application share this policy. A release label alone
 // must never confer the trust of a bundled, fingerprint-pinned adapter.
@@ -12,7 +29,7 @@ function componentCompatibility(p) {
     // unknown archive may still contain an already adapted DLL after import.
     const assessment = engine.compatible ? 'route' : hasDllIdentity ? 'unsupported' : 'verify';
     return {kind:engine.compatible ? 'route' : 'pending', ready:false, label:engine.label,
-      assessment, reason:engine.compatible ? engine.reason : hasDllIdentity
+      assessment, reason:engine.compatible || engine.noticeMismatch ? engine.reason : hasDllIdentity
         ? '此 DLL 尚未进入 NeuralFrame 的引擎支持目录，当前未提供对应部署与参数支持。'
         : '尚未取得可识别的 DLL 指纹；发布名称或压缩包版本不能确认应用支持。', engine};
   }
@@ -23,7 +40,7 @@ function componentCompatibility(p) {
     reason:p.trustedAdapter ? '这是安装路线使用的配套组合，由游戏页统一部署所需宿主、运行库或加载器。'
       : '该组件需要成组安装；当前安装路线没有开放这个单独版本的替换入口。'
   };
-  if (p.trustedAdapter || ['dlss-sr','dlss-nr'].includes(p.component)) return {
+  if (['dlss-sr','dlss-nr'].includes(p.component) || matchesPairedBinary(p,def)) return {
     kind:'selectable', ready:true, assessment:'supported', label:'可选择',
     reason:p.component === 'dlss-nr' ? '允许选择模型；应用前还会核对文件身份、实际 GPU 架构和游戏路线。'
       : '允许选择此组件；应用前仍需校验文件并检查游戏的功能支持。'

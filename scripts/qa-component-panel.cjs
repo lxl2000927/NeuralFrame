@@ -1,11 +1,9 @@
-const { _electron: electron, expect } = require("@playwright/test");
+const { launchFixture } = require('../test/fixtures/launch-electron.cjs');
+const { expect } = require('@playwright/test');
 const path = require("node:path"),
   fs = require("node:fs"),
   assert = require("node:assert/strict");
 const { DEFINITIONS } = require("../src/core/component-definitions");
-const root = path.resolve(__dirname, ".."),
-  env = { ...process.env };
-delete env.ELECTRON_RUN_AS_NODE;
 const output = process.env.NEURALFRAME_QA_OUT;
 if (output) fs.mkdirSync(output, { recursive: true });
 const available = {
@@ -59,6 +57,7 @@ const snapshot = {
         name: "renodx-mfgunlock.addon64",
         repo: "mavismmg/MFGAdaUnlock-RenoDx",
         downloadable: true,
+        stale: true,
         sha256: "a".repeat(64),
         size: 2048,
         compatibility: {
@@ -71,11 +70,7 @@ const snapshot = {
   },
 };
 (async () => {
-  const app = await electron.launch({
-    executablePath: require("electron"),
-    args: [path.join(root, "test/fixtures/neuralframe-flow-main.cjs")],
-    env,
-  });
+  const { app, close } = await launchFixture();
   try {
     const p = await app.firstWindow();
     p.setDefaultTimeout(15000);
@@ -124,11 +119,22 @@ const snapshot = {
     const reads = (await p.evaluate(() => window.qa.audit())).libraryReads;
     await release.locator(".component-status").click();
     await expect(drawer).toBeVisible();
+    await expect(drawer.getByText("2 KB", {exact:true}).first()).toBeVisible();
     const widths = await catalog.locator(".component-list").boundingBox();
     assert.ok(
-      widths.width < originalWidth - 250,
-      "Opening details reserves list space",
+      Math.abs(widths.width - originalWidth) < 2,
+      "Opening the drawer preserves the full list width",
     );
+    await expect.poll(async () => drawer.evaluate(el => Math.abs(el.getBoundingClientRect().right - el.closest(".page-slot").getBoundingClientRect().right))).toBeLessThan(2);
+    await expect(drawer).toHaveAttribute("role", "dialog");
+    await expect(drawer).toHaveAttribute("aria-modal", "true");
+    assert.ok(await p.locator(".sidebar").evaluate(el => el.inert), "Background navigation is inert");
+    const closeDetails = drawer.getByRole("button", { name: "关闭详情" });
+    await closeDetails.focus();
+    await p.keyboard.press("Shift+Tab");
+    assert.ok(await p.evaluate(() => document.querySelector(".component-drawer")?.contains(document.activeElement)), "Shift+Tab remains inside the drawer");
+    await p.keyboard.press("Tab");
+    assert.ok(await closeDetails.evaluate(el => el === document.activeElement), "Tab wraps back to the first drawer control");
     await expect(drawer.locator(".component-support-badge")).toContainText(
       "尚未接入",
     );
@@ -158,6 +164,31 @@ const snapshot = {
         .evaluate((el) => el === document.activeElement),
       "Focus returns to the invoking row",
     );
+    await p.emulateMedia({ reducedMotion: "no-preference" });
+    const slowMotion = await p.addStyleTag({content: ".component-drawer { transition-duration: 2s !important; }"});
+    await release.locator(".component-status").click();
+    await p.waitForFunction(() => {
+      const el = document.querySelector(".component-drawer");
+      if (!el) return false;
+      const fraction = new DOMMatrix(getComputedStyle(el).transform).m41 / el.clientWidth;
+      return fraction > 0.2 && fraction < 0.85;
+    });
+    const interrupted = await drawer.evaluate(async el => {
+      const offset = () => new DOMMatrix(getComputedStyle(el).transform).m41;
+      const before = offset();
+      el.querySelector("header button").click();
+      await new Promise(requestAnimationFrame);
+      return {before, after:offset()};
+    });
+    assert.ok(interrupted.after >= interrupted.before - 20, "Closing during entry preserves the drawer's position");
+    await expect(drawer).toHaveCount(0);
+    await slowMotion.evaluate(el => el.remove());
+    await p.emulateMedia({ reducedMotion: "reduce" });
+    await release.locator(".component-status").click();
+    assert.equal(await drawer.evaluate(el => el.getAnimations().length), 0, "Reduced motion opens without a slide");
+    await p.keyboard.press("Escape");
+    await expect(drawer).toHaveCount(0);
+    await p.emulateMedia({ reducedMotion: null });
     assert.ok(
       Math.abs(
         (await catalog.locator(".component-list").boundingBox()).width -
@@ -177,13 +208,12 @@ const snapshot = {
     await catalog.getByRole("textbox", { name: "搜索组件" }).fill("");
     await page.evaluate((el) => (el.scrollTop = 180));
     const before = await page.evaluate((el) => el.scrollTop);
-    await first
-      .locator(".component-status")
-      .first()
-      .evaluate((el) => el.click());
+    const scrolledTrigger = first.locator(".component-status").first();
+    await scrolledTrigger.evaluate((el) => el.click());
     await expect(drawer).toBeVisible();
     await p.keyboard.press("Escape");
     await expect(drawer).toHaveCount(0);
+    await expect(scrolledTrigger).toBeFocused();
     assert.ok(
       Math.abs((await page.evaluate((el) => el.scrollTop)) - before) < 3,
       "Closing preserves the list scroll offset",
@@ -223,12 +253,16 @@ const snapshot = {
     await drawer.getByRole("button", { name: "关闭详情" }).click();
     await expect(drawer).toHaveCount(0);
     await release.locator(".component-status").click();
+    assert.ok(await p.locator(".sidebar").evaluate(el => el.inert), "Modal drawer keeps background navigation inert");
+    await drawer.getByRole("button", { name: "关闭详情" }).click();
+    await expect(drawer).toHaveCount(0);
+    assert.ok(!(await p.locator(".sidebar").evaluate(el => el.inert)), "Closing restores background navigation");
     await p
       .getByRole("navigation")
       .getByRole("button", { name: "设置", exact: true })
       .click();
     await p.keyboard.press("Escape");
-    await expect(drawer).toHaveCount(1);
+    await expect(drawer).toHaveCount(0);
     await p.getByRole("combobox", { name: "语言", exact: true }).click();
     await p.getByRole("option", { name: "English", exact: true }).click();
     await p.waitForFunction(() => window.qa.audit().language === "en");
@@ -236,6 +270,7 @@ const snapshot = {
       .getByRole("navigation")
       .getByRole("button", { name: "Components", exact: true })
       .click();
+    await release.locator(".component-status").click();
     await expect(
       drawer.getByRole("heading", {
         name: "NeuralFrame support",
@@ -258,7 +293,7 @@ const snapshot = {
       "Component panel passed: distinct evidence/support/file states, history alignment, drawer layout/focus/scroll, filtering, download isolation and compact layout.",
     );
   } finally {
-    await app.close();
+    await close();
   }
 })().catch((e) => {
   console.error(e);

@@ -21,8 +21,10 @@ export function groupLibrary(data: Library, candidates: Updates["candidates"], m
   };
   const byPackage = new Map<string, LibraryVersion>();
   const byRuntime = new Map<string, LibraryVersion>();
-  const packages = new Map(data.packages.map(p => [p.id, p]));
+  const visiblePackages = modelsOnly ? data.packages.filter(p => p.component === "dlss-nr") : data.packages;
+  const packages = new Map(visiblePackages.map(p => [p.id, p]));
   for (const pack of data.runtimePacks) {
+    if (modelsOnly && pack.component !== "dlss-nr") continue;
     const locals = (pack.packageIds || []).flatMap(id => {
       const local = packages.get(id);
       return local?.component === pack.component ? [local] : [];
@@ -34,6 +36,7 @@ export function groupLibrary(data: Library, candidates: Updates["candidates"], m
   }
   const byAsset = new Map<string, LibraryVersion>();
   for (const release of candidates) {
+    if (modelsOnly && release.component !== "dlss-nr") continue;
     const local = release.cachedPackageId ? packages.get(release.cachedPackageId) : undefined;
     const matchingLocal = local?.component === release.component ? local : undefined;
     const assetKey = release.sha256 ? release.component + ":" + release.sha256 : release.id;
@@ -52,17 +55,20 @@ export function groupLibrary(data: Library, candidates: Updates["candidates"], m
     byAsset.set(assetKey, row);
     if (matchingLocal) byPackage.set(matchingLocal.id, row);
   }
-  for (const local of data.packages) {
+  for (const local of visiblePackages) {
     if (!byPackage.has(local.id)) group(local.component).versions.push({
       id: "local:" + local.id, packages: [local], releases: [], compatibility: local.compatibility, modelRequirements: local.modelRequirements,
     });
   }
-  return [...groups.values()].filter(g => !modelsOnly || g.component === "dlss-nr");
+  return [...groups.values()];
+}
+
+function versionComponent(row: LibraryVersion): string {
+  return row.pack?.component || row.packages[0]?.component || row.releases[0]?.component || "";
 }
 
 export function modelEligibility(row: LibraryVersion, gpuSm: string | null) {
-  const component = row.pack?.component || row.packages[0]?.component || row.releases[0]?.component;
-  if (component !== "dlss-nr") return "not-model";
+  if (versionComponent(row) !== "dlss-nr") return "not-model";
   if (!gpuSm || !row.modelRequirements?.architectures.length) return "unknown";
   const matches = row.modelRequirements.architectures.includes(gpuSm);
   if (row.modelRequirements.source === "catalog") return matches ? "catalog-match" : "catalog-incompatible";
@@ -104,6 +110,12 @@ function engineInfo(row:LibraryVersion) {
   return row.pack?.engine || row.packages.find(p=>p.engine)?.engine || row.releases.find(r=>r.engine)?.engine;
 }
 
+export function pairedXeMfgEngine(row: LibraryVersion) {
+  if (row.pack) return row.pack.id === "mfg-universal" && row.pack.version === "1.7.1";
+  const engine = engineInfo(row);
+  return versionComponent(row) === "mfg-universal" && engine?.verified && engine.compatible && engine.version === "1.7.1";
+}
+
 // Presentation policy only: ready/kind remain the main process's installation
 // gates. Never turn a download, matching label, or matching GPU into permission.
 export function applicationVerdict(row:LibraryVersion,gpuSm:string|null) {
@@ -120,6 +132,12 @@ export function applicationVerdict(row:LibraryVersion,gpuSm:string|null) {
     reason = engine?.compatible ? "程序已登记此引擎的部署方式与参数能力；具体游戏、文件和依赖仍需在应用前检查。" : "这是路线配套组件，需要连同宿主、运行库或加载器一起部署。";
     next = engine?.compatible ? "下载或校验后，到游戏页的引擎版本中选择并预览。" : "到游戏页选择安装路线并预览，管理器会准备所需配套组件。";
     shortReason = engine?.compatible ? "通过引擎版本选项应用" : "宿主与依赖需成组部署";
+    if (pairedXeMfgEngine(row)) {
+      next = "在游戏页预览适用的 XeMFG 路线。鸣潮可在独立加载器的版本列表中选择此引擎。";
+      shortReason = "由游戏路线选择加载方式";
+    } else if (row.pack?.id === "xemfg-intel") {
+      next = "在游戏页查看可用的 XeMFG 路线并预览。管理器会检查目标程序、图形 API 和游戏输入。";
+    }
     nextShort = local === 'cached' ? "下一步：游戏页预览" : "下一步：准备配套 → 游戏页";
   } else if (state === 'verify') {
     availability = "尚不能确认这个文件是否可用，需要先校验身份。";
@@ -168,7 +186,7 @@ export function applicationVerdict(row:LibraryVersion,gpuSm:string|null) {
     : row.modelRequirements?.source === 'fingerprint' ? "模型架构依据文件指纹对应记录。"
       : row.modelRequirements?.source === 'catalog' ? "模型架构依据发布目录，实际文件仍需校验。" : "目录暂无模型架构记录。";
   const acquisition = versionAcquisition(row);
-  if (acquisition.candidate && acquisition.disabled && ['verify','selectable','model-check','repair'].includes(state)) {
+  if (acquisition.candidate && acquisition.disabled && ['verify','selectable','model-check','repair','route-version'].includes(state)) {
     next = acquisition.notice;
     nextShort = "下一步：检查更新或使用配套版本";
   }
@@ -204,32 +222,43 @@ export function versionAcquisition(row: LibraryVersion) {
   const cached = row.pack ? row.pack.downloaded : !!candidate && cachedRelease(candidate);
   if (row.pack) return {candidate,cached,disabled:false,notice:""};
   if (!candidate) return {candidate,cached,disabled:true,notice:"没有在线下载记录；需要文件时请重新导入。"};
+  if (candidate.releaseOnly) return {candidate,cached,disabled:true,notice:"上游发布页记录了此版本，但没有附带组件包。"};
   if (!candidate.downloadable) return {candidate,cached,disabled:true,notice:!candidate.sha256
     ? "发布源未提供 SHA-256 校验值，暂不能下载；请等待发布信息补全后检查更新。"
     : "发布源的下载信息不完整，暂不能下载；请重新检查更新。"};
-  if (candidate.stale) return {candidate,cached,disabled:!cached,notice:cached
-    ? "下载源暂不可用，仍可校验本地缓存；缓存损坏时需先重新检查更新。"
-    : "当前是上次保留的版本记录；请重新检查更新，来源恢复后再下载。"};
+  if (candidate.stale) return {candidate,cached,disabled:false,notice:cached
+    ? "版本列表尚未刷新，仍可校验本地缓存。"
+    : "使用上次记录的发布地址下载，并按该版本的 SHA-256 校验。"};
   return {candidate,cached,disabled:false,notice:""};
 }
 
+function catalogVersion(row: LibraryVersion): string {
+  if (row.pack?.component === "dlss-nr") {
+    const modelId = row.releases.find(release => release.catalogModelId)?.catalogModelId;
+    if (modelId) return modelId;
+  }
+  const release = row.releases[0];
+  return row.pack?.version || release?.catalogModelId || release?.version || release?.tag || row.packages[0]?.version || "—";
+}
+
 export function versionLabel(row: LibraryVersion): string {
-  return (row.pack?.component === "dlss-nr" && row.releases.find(r => r.catalogModelId)?.catalogModelId) || row.pack?.version || row.releases[0]?.catalogModelId || row.releases[0]?.tag || row.packages[0]?.version || "—";
+  const version = catalogVersion(row);
+  return versionComponent(row) === "overlay" ? version.replace(/^zh\s+(?=\d)/i, "") : version;
 }
 
 // Project documentation describes a version's stated capabilities, never the
 // installation gate or the state of a user's game. Unknown releases retain
 // their own unknown evidence instead of borrowing the latest version's tests.
 export function versionProjectEvidence(row: LibraryVersion) {
-  const component = row.pack?.component || row.packages[0]?.component || row.releases[0]?.component || "";
-  const version = engineInfo(row)?.version || versionLabel(row);
-  return projectEvidence(component, version);
+  const version = engineInfo(row)?.version || catalogVersion(row);
+  return projectEvidence(versionComponent(row), version);
 }
 
 export const componentCategories: Record<string, string> = {
   encore: "fg",
   "dlss-nr": "nr", "renodx-nr": "nr", "renodx-multipass": "nr", feeder: "nr",
-  "mfg-renodx": "fg", "mfg-universal": "fg", "dlss-fg": "fg",
+  "mfg-renodx": "fg", "mfg-universal": "fg", "dlss-fg": "fg", "xemfg-intel": "fg",
+  anr: "fg", "anr-addon": "fg", sm86: "fg", "sm86-delta": "fg",
 };
 export type CatalogFilters = { query: string; category: string; local: string; application: string; source: string };
 export const emptyFilters: CatalogFilters = {query: "", category: "all", local: "all", application: "all", source: "all"};
@@ -242,9 +271,12 @@ export function filterLibrary(groups: ComponentGroup[], data: Library, filters: 
     const versions = group.versions.filter(row => {
       if (filters.local !== "all" && filters.local !== localState(row)) return false;
       if (filters.application !== "all" && filters.application !== applicationState(row, gpuSm)) return false;
+      if (!terms.length && filters.source === "all") return true;
       const sources = versionSources(row);
       if (filters.source !== "all" && !sources.includes(filters.source)) return false;
-      const text = [group.component, def?.name, ...(def?.files || []), row.id, row.pack?.name, versionLabel(row), ...sources,
+      if (!terms.length) return true;
+      const xeMfgTerms = group.component === "xemfg-intel" || pairedXeMfgEngine(row) ? "XeMFG XeFG XeSS FG XeSS-FG AMD Radeon Intel" : "";
+      const text = [group.component, def?.name, def?.name.replace(/\s+/g,''), xeMfgTerms, ...(def?.files || []), row.id, row.pack?.name, versionLabel(row), ...sources,
         ...row.releases.flatMap(r => [r.name, r.tag, r.catalogModelId]),
         ...row.packages.flatMap(p => [p.version, ...(p.files || []).map(f => f.rel)]),
         ...(row.pack?.files || []).map(f => f.path)].filter(Boolean).join(" ").toLocaleLowerCase();

@@ -7,6 +7,7 @@ const fs = require('./preview-fs').fs;
 const path = require('path');
 const crypto = require('crypto');
 const replaceFile = require('./replace-file');
+const publishFile = require('./publish-file');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const ownership = new AsyncLocalStorage();
 const active = new Map();
@@ -46,7 +47,7 @@ async function atomicJson(file, data) {
       await handle.writeFile(json, 'utf8');
       await handle.sync();
     } finally { await handle.close(); }
-    await fs.promises.rename(temp, file);
+    await publishFile(temp, file);
   } catch (cause) {
     await fs.promises.unlink(temp).catch(() => {});
     throw cause;

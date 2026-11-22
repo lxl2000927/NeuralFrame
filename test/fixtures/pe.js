@@ -14,6 +14,7 @@ function writePe(file, { bitness = 64, text = '', size = 64 * 1024, version = nu
   bytes.writeUInt16LE(is64 ? 0x8664 : 0x14c, peAt + 4);
   bytes.writeUInt16LE(version ? 1 : 0, peAt + 6);
   bytes.writeUInt16LE(optSize, peAt + 20);
+  bytes.writeUInt16LE(/\.(?:dll|asi|addon(?:32|64))$/i.test(file) ? 0x2022 : 0x0022, peAt + 22);
   bytes.writeUInt16LE(is64 ? 0x20b : 0x10b, optAt);
 
   if (version) {
@@ -64,4 +65,32 @@ function writeNr(file, version = '310.9.16.0', sm = 89) {
   fs.appendFileSync(file, fatbin);
   return file;
 }
-module.exports = { writePe, writeNr };
+// A named PE export table. Text embedded elsewhere in a DLL is not an API.
+function writeProvider(file, symbols, bitness = 64) {
+  writePe(file, {bitness});
+  const bytes = fs.readFileSync(file);
+  const opt = 0x80 + 24, directory = opt + (bitness === 64 ? 112 : 96);
+  const section = opt + (bitness === 64 ? 240 : 224);
+  const raw = 0x200, rva = 0x1000;
+  bytes.writeUInt16LE(1, 0x80 + 6);
+  bytes.writeUInt32LE(rva, directory);
+  bytes.writeUInt32LE(0x200, directory + 4);
+  bytes.writeUInt32LE(0x400, section + 8);
+  bytes.writeUInt32LE(rva, section + 12);
+  bytes.writeUInt32LE(0x400, section + 16);
+  bytes.writeUInt32LE(raw, section + 20);
+  bytes.writeUInt32LE(symbols.length, raw + 20);
+  bytes.writeUInt32LE(symbols.length, raw + 24);
+  bytes.writeUInt32LE(rva + 0x50, raw + 28);
+  bytes.writeUInt32LE(rva + 0x40, raw + 32);
+  bytes.writeUInt32LE(rva + 0x60, raw + 36);
+  let cursor = 0x80;
+  for (const [i, name] of symbols.entries()) {
+    bytes.writeUInt32LE(rva + cursor, raw + 0x40 + i * 4);
+    bytes.writeUInt32LE(rva + 0x300, raw + 0x50 + i * 4);
+    bytes.writeUInt16LE(i, raw + 0x60 + i * 2);
+    cursor += bytes.write(name, raw + cursor) + 1;
+  }
+  fs.writeFileSync(file, bytes);
+}
+module.exports = { writePe, writeNr, writeProvider };
