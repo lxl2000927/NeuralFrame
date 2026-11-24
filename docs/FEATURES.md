@@ -4,13 +4,13 @@
 
 ## 下载安装
 
-| 0.1.3 发布文件 | 什么时候选 |
+| 0.1.4 发布文件 | 什么时候选 |
 | --- | --- |
-| [Windows x64 安装版](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.3/NeuralFrame-0.1.3-Setup-x64.exe) | 需要选择安装目录、创建快捷方式、从系统卸载。 |
-| [Windows x64 便携版](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.3/NeuralFrame-0.1.3-Portable-x64.exe) | 直接运行单个 EXE。用户设置和组件缓存仍使用应用数据目录。 |
-| [带原生组件的源码包](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.3/NeuralFrame-0.1.3-Source.zip) | 从源码运行或重新打包时，需要中文面板、预加载器和 F8 桥接。[构建步骤](BUILDING.md) |
+| [Windows x64 安装版](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.4/NeuralFrame-0.1.4-Setup-x64.exe) | 需要选择安装目录、创建快捷方式、从系统卸载。 |
+| [Windows x64 便携版](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.4/NeuralFrame-0.1.4-Portable-x64.exe) | 直接运行单个 EXE。用户设置和组件缓存仍使用应用数据目录。 |
+| [带原生组件的源码包](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.4/NeuralFrame-0.1.4-Source.zip) | 从源码运行或重新打包时，需要中文面板、预加载器和 F8 桥接。[构建步骤](BUILDING.md) |
 
-需要核对文件时，在 PowerShell 运行 `Get-FileHash .\NeuralFrame-0.1.3-Setup-x64.exe -Algorithm SHA256`，按文件名对照发行清单。便携版和源码包用相同方法。[SHA-256 清单](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.3/SHA256SUMS.txt)
+需要核对文件时，在 PowerShell 运行 `Get-FileHash .\NeuralFrame-0.1.4-Setup-x64.exe -Algorithm SHA256`，按文件名对照发行清单。便携版和源码包用相同方法。[SHA-256 清单](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.4/SHA256SUMS.txt)
 
 ## 找游戏与检查兼容性
 

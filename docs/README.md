@@ -1,6 +1,6 @@
 # NeuralFrame 文档
 
-**Windows x64**　[下载 0.1.3](https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.3) · [0.1.4 更新记录](../RELEASE-NOTES.md) · [返回项目首页](../README.md)
+**Windows x64**　[下载 0.1.4](https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.4) · [0.1.4 更新记录](../RELEASE-NOTES.md) · [返回项目首页](../README.md)
 
 ## 使用手册
 

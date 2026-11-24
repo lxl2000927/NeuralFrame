@@ -1,6 +1,6 @@
 # NeuralFrame 项目进度
 
-更新于 2026-11-24。当前构建版本为 **0.1.4**，GitHub 下载仍指向 0.1.3。[版本记录](RELEASE-NOTES.md)
+更新于 2026-11-24。当前正式版为 **0.1.4**，提供 Windows x64 安装版、便携版和配套源码包。[GitHub 发行页](https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.4) · [版本记录](RELEASE-NOTES.md)
 
 | 模块 | 本版进度 | 实现与说明 |
 | --- | --- | --- |

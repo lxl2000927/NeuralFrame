@@ -1,7 +1,7 @@
 <p align="center"><img src="assets/neuralframe/mark-ui.png" width="68" height="68" alt=""></p>
 <h1 align="center">NeuralFrame</h1>
 <p align="center"><strong>Windows 游戏的超分辨率、神经渲染与帧生成管理器</strong></p>
-<p align="center"><a href="https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.3/NeuralFrame-0.1.3-Setup-x64.exe"><strong>下载安装版</strong></a> · <a href="https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.3/NeuralFrame-0.1.3-Portable-x64.exe">下载便携版</a> · <a href="https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.3">0.1.3 发行页</a></p>
+<p align="center"><a href="https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.4/NeuralFrame-0.1.4-Setup-x64.exe"><strong>下载安装版</strong></a> · <a href="https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.4/NeuralFrame-0.1.4-Portable-x64.exe">下载便携版</a> · <a href="https://github.com/lxl2000927/NeuralFrame/releases/tag/v0.1.4">0.1.4 发行页</a></p>
 
 NeuralFrame 根据每款游戏的可执行文件、图形 API 和显卡列出可用组件。你可以比较模型和补帧引擎，先预览将要改动的文件，再按游戏应用配置。当前发行包适用于 **Windows x64**，附带简体中文与英文界面。
 
@@ -33,7 +33,7 @@ NeuralFrame 根据每款游戏的可执行文件、图形 API 和显卡列出可
 
 ## 源码与项目来源
 
-想运行或重新打包桌面应用，可下载含原生启动组件和 F8 桥接的源码包。安装版、便携版和源码包共用一份 SHA-256 清单。[源码包](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.3/NeuralFrame-0.1.3-Source.zip) · [校验清单](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.3/SHA256SUMS.txt) · [开发与构建](docs/BUILDING.md)
+想运行或重新打包桌面应用，可下载含原生启动组件和 F8 桥接的源码包。安装版、便携版和源码包共用一份 SHA-256 清单。[源码包](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.4/NeuralFrame-0.1.4-Source.zip) · [校验清单](https://github.com/lxl2000927/NeuralFrame/releases/download/v0.1.4/SHA256SUMS.txt) · [开发与构建](docs/BUILDING.md)
 
 NeuralFrame 基于 skyi7943-cmd 的 DLSS5-Swapper-Enhanced 2.3.0，继承 Rakan Alkhaldi 的 DLSS 5 Swapper（截至 v2.2.9）的 MIT 代码。桌面布局参考 NVIDIA App。管理器使用 MIT 许可，模型、运行库与插件遵循各自许可。[Enhanced 上游](https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced) · [MIT 许可](LICENSE) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
