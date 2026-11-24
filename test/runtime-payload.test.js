@@ -5,6 +5,19 @@ const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 // The staging container may itself be gone: an empty one is removed as well.
 const stagingLeftovers=r=>{const dir=path.join(r.root,'staging');return fs.existsSync(dir)?fs.readdirSync(dir):[];};
 function fixture(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'runtime-packs-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const src=path.join(root,'bootstrap');fs.mkdirSync(src);const bytes=Buffer.from('verified runtime bytes'),file={path:'runtime/plugin.dll',size:bytes.length,sha256:sha(bytes)},p={id:'test',name:'Test',component:'test',version:'1',bundled:true,files:[file],contentId:sha('test')};fs.mkdirSync(path.join(src,'runtime'));fs.writeFileSync(path.join(src,file.path),bytes);return{root,src,bytes,p,manifest:{schema:1,repository:'owner/repo',packs:[p]}};}
+test('runtime status rechecks missing files and redirected parents on the next listing', async t => {
+  const f = fixture(t);
+  const pack = {...f.p, bundled:false, size:4, sha256:sha('good'), url:'https://github.com/owner/repo/releases/download/1/a.zip'};
+  const runtime = new RuntimePayload(path.join(f.root,'profile'), {bundledRoot:f.src, manifest:{...f.manifest,packs:[pack]}});
+  await runtime.prepare([pack.id]);
+  assert.equal(runtime.list()[0].downloaded, true);
+  const parent = path.join(runtime.payloadDir, 'runtime');
+  fs.renameSync(parent, parent + '-original');
+  assert.equal(runtime.list()[0].downloaded, false);
+  fs.symlinkSync(path.join(f.src,'runtime'),parent,'junction');
+  assert.equal(runtime.list()[0].downloaded, false);
+});
+
 test('MFG-only does not request neural model, SR or Streamline; off and restore need no packs',()=>{
  const ids=requiredPacks({kind:'enhanced',config:{mfgMode:'x4'},target:{api:'dxgi',apiLabel:'DirectX 12',bitness:64}});
  assert.deepEqual(ids,['localization','mfg-renodx','fg-modern','reshade']);
@@ -33,6 +46,7 @@ test('XeMFG requires only its standalone engine, notices and pinned Intel runtim
   }
   assert.deepEqual(requiredPacks({kind:'restore', route:'xemfg'}), []);
   assert.deepEqual(requiredPacks({kind:'install',route:'xemfg-optiscaler'}), ['mfg-universal','mfg-license']);
+  assert.deepEqual(requiredPacks({kind:'enhanced',route:'xemfg-optiscaler',config:{graphics:{upgradeHost:true}}}), ['mfg-universal','mfg-license','xemfg-opti-host']);
   const {root} = fixture(t);
   const runtime = new RuntimePayload(root);
   const pack = runtime.pack('xemfg-intel');

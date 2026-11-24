@@ -229,6 +229,7 @@ export function Addons({
             <label>
               {t("组件名称")}
               <input
+                className="text-field"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 disabled={busy}
@@ -237,6 +238,7 @@ export function Addons({
             <label>
               {t("标签（可选）")}
               <input
+                className="text-field"
                 value={tag}
                 onChange={(e) => setTag(e.target.value)}
                 disabled={busy}
@@ -245,6 +247,7 @@ export function Addons({
             <label>
               {t("说明（每行一条）")}
               <textarea
+                className="text-field"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={4}

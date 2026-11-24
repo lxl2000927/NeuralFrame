@@ -37,7 +37,7 @@ const routeNames: Record<string, string> = {
   optiscaler: "OptiScaler",
   encore:"RTX Encore", anr:"ANR FG", "anr-addon":"ANR FG · OptiScaler Add-on",
   ...frameRouteLabels,
-  sm86:"Dlssg_for_sm86", "sm86-delta":"Dlssg_for_sm86 · 三角洲 DX12 / Vulkan", hud:"F7 性能监控",
+  sm86:"Dlssg_for_sm86", "sm86-delta":"Dlssg_for_sm86 R3 · 三角洲 / 迈尔斯", hud:"F7 性能监控",
 };
 const configurationNames: Record<string, string> = {
   hardwareProfile: "硬件档位",

@@ -50,6 +50,7 @@ const env={...process.env,NEURALFRAME_USER_DATA:profile,DLSS5_LIGHTWEIGHT:'1'};d
     const edited = draftAvailable ? await alternative.innerText() : '';
     if (draftAvailable) await alternative.click();
     await nav.getByRole('button',{name:'设置',exact:true}).click();
+    await page.getByRole('tab',{name:'硬件信息',exact:true}).click();
     await page.getByRole('region',{name:'硬件信息',exact:true}).locator('.hardware-information').waitFor();
     assert.equal(await page.getByRole('combobox',{name:'默认硬件档位',exact:true}).count(),0);
     assert.equal(await nav.getByRole('button',{name:'档位',exact:true}).count(),0);
@@ -97,6 +98,7 @@ const env={...process.env,NEURALFRAME_USER_DATA:profile,DLSS5_LIGHTWEIGHT:'1'};d
       await page.screenshot({path:path.join(out,'page-'+name+'.png')});
     }
     for(const theme of ['浅色','深色']){
+      await page.getByRole('tab',{name:'界面外观',exact:true}).click();
       await page.getByRole('combobox',{name:'主题',exact:true}).click();
       await page.getByRole('option',{name:theme,exact:true}).click();
       await page.screenshot({path:path.join(out,'settings-'+theme+'.png'),animations:'disabled'});

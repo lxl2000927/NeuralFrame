@@ -58,7 +58,7 @@ export function DownloadAction({ id, kind = "library", cached = false, label = "
   const queueKey = `${kind}:${id}`;
   if (context?.queueItems.some(item => item.key === queueKey))
     return <button type="button" className={className} disabled>{t("已加入下载队列")}</button>;
-  const canQueue = !!row && row.kind === kind && !blocked;
+  const canQueue = !!row && !blocked;
   return <button type="button" className={className} disabled={blocked || (disabled && !canQueue)}
     onClick={onStart || (() => void context?.downloadRuntime(id, cached))}>
     {cached ? <ShieldCheck size={14} /> : <Download size={14} />}{canQueue ? t("加入下载队列") : caption}

@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -19,7 +20,8 @@ import {
   X,
 } from "lucide-react";
 import { createPortal } from "react-dom";
-import { t, dateTime } from "../i18n";
+import { t, dateTime, useLanguage } from "../i18n";
+import { LibraryHistoryRows } from "./LibraryHistoryRows";
 import { size } from "../domain";
 import { getBridge } from "../bridge";
 import { DownloadAction } from "./DownloadAction";
@@ -90,7 +92,7 @@ const dependencies: Record<string, string> = {
     "DLSS-G 路线需要对应的原生帧生成链路和 ReShade / RenoDX 加载环境；其他后端按对应版本的项目说明检查。",
   "mfg-universal":
     "独立加载器与运行库按路线配套；鸣潮可在已适配引擎版本中选择，保留启动器校验文件。",
-  "xemfg-intel": "独立 XeMFG 路线使用 Intel XeSS SDK 3.0.2 与 MFG Unlocker 1.7.1。OptiScaler 插件路线会校验游戏已有的宿主和 Intel 运行库。",
+  "xemfg-intel": "独立 XeMFG 路线使用 Intel XeSS SDK 3.0.2 与 MFG Unlocker 1.7.2。OptiScaler 插件路线会校验游戏已有的宿主和 Intel 运行库。",
   "dlss-fg":
     "需要游戏或已适配后端提供帧生成输入；只替换这个 DLL 不会为游戏新增补帧链路。",
   "dlss-sr":
@@ -109,12 +111,12 @@ const dependencies: Record<string, string> = {
 };
 function componentPurpose(component: string, name: string, row: LibraryVersion) {
   return pairedXeMfgEngine(row)
-    ? "MFG Unlocker 1.7.1 提供实验性 XeMFG，可用于符合条件的 AMD、Intel 和 NVIDIA 显卡。DLSS-G 与 DLSS 神经渲染需要兼容的 NVIDIA 显卡。"
+    ? "MFG Unlocker 1.7.2 提供实验性 XeMFG，可用于符合条件的 AMD、Intel 和 NVIDIA 显卡。DLSS-G 与 DLSS 神经渲染需要兼容的 NVIDIA 显卡。"
     : purposes[component] || name;
 }
 
-function verdict(row: LibraryVersion, gpuSm: string | null) {
-  const result = applicationVerdict(row, gpuSm);
+function verdict(row: LibraryVersion, gpuSm: string | null, nvidiaPresent?: boolean | null) {
+  const result = applicationVerdict(row, gpuSm, nvidiaPresent);
   for (const field of [
     "label",
     "availability",
@@ -134,18 +136,18 @@ type Actions = {
   checking?: boolean;
   downloadVersion: (id: string, cached: boolean) => Promise<boolean>;
   gpuSm: string | null;
+  nvidiaPresent?: boolean | null;
 };
 function VersionAction({
   row,
   busy,
   checking = false,
   downloadVersion,
-  gpuSm,
-}: { row: LibraryVersion } & Actions) {
+  info,
+}: { row: LibraryVersion; info: ReturnType<typeof applicationVerdict> } & Actions) {
   const { pack } = row;
   const acquisition = versionAcquisition(row);
   const { candidate, cached } = acquisition;
-  const info = applicationVerdict(row, gpuSm);
   return (
     <div
       className="component-action"
@@ -308,7 +310,7 @@ function VersionDetails({
       first.focus();
     }
   };
-  const info = verdict(row, actions.gpuSm);
+  const info = verdict(row, actions.gpuSm, actions.nvidiaPresent);
   const acquisition = versionAcquisition(row);
   const candidate = acquisition.candidate;
   const name = data.definitions[component]?.name || component;
@@ -470,7 +472,9 @@ function VersionDetails({
             <dl className="component-detail-facts" key={release.id}>
               <div>
                 <dt>{t("发布标签")}</dt>
-                <dd>{release.tag}</dd>
+                <dd>{release.releaseOnly && release.releaseUrl
+                  ? <SourceLink url={release.releaseUrl} label={release.tag} />
+                  : release.tag}</dd>
               </div>
               {!release.releaseOnly && <div>
                 <dt>{t("下载文件")}</dt>
@@ -566,13 +570,95 @@ function VersionDetails({
               {t(localLabels[localState(row)])}
             </span>
           )}
-          <VersionAction row={row} {...actions} />
+          <VersionAction row={row} info={info} {...actions} />
         </div>
       </footer>
     </aside>
     </div>
   );
 }
+
+type RowProps = Actions & {
+  row: LibraryVersion;
+  component: string;
+  name: string;
+  history?: boolean;
+  selected: boolean;
+  historyCount?: number;
+  expanded?: boolean;
+  onToggle: (component: string) => void;
+  onDetails: (component: string, id: string, trigger: HTMLButtonElement) => void;
+};
+
+const CatalogVersionRow = memo(function CatalogVersionRow({
+  row, component, name, history, selected, historyCount = 0, expanded, onToggle, onDetails, ...actions
+}: RowProps) {
+  useLanguage();
+  const info = applicationVerdict(row, actions.gpuSm, actions.nvidiaPresent);
+  const project = versionProjectEvidence(row);
+  const version = versionLabel(row);
+  const source = versionSources(row).map(source => t(source)).join(" · ");
+  const purpose = history ? "" : t(componentPurpose(component, name, row));
+  const state = localState(row);
+  return (
+    <tr data-version-id={row.id} data-history={history || undefined} data-selected={selected || undefined}>
+      <td>
+        {history ? (
+          <button className="component-text-button component-name component-history-name"
+            aria-label={t("查看 {0} 版本：{1}", [name, version])}
+            onClick={event => onDetails(component, row.id, event.currentTarget)}>
+            <span aria-hidden="true">↳</span><span>{name}</span><ChevronRight size={14} />
+          </button>
+        ) : (
+          <>
+            <div className="component-heading">
+              <button className="component-text-button component-name"
+                onClick={event => onDetails(component, row.id, event.currentTarget)}>
+                {name}<ChevronRight size={14} />
+              </button>
+            </div>
+            <div className="component-description"><span title={purpose}>{purpose}</span></div>
+          </>
+        )}
+      </td>
+      <td>
+        <div className="component-version-label">
+          <strong title={version}>{version}</strong>
+          {row.releases[0]?.prerelease && <small>{t("预发布")}</small>}
+          {row.pack && <span className="component-paired">{t("配套")}</span>}
+        </div>
+        <small className="component-source" title={source}>{source}</small>
+      </td>
+      <td>
+        <span className="component-local-state" data-state={state}>{t(localLabels[state])}</span>
+      </td>
+      <td>
+        <div className="component-project-summary" title={t(project.summary)}>
+          <span>{t("项目说明")}</span><span>{t(project.label)}</span>
+        </div>
+        <div className="component-software-summary">
+          <span>{t("软件支持")}</span>
+          <button className="component-text-button component-status" data-state={info.state}
+            title={t(info.availability)} onClick={event => onDetails(component, row.id, event.currentTarget)}>
+            {t(info.label)}<ChevronRight size={12} />
+          </button>
+        </div>
+      </td>
+      <td>
+        <div className="component-row-actions">
+          <VersionAction row={row} info={info} {...actions} />
+          {historyCount > 0 && <button className="component-history-toggle"
+            aria-label={t(expanded ? "收起 {0} 的历史版本（{1}）" : "展开 {0} 的历史版本（{1}）", [name, historyCount])}
+            aria-expanded={expanded} onClick={() => onToggle(component)}>
+            <span>{t("历史版本")}</span>
+            <span className="component-history-count">{historyCount}</span>
+            <ChevronDown size={14} />
+          </button>}
+        </div>
+      </td>
+    </tr>
+  );
+});
 
 export function LibraryComponents({
   data,
@@ -606,10 +692,18 @@ export function LibraryComponents({
         page.scrollTop = top;
       });
   }, []);
-  const openDetails = (component: string, id: string, trigger: HTMLButtonElement) => {
+  const openDetails = useCallback((component: string, id: string, trigger: HTMLButtonElement) => {
     opener.current = trigger;
     preserveScroll(() => setSelected({ component, id }));
-  };
+  }, [preserveScroll]);
+  const toggleHistory = useCallback((component: string) => {
+    setExpanded(previous => {
+      const next = new Set(previous);
+      if (next.has(component)) next.delete(component);
+      else next.add(component);
+      return next;
+    });
+  }, []);
   const closeDetails = useCallback(() => {
     preserveScroll(() => setSelected(null));
   }, [preserveScroll]);
@@ -632,8 +726,9 @@ export function LibraryComponents({
       effectiveFilters.application,
       effectiveFilters.source,
     ].some((value) => value !== "all");
-  const filtered = useMemo(() => filterLibrary(groups, data, effectiveFilters, actions.gpuSm),
-    [groups, data, effectiveFilters, actions.gpuSm]);
+  const historyFilterKey = JSON.stringify(effectiveFilters);
+  const filtered = useMemo(() => filterLibrary(groups, data, effectiveFilters, actions.gpuSm, actions.nvidiaPresent),
+    [groups, data, effectiveFilters, actions.gpuSm, actions.nvidiaPresent]);
   const visible = filtered.filter(
     (g) =>
       !data.definitions[g.component]?.internal ||
@@ -831,154 +926,26 @@ export function LibraryComponents({
                   <th>{t("操作")}</th>
                 </tr>
               </thead>
-              {visible.map((group) => (
-                <tbody key={group.component} data-component={group.component}>
-                  {(filtering || expanded.has(group.component)
-                    ? group.versions
-                    : group.versions.slice(0, 1)
-                  ).map((row, index) => {
-                    const info = verdict(row, actions.gpuSm);
-                    const project = versionProjectEvidence(row);
-                    const name = t(
-                      data.definitions[group.component]?.name ||
-                        group.component,
-                    );
-                    const source = versionSources(row)
-                      .map((s) => t(s))
-                      .join(" · ");
-                    const purpose = t(componentPurpose(group.component,name,row));
-                    return (
-                      <tr
-                        key={row.id}
-                        data-version-id={row.id}
-                        data-history={index > 0 || undefined}
-                        data-selected={selectedRow?.id === row.id || undefined}
-                      >
-                        <td>
-                          {index === 0 ? (
-                            <>
-                              <div className="component-heading">
-                                <button
-                                  className="component-text-button component-name"
-                                  onClick={(event) =>
-                                    openDetails(group.component, row.id, event.currentTarget)
-                                  }
-                                >
-                                  {name}
-                                  <ChevronRight size={14} />
-                                </button>
-                              </div>
-                              <div className="component-description">
-                                <span
-                                  title={purpose}
-                                >
-                                  {purpose}
-                                </span>
-                              </div>
-                            </>
-                          ) : (
-                            <button
-                              className="component-text-button component-name component-history-name"
-                              aria-label={t("查看 {0} 版本：{1}", [
-                                name,
-                                versionLabel(row),
-                              ])}
-                              onClick={(event) =>
-                                openDetails(group.component, row.id, event.currentTarget)
-                              }
-                            >
-                              <span aria-hidden="true">↳</span>
-                              <span>{name}</span>
-                              <ChevronRight size={14} />
-                            </button>
-                          )}
-                        </td>
-                        <td>
-                          <div className="component-version-label">
-                            <strong title={versionLabel(row)}>
-                              {versionLabel(row)}
-                            </strong>
-                            {row.releases[0]?.prerelease && <small>{t("预发布")}</small>}
-                            {row.pack && (
-                              <span className="component-paired">
-                                {t("配套")}
-                              </span>
-                            )}
-                          </div>
-                          <small className="component-source" title={source}>
-                            {source}
-                          </small>
-                        </td>
-                        <td>
-                          <span
-                            className="component-local-state"
-                            data-state={localState(row)}
-                          >
-                            {t(localLabels[localState(row)])}
-                          </span>
-                        </td>
-                        <td>
-                          <div
-                            className="component-project-summary"
-                            title={t(project.summary)}
-                          >
-                            <span>{t("项目说明")}</span>
-                            <span>{t(project.label)}</span>
-                          </div>
-                          <div className="component-software-summary">
-                            <span>{t("软件支持")}</span>
-                            <button
-                              className="component-text-button component-status"
-                              data-state={info.state}
-                              title={info.availability}
-                              onClick={(event) =>
-                                openDetails(group.component, row.id, event.currentTarget)
-                              }
-                            >
-                              {info.label}
-                              <ChevronRight size={12} />
-                            </button>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="component-row-actions">
-                            <VersionAction row={row} {...actions} />
-                            {index === 0 &&
-                              !filtering &&
-                              group.versions.length > 1 && (
-                                <button
-                                  className="component-history-toggle"
-                                  aria-label={t(
-                                    expanded.has(group.component)
-                                      ? "收起 {0} 的历史版本（{1}）"
-                                      : "展开 {0} 的历史版本（{1}）",
-                                    [name, group.versions.length - 1],
-                                  )}
-                                  aria-expanded={expanded.has(group.component)}
-                                  onClick={() =>
-                                    setExpanded((previous) => {
-                                      const next = new Set(previous);
-                                      if (next.has(group.component))
-                                        next.delete(group.component);
-                                      else next.add(group.component);
-                                      return next;
-                                    })
-                                  }
-                                >
-                                  <span>{t("历史版本")}</span>
-                                  <span className="component-history-count">
-                                    {group.versions.length - 1}
-                                  </span>
-                                  <ChevronDown size={14} />
-                                </button>
-                              )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              ))}
+              {visible.map(({ component, versions }) => {
+                const isExpanded = expanded.has(component);
+                const rowProps = {
+                  ...actions, component, name: t(data.definitions[component]?.name || component),
+                  onDetails: openDetails, onToggle: toggleHistory,
+                };
+                const first = versions[0];
+                return (
+                  <tbody key={component} data-component={component}>
+                    <CatalogVersionRow key={first.id} row={first} {...rowProps}
+                      selected={selectedRow?.id === first.id} expanded={isExpanded}
+                      historyCount={filtering ? 0 : versions.length - 1} />
+                    {(isExpanded || filtering) && versions.length > 1 && (
+                      <LibraryHistoryRows key={historyFilterKey} versions={versions} renderRow={row => (
+                        <CatalogVersionRow key={row.id} row={row} {...rowProps} history selected={selectedRow?.id === row.id} />
+                      )} />
+                    )}
+                  </tbody>
+                );
+              })}
             </table>
             {!visible.length && (
               <div className="component-empty">

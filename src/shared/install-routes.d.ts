@@ -19,6 +19,8 @@ export interface RouteTarget {
   antiCheatWarning?: boolean;
   hasNativeFg?: boolean;
   hasNativeDlssFg?: boolean;
+  steamMiles?: boolean;
+  hasGameStreamlineFg?: boolean;
   nativeFsrFg?: boolean;
   nativeXessFg?: boolean;
   hasAnrAddonHost?: boolean;

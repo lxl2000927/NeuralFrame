@@ -1,8 +1,8 @@
 import { locale, t } from "./i18n";
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { Modal } from "./components";
-import type { DownloadKind, QueueItem, QueueFailure } from "./features/DownloadAction";
+import { DownloadContext, type DownloadKind, type QueueItem, type QueueFailure } from "./features/DownloadAction";
 import { getBridge } from "./bridge";
 import { errorText, size } from "./domain";
 import type { Preview, Result } from "./types";
@@ -78,6 +78,23 @@ type Transfer = {
   speed: number;
   note?: string;
 };
+// Only the queue controls and preparation dialog subscribe to byte-level updates.
+function createTransferProgress() {
+  let current: Transfer | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => current,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    publish(next: Transfer | null) {
+      current = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
 type Prompt = {
   title: string;
   body: ReactNode;
@@ -115,8 +132,8 @@ export function useOperation(
   const lastPaint = useRef(0);
   const [busy, setBusy] = useState(false),
     [prompt, setPrompt] = useState<Prompt | null>(null),
-    [cancelling, setCancelling] = useState(false),
-    [progress, setProgress] = useState<Transfer | null>(null);
+    [cancelling, setCancelling] = useState(false);
+  const [transferProgress] = useState(createTransferProgress);
   // A single monotonic sample per asset keeps the speed honest when ranges
   // arrive in parallel and the reported byte count jumps.
   const absorb = (next: Omit<Transfer, "speed">) => {
@@ -124,13 +141,13 @@ export function useOperation(
     const now = Date.now();
     const seen = rate.current;
     if (seen.key !== key) rate.current = { key, at: now, bytes: next.loaded, speed: 0 };
-    else if (next.stage === "download" && now - lastPaint.current < 120 && next.loaded < next.total) return;
+    else if (next.stage === "download" && now - lastPaint.current < 120 && (next.total <= 0 || next.loaded < next.total)) return;
     else if (now - seen.at >= 500) {
       const speed = ((next.loaded - seen.bytes) * 1000) / (now - seen.at);
       rate.current = { key, at: now, bytes: next.loaded, speed: Math.max(0, speed) };
     }
     lastPaint.current = now;
-    setProgress({ ...next, speed: rate.current.speed });
+    transferProgress.publish({ ...next, speed: rate.current.speed });
   };
   const ask = (
     title: string,
@@ -198,7 +215,7 @@ export function useOperation(
             throw Error(prepared.message || t("组件准备未完成"));
         } finally {
           dispose();
-          setProgress(null);
+          transferProgress.publish(null);
           setCancelling(false);
         }
         result = await operation();
@@ -318,7 +335,7 @@ export function useOperation(
       throw error;
     } finally {
       dispose();
-      setProgress(null);
+      transferProgress.publish(null);
       setCancelling(false);
     }
   });
@@ -343,93 +360,32 @@ export function useOperation(
   const downloadVersion = (id: string, cached = false) => runTransfer("library", id, cached);
   const downloadRuntime = (id: string, cached: boolean) => runTransfer("runtime", id, cached);
   const cancelProgress = (discard = false) => {
+    const progress = transferProgress.getSnapshot();
     if (!progress || cancelling || (progress.stage === "queued" && progress.kind !== "library")) return;
     cancelMode.current=discard?"discard":progress.stage==="download"?"pause":"cancel";
     setCancelling(true);
     void (progress.kind === "library" ? getBridge().libraryCancel({discard}) : getBridge().componentCancelPrepare({discard}))
       .catch(error => { setCancelling(false); onMessage(errorText(error), "error"); });
   };
-  const dialog = (
-    <>
-      {prompt && (
-        <Modal
-          title={prompt.title}
-          onClose={() => finish(false)}
-          footer={
-            <>
-              <button onClick={() => finish(false)}>{t("取消")}</button>
-              <button
-                className="primary"
-                disabled={prompt.blocked}
-                onClick={() => finish(true)}
-              >
-                {prompt.confirm}
-              </button>
-            </>
-          }
-        >
-          {prompt.body}
-        </Modal>
-      )}
-      {progress?.kind === "prepare" && (() => {
-        const percent = percentOf(progress);
-        const downloading = progress.stage === "download";
-        const stageLabel = progress.stage === "verify" ? t("校验文件")
-          : progress.stage === "ready" ? t("已就绪")
-            : downloading ? t("下载中") : t("准备中");
-        const eta = downloading && progress.speed > 0 && progress.total > progress.loaded
-          ? remainingText((progress.total - progress.loaded) / progress.speed)
-          : "";
-        return (
-          <Modal
-            title={t("准备组件")}
-            onClose={()=>cancelProgress(false)}
-            footer={
-              <>
-                <button onClick={()=>cancelProgress(false)} disabled={cancelling || progress.stage === "queued"}>
-                  {t(cancelling ? (downloading ? "正在暂停…" : "正在取消…") : (downloading ? "暂停下载" : "取消下载"))}
-                </button>
-                {downloading && <button className="danger" onClick={()=>cancelProgress(true)} disabled={cancelling}>{t("取消并清理")}</button>}
-              </>
-            }
+  const dialog = prompt && (
+    <Modal
+      title={prompt.title}
+      onClose={() => finish(false)}
+      footer={
+        <>
+          <button onClick={() => finish(false)}>{t("取消")}</button>
+          <button
+            className="primary"
+            disabled={prompt.blocked}
+            onClick={() => finish(true)}
           >
-            <div className="transfer">
-              <p className="transfer-head" role="status">
-                <span className="transfer-name">
-                  {progress.count && progress.count > 1 && progress.index
-                    ? `${progress.index}/${progress.count} · `
-                    : ""}
-                  {t(progress.name)}
-                </span>
-                <span className="transfer-stage">{stageLabel}</span>
-              </p>
-              <progress
-                max={100}
-                value={downloading ? percent : undefined}
-                aria-label={t("下载进度")}
-              />
-              {!!progress.count && progress.count > 1 && !!progress.overallTotal && (
-                <div className="transfer-overall">
-                  <small>{t("整体进度")}</small>
-                  <progress max={100} value={Math.min(100, (progress.overallLoaded || 0) / progress.overallTotal * 100)} aria-label={t("整体下载进度")} />
-                  <small>{size(progress.overallLoaded || 0)} / {size(progress.overallTotal)}</small>
-                </div>
-              )}
-              <p className="transfer-meta">
-                {downloading && progress.total > 0 && (
-                  <span>{size(progress.loaded)} / {size(progress.total)} · {percent.toFixed(0)}%</span>
-                )}
-                {downloading && progress.speed > 0 && <span>{speedText(progress.speed)}</span>}
-                {downloading && !!progress.connections && <span>{t("{0} 连接",[progress.connections])}</span>}
-                {progress.source && <span title={progress.sourceReason}>{progress.source}</span>}
-                {eta && <span>{eta}</span>}
-                {progress.note && <span>{progress.note}</span>}
-              </p>
-            </div>
-          </Modal>
-        );
-      })()}
-    </>
+            {prompt.confirm}
+          </button>
+        </>
+      }
+    >
+      {prompt.body}
+    </Modal>
   );
   const removeQueued = (key:string) => {
     const item=queued.current.get(key);
@@ -439,7 +395,81 @@ export function useOperation(
     onMessage(t("已移出队列：{0}",[item.id]));
   };
   const clearFailure = (attempt:number) => setRecentFailures(current=>current.filter(failure=>failure.attempt!==attempt));
+  return { run, ask, busy, dialog, downloadVersion, feedback: {
+    transferProgress, cancelling, cancelProgress, downloadRuntime, queueItems, completed, recentFailures, removeQueued, clearFailure,
+  } };
+}
+
+export function TransferFeedback({feedback, children}: {
+  feedback: ReturnType<typeof useOperation>["feedback"]; children: ReactNode;
+}) {
+  const {transferProgress, cancelling, cancelProgress, ...downloads} = feedback;
+  const progress = useSyncExternalStore(transferProgress.subscribe, transferProgress.getSnapshot);
   const row = progress && progress.kind !== "prepare" && progress.id
     ? { ...progress, kind: progress.kind, id: progress.id, cancelling, cancel:()=>cancelProgress(false), discard:()=>cancelProgress(true) } : null;
-  return { run, ask, busy, dialog, downloadVersion, downloads: { row, downloadRuntime, queueItems, completed, recentFailures, removeQueued, clearFailure } };
+  return <DownloadContext.Provider value={{...downloads, row}}>
+    {children}
+    {progress?.kind === "prepare" && <PreparationDialog progress={progress} cancelling={cancelling} cancelProgress={cancelProgress} />}
+  </DownloadContext.Provider>;
+}
+
+function PreparationDialog({progress, cancelling, cancelProgress}: {
+  progress: Transfer; cancelling: boolean; cancelProgress: (discard?: boolean) => void;
+}) {
+  const percent = percentOf(progress);
+  const downloading = progress.stage === "download";
+  const stageLabel = progress.stage === "verify" ? t("校验文件")
+    : progress.stage === "ready" ? t("已就绪")
+      : downloading ? t("下载中") : t("准备中");
+  const eta = downloading && progress.speed > 0 && progress.total > progress.loaded
+    ? remainingText((progress.total - progress.loaded) / progress.speed)
+    : "";
+  return (
+    <Modal
+      title={t("准备组件")}
+      onClose={()=>cancelProgress(false)}
+      footer={
+        <>
+          <button onClick={()=>cancelProgress(false)} disabled={cancelling || progress.stage === "queued"}>
+            {t(cancelling ? (downloading ? "正在暂停…" : "正在取消…") : (downloading ? "暂停下载" : "取消下载"))}
+          </button>
+          {downloading && <button className="danger" onClick={()=>cancelProgress(true)} disabled={cancelling}>{t("取消并清理")}</button>}
+        </>
+      }
+    >
+      <div className="transfer">
+        <p className="transfer-head" role="status">
+          <span className="transfer-name">
+            {progress.count && progress.count > 1 && progress.index
+              ? `${progress.index}/${progress.count} · `
+              : ""}
+            {t(progress.name)}
+          </span>
+          <span className="transfer-stage">{stageLabel}</span>
+        </p>
+        <progress
+          max={100}
+          value={downloading ? percent : undefined}
+          aria-label={t("下载进度")}
+        />
+        {!!progress.count && progress.count > 1 && !!progress.overallTotal && (
+          <div className="transfer-overall">
+            <small>{t("整体进度")}</small>
+            <progress max={100} value={Math.min(100, (progress.overallLoaded || 0) / progress.overallTotal * 100)} aria-label={t("整体下载进度")} />
+            <small>{size(progress.overallLoaded || 0)} / {size(progress.overallTotal)}</small>
+          </div>
+        )}
+        <p className="transfer-meta">
+          {downloading && progress.total > 0 && (
+            <span>{size(progress.loaded)} / {size(progress.total)} · {percent.toFixed(0)}%</span>
+          )}
+          {downloading && progress.speed > 0 && <span>{speedText(progress.speed)}</span>}
+          {downloading && !!progress.connections && <span>{t("{0} 连接",[progress.connections])}</span>}
+          {progress.source && <span title={progress.sourceReason}>{progress.source}</span>}
+          {eta && <span>{eta}</span>}
+          {progress.note && <span>{progress.note}</span>}
+        </p>
+      </div>
+    </Modal>
+  );
 }

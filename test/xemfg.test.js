@@ -26,6 +26,24 @@ function game(t) {
     inspect: () => graphics.inspect(gameDir, backends.readManifest(gameDir)) };
 }
 
+test('RTX 1.7.2 game-switch mode removes the compatibility override and restores individual JSON fields',async t=>{
+  const f=game(t);
+  const target={...f.options.target,hasGameStreamlineFg:true};
+  const install=(mode,gpuName='NVIDIA GeForce RTX 3070',apiLabel='DirectX 12')=>
+    backends.install({...f.options,target,gpuName,apiLabel,graphics:{xeMode:mode}});
+  f.save({multiplier:1,mode:'follow',followGame:true,xemfgStreamline:1,custom:7});
+  await assert.rejects(install('compatibility','AMD Radeon RX 6800'),/RTX/);
+  await assert.rejects(install('compatibility',undefined,'DirectX 11'));
+  await install('compatibility');
+  assert.equal(f.read().xemfgStreamline,2);
+  assert.equal(f.inspect().xeMode,'compatibility');
+  await install('auto');
+  assert.ok(!Object.hasOwn(f.read(),'xemfgStreamline'));
+  f.save({...f.read(),custom:9});
+  assert.ok(await backends.restore(f.gameDir));
+  assert.deepEqual(f.read(),{multiplier:1,mode:'follow',followGame:true,xemfgStreamline:1,custom:9});
+});
+
 test('standalone XeMFG release binaries and licenses survive preview, install, menu tuning, repair and restore', async t => {
   const f = game(t);
   const reviews = new ComponentReview(f.options.userDataDir);
@@ -40,7 +58,7 @@ test('standalone XeMFG release binaries and licenses survive preview, install, m
   const sdk = path.join(f.bin, 'RTXMFG-XeSS');
   assert.deepEqual(fs.readdirSync(sdk).sort(), ['LICENSE.txt', 'libxell.dll', 'libxess_fg.dll', 'third-party-programs.txt'].sort());
   assert.ok(fs.existsSync(path.join(f.bin, 'MFG-Unlocker-LICENSE.txt')));
-  assert.equal(f.inspect().providerVersion, '1.7.1');
+  assert.equal(f.inspect().providerVersion, '1.7.2');
   f.save({ ...f.read(), xemfgStandalone: 0, xemfgDynamic: 1, xemfgFrames: 5, latencyPacing: 2 });
   const edited = fs.readFileSync(f.control);
   await backends.install(f.options);
@@ -182,7 +200,7 @@ test('combined AMD XeMFG setup and status use a scanned XeSS SR input, keep menu
   const inspect = detectedHardware => combined.inspectCombinedStatus(f.gameDir, { ...config, detectedHardware });
   assert.ok((await combined.applyCombinedConfiguration(f.gameDir, { ...config, mfgMode: 'x4', neuralMode: 'latest_compatible' })).ok);
   let s = await inspect(hardware);
-  assert.equal(s.graphicsRoute.providerVersion, '1.7.1');
+  assert.equal(s.graphicsRoute.providerVersion, '1.7.2');
   assert.equal(s.mfg.currentConfig.mode, 'x2');
   assert.equal(s.mfg.currentConfig.multiplier, 2);
   assert.equal(s.neural.installed, false);

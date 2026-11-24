@@ -1,9 +1,12 @@
 'use strict';
-const fs=require('./preview-fs').fs,path=require('path'),crypto=require('crypto');
+const {fs, readSource}=require('./preview-fs'),path=require('path'),crypto=require('crypto');
 const {AsyncLocalStorage}=require('async_hooks');
 const context=new AsyncLocalStorage(),journal=require('./file-journal'),pe=require('./pe');
-const {fail,safe}=require('./component-library');
-const digest=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const {fail,safe,digest: diskDigest}=require('./component-library');
+function digest(file) {
+  const source = readSource(file);
+  return Buffer.isBuffer(source) ? crypto.createHash('sha256').update(source).digest('hex') : diskDigest(source);
+}
 const same=(a,b)=>path.resolve(a).toLowerCase()===path.resolve(b).toLowerCase();
 function executableStamp(file) {
   try {
@@ -157,18 +160,29 @@ async function applySelection(lib,dir,selection,{strict=false,previousSelection}
   if (strict && missing.some(p=>pinnedPackages.has(p.id))) throw fail('此运行库由已安装路线管理，请在游戏页修改。');
   if (strict && missing.some(p=>mismatchedPackages.has(p.id))) throw fail('已检测到同名文件，但组件身份不匹配。');
   if(strict&&missing.length)throw fail('请先通过安装路线启用这些组件，再独立更新：'+missing.map(p=>p.component).join('、'));
-  const exeBefore=executableStamp(scan.chosen.path),manifestBefore=JSON.stringify(manifest),observed=rows.map(r=>({...r,beforeHash:digest(r.file)}));
-  const changed=observed.filter(r=>r.beforeHash!==r.f.sha256);
-  const verifyInputs=()=>{
-    if(executableStamp(scan.chosen.path)!==exeBefore)throw fail('游戏主程序已变化，请重新预览');
-    if(JSON.stringify(require('./backend-manager').readManifest(dir))!==manifestBefore)throw fail('组件安装记录已变化，请重新预览');
-    for(const r of observed)if(!fs.existsSync(r.file)||digest(r.file)!==r.beforeHash)throw fail('游戏组件已被其他操作更改，请重新预览');
-    for(const r of changed){const source=safe(lib.directory(r.p),r.f.rel);if(!fs.existsSync(source)||digest(source)!==r.f.sha256)throw fail('组件文件已变化或缺失，请重新下载：'+r.f.rel);}
+  const exeBefore = executableStamp(scan.chosen.path);
+  const manifestBefore = JSON.stringify(manifest);
+  const observed = [];
+  for (const row of rows) observed.push({...row, beforeHash: await digest(row.file)});
+  const changed = observed.filter(row => row.beforeHash !== row.f.sha256);
+  const sources = new Map(changed.map(row => [safe(lib.directory(row.p), row.f.rel), row.f.sha256]));
+  const verifyInputs = async () => {
+    for (const row of observed) {
+      if (!fs.existsSync(row.file) || await digest(row.file) !== row.beforeHash)
+        throw fail('游戏组件已被其他操作更改，请重新预览');
+    }
+    for (const [source, expected] of sources) {
+      if (!fs.existsSync(source) || await digest(source) !== expected)
+        throw fail('组件文件已变化或缺失，请重新下载：' + path.basename(source));
+    }
+    if (executableStamp(scan.chosen.path) !== exeBefore) throw fail('游戏主程序已变化，请重新预览');
+    if (JSON.stringify(require('./backend-manager').readManifest(dir)) !== manifestBefore)
+      throw fail('组件安装记录已变化，请重新预览');
   };
   if(!changed.length){
     if (manifest && updateModelIdentity(dir, manifest, rows.map(row => row.file))) {
       await require('./install-guards').assertGameClosed(dir,scan.chosen.path);
-      verifyInputs();
+      await verifyInputs();
       await journal.transaction(dir, () => require('./apply').saveActiveManifest(dir,manifest));
     }
     return{ok:true,changed:0,message:'已安装文件与所选版本一致。'};
@@ -176,7 +190,7 @@ async function applySelection(lib,dir,selection,{strict=false,previousSelection}
   await require('./install-guards').assertGameClosed(dir,scan.chosen.path);
   // The process check is asynchronous; none of its preflight inputs may drift
   // before committing the already-reviewed component replacement.
-  verifyInputs();
+  await verifyInputs();
   return journal.transaction(dir,async()=>{
     const apply=require('./apply'),m=manifest||apply.beginManifest(dir,scan.chosen.path,scan.chosen.api||'dxgi');
     if (!manifest) m.componentOnlySince = m.date;
@@ -185,11 +199,12 @@ async function applySelection(lib,dir,selection,{strict=false,previousSelection}
     for(const [i,r] of changed.entries()){
       const rel=path.relative(dir,r.file),snapshot=`_DLSS5_Backup/component-revisions/${revision.id}/${i}.bin`,saved=journal.safePath(dir,snapshot);
       await journal.capture(dir,saved);await fs.promises.mkdir(path.dirname(saved),{recursive:true});await fs.promises.copyFile(r.file,saved);
-      const beforeHash = digest(saved);
+      const beforeHash = await digest(saved);
+      if (beforeHash !== r.beforeHash) throw fail('游戏组件已被其他操作更改，请重新预览');
       revision.files.push({rel,snapshot,sha256:beforeHash,after:r.f.sha256});
       historyManifest.replaced.push({ rel, oldVersion: pe.getFileVersion(saved), newVersion: r.f.version, beforeHash, afterHash: r.f.sha256 });
       await apply.copyTracked(m,dir,safe(lib.directory(r.p),r.f.rel),r.file,{kind:'component-library',newVersion:r.f.version});
-      if(digest(r.file)!==r.f.sha256)throw fail('复制期间组件发生变化，请重新下载：'+r.f.rel);
+      if(await digest(r.file)!==r.f.sha256)throw fail('复制期间组件发生变化，请重新下载：'+r.f.rel);
     }
     updateModelIdentity(dir, m, changed.map(row => row.file));
     m.componentHistory=[...(m.componentHistory||[]),revision];m.componentSelection=selection;
@@ -205,14 +220,14 @@ async function rollback(lib,dir,snapshotId){
   await require('./install-guards').assertGameClosed(dir,exe);
   // Process enumeration can take time. Validate the rollback inputs after it
   // completes, so an external edit during that wait cannot be overwritten.
-  if (executableStamp(exe) !== exeBefore) throw fail('游戏主程序已变化，请重新预览');
-  if (JSON.stringify(require('./backend-manager').readManifest(dir)) !== JSON.stringify(manifest)) throw fail('回滚记录已变化，请刷新列表');
   for(const [i,f] of revision.files.entries()){
     if(!f || f.snapshot !== folder + '/' + i + '.bin') throw fail('上一版组件快照损坏或缺失');
     const saved = journal.safePath(dir, f.snapshot), target = journal.safePath(dir, f.rel);
-    if(!fs.existsSync(saved) || digest(saved)!==f.sha256)throw fail('上一版组件快照损坏或缺失');
-    if(!fs.existsSync(target) || digest(target)!==f.after)throw fail('游戏组件已被其他操作更改，不能覆盖；请先查看组件清单');
+    if(!fs.existsSync(saved) || await digest(saved)!==f.sha256)throw fail('上一版组件快照损坏或缺失');
+    if(!fs.existsSync(target) || await digest(target)!==f.after)throw fail('游戏组件已被其他操作更改，不能覆盖；请先查看组件清单');
   }
+  if (executableStamp(exe) !== exeBefore) throw fail('游戏主程序已变化，请重新预览');
+  if (JSON.stringify(require('./backend-manager').readManifest(dir)) !== JSON.stringify(manifest)) throw fail('回滚记录已变化，请刷新列表');
   const result = await journal.transaction(dir,async()=>{
     const apply = require('./apply');
     const historyManifest = { date: manifest.date, game: manifest.game, route: 'component-library', replaced: [] };
@@ -221,7 +236,7 @@ async function rollback(lib,dir,snapshotId){
       const oldVersion = pe.getFileVersion(target), newVersion = pe.getFileVersion(saved);
       historyManifest.replaced.push({ rel: f.rel, oldVersion, newVersion, beforeHash: f.after, afterHash: f.sha256 });
       await apply.copyTracked(manifest, dir, saved, target, { kind: 'component-rollback', newVersion });
-      if(digest(target)!==f.sha256)throw fail('复制期间回滚快照发生变化，已停止回滚');
+      if(await digest(target)!==f.sha256)throw fail('复制期间回滚快照发生变化，已停止回滚');
       await journal.capture(dir, saved);
       await fs.promises.unlink(saved);
     }

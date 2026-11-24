@@ -34,8 +34,8 @@ parentPort.on('message', async ({ id, task, dir, options }) => {
       return;
     }
     if (task === 'inventory') {
-      const { ComponentReview } = require('./component-review');
-      const result = await new ComponentReview(options.userDataDir).inventory(dir);
+      const { ComponentReview, diskInfo } = require('./component-review');
+      const result = await new ComponentReview(options.userDataDir).inventory(dir, diskInfo);
       parentPort.postMessage({ id, result });
       return;
     }

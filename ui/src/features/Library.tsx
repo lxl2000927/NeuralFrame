@@ -77,7 +77,7 @@ export function Library({
   const [cacheComponent,setCacheComponent] = useState("");
   const [cacheAge,setCacheAge] = useState("0");
   const [importError, setImportError] = useState("");
-  const [gpuSm, setGpuSm] = useState<string | null>(null);
+  const [gpu, setGpu] = useState<{sm?: string | null; nvidiaPresent?: boolean | null}>({});
   const importing = active && importOpen;
   const returnRevision = useWindowReturn(active, busy || importing || checking);
   const closeImport = () => {
@@ -131,13 +131,13 @@ export function Library({
     getBridge()
       .enhancedHardware(false, false)
       .then((result) => {
-        if (alive)
-          setGpuSm(
-            result.ok ? result.hardware?.gpu?.architecture?.sm || null : null,
-          );
+        if (alive) {
+          const adapter = result.ok ? result.hardware?.gpu : undefined;
+          setGpu({sm: adapter?.architecture?.sm, nvidiaPresent: adapter?.nvidiaPresent});
+        }
       })
       .catch(() => {
-        if (alive) setGpuSm(null);
+        if (alive) setGpu({});
       });
     return () => {
       alive = false;
@@ -338,7 +338,8 @@ export function Library({
               busy={busy}
               checking={checking}
               downloadVersion={downloadVersion}
-              gpuSm={gpuSm}
+              gpuSm={gpu.sm || null}
+              nvidiaPresent={gpu.nvidiaPresent}
               toolbar={toolbar}
             />
             {!!data.warnings?.length && (
@@ -390,7 +391,7 @@ function DownloadSources() {
     <summary><Globe size={17}/><strong>{t("下载源设置")}</strong><span>{t(!saved.mirror ? "GitHub 直连" : saved.priority==="official" ? "GitHub 优先" : "镜像优先")}</span><ChevronDown size={16}/></summary>
     <form onSubmit={save} noValidate>
       <label className="source-address"><span>{t("自定义下载镜像前缀")}</span>
-        <input type="url" value={draft.mirror} placeholder="https://mirror.example/" aria-invalid={!!error}
+        <input type="url" className="text-field" value={draft.mirror} placeholder="https://mirror.example/" aria-invalid={!!error}
           aria-describedby={error ? "mirror-input-error" : undefined}
           onChange={e=>{setDraft({...draft,mirror:e.target.value});setError("");}}/></label>
       {error && <p className="error" id="mirror-input-error" role="alert">{error}</p>}

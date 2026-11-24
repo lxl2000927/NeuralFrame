@@ -8,7 +8,7 @@ const {unpack,mapFiles}=require('./component-archive');
 const {sweepPartials}=require('./asset-download');
 const journal=require('./file-journal');
 const MB=1024*1024;
-const SOURCES_VERSION = 4;
+const SOURCES_VERSION = 6;
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const MODEL_PROVIDER = 'smartergamers-nr';
 const MODEL_NAME = 'nvngx_dlssnr.dll';
@@ -78,6 +78,15 @@ function validDownloadUrl(candidate, provider) {
 function candidates(releases,provider) {
   const def = PROVIDERS[provider], component = componentFor(provider), out = [];
   for (const release of releases) {
+    if (def.versionTag) {
+      const version = def.versionTag.exec(release.name)?.[1];
+      if (version) {
+        const tag = release.name, url = `https://github.com/${def.repo}/releases/tag/${tag}`;
+        out.push({id:hash(JSON.stringify([provider,tag])),component,provider,repo:def.repo,tag,version,
+          name:'',url,releaseUrl:url,releaseOnly:true,size:0,sha256:null,downloadable:false});
+      }
+      continue;
+    }
     if (release.draft || typeof release.tag_name !== 'string' || !release.tag_name) continue;
     if (def.releaseTag ? release.tag_name !== def.releaseTag : !def.includePrerelease && !stable(release)) continue;
     const releaseUrl = `https://github.com/${def.repo}/releases/tag/${encodeURIComponent(release.tag_name)}`;
@@ -93,6 +102,9 @@ function candidates(releases,provider) {
         version = match[1];
         if (match[2]) version += '+rtxfg.' + match[2];
         if (match[3]) version += '.hf' + match[3];
+      } else if (provider === 'rhi-rr') {
+        version = match[1];
+        if (release.tag_name !== 'dlssd-' + version) continue;
       } else if (component === 'anr' || component === 'anr-addon') {
         version = release.tag_name.replace(/^FG-V\./i,'');
       }
@@ -151,6 +163,17 @@ async function taggedModel(release, fetcher, allowContentsFallback = true, paren
 async function publishedRelease(repo, providers, previous, fetcher, parentSignal) {
   const read = (url, options) => fetcher(url, {signal:requestSignal(parentSignal, 12000), ...options});
   const site = 'https://github.com/' + repo;
+  const tagProvider = providers.find(key => PROVIDERS[key].versionTag);
+  if (tagProvider) {
+    // Git's public ref advertisement includes all tags even during a REST API cooldown.
+    const refs = await read(site + '.git/info/refs?service=git-upload-pack');
+    if (!refs.ok) { await refs.body?.cancel(); throw fail('无法读取上游版本标签'); }
+    const body = (await bounded(refs, 2 * MB)).toString();
+    const tags = Array.from(body.matchAll(/ refs\/tags\/([^\s^]+)\n/g), match => ({name:match[1]}));
+    const history = candidates(tags, tagProvider);
+    if (!history.length) throw fail('无法识别上游版本标签');
+    return history.sort((a,b) => b.version.localeCompare(a.version,'en',{numeric:true}));
+  }
   const tagPrefix = site + '/releases/tag/';
   const fixedTag = PROVIDERS[providers[0]].releaseTag;
   const page = await read(fixedTag ? tagPrefix + fixedTag : site + '/releases/latest');
@@ -190,21 +213,22 @@ async function publishedRelease(repo, providers, previous, fetcher, parentSignal
   });
 }
 async function smarterGamersModels(releases, fetcher, previous, errors, parentSignal) {
-  const stableReleases = releases.filter(stable).slice(0,12);
-  const results = await Promise.allSettled(stableReleases.map(async release => {
+  const results = await mapLimit(releases.filter(stable), 3, async release => {
+    parentSignal?.throwIfAborted();
     const assets = candidates([release], MODEL_PROVIDER);
-    return assets.some(c => c.downloadable) ? assets : [await taggedModel(release,fetcher,true,parentSignal)];
-  }));
-  parentSignal?.throwIfAborted();
-  const failed = [];
-  const items = results.flatMap((result,i) => {
-    if (result.status === 'fulfilled') return result.value;
-    const tag = stableReleases[i].tag_name;
-    failed.push(tag + ' · ' + result.reason.message);
-    return previous.filter(c => c.tag === tag).map(c => ({...c, stale:true}));
+    if (assets.some(c => c.downloadable)) return {items:assets};
+    try {
+      return {items:[await taggedModel(release,fetcher,true,parentSignal)]};
+    } catch (error) {
+      parentSignal?.throwIfAborted();
+      const tag = release.tag_name;
+      return {items:previous.filter(c => c.tag === tag).map(c => ({...c, stale:true})), error:tag + ' · ' + error.message};
+    }
   });
+  parentSignal?.throwIfAborted();
+  const failed = results.flatMap(result => result.error ? [result.error] : []);
   if (failed.length) errors.push({provider:MODEL_PROVIDER, message:failed.join(' / ')});
-  return items;
+  return results.flatMap(result => result.items);
 }
 function pinnedModelFor(candidate) {
   return pinnedModels.find(p => candidate.provider === p.provider && candidate.url === p.url && candidate.sha256 === p.sha256);
@@ -315,59 +339,80 @@ class ComponentUpdates{
     const etags = {...old.etags};
     let limitedUntil = 0;
     let budgetCheckAt = 0;
+    const readPage = async (url, etag) => {
+      parentSignal?.throwIfAborted();
+      if (limitedUntil) throw fail('GitHub 请求已限流');
+      const headers = {Accept:'application/vnd.github+json', 'User-Agent':'NeuralFrame-Component-Library'};
+      if (etag) headers['If-None-Match'] = etag;
+      const response = await this.fetcher(url, {headers, signal:requestSignal(parentSignal, 30000)});
+      let responseLimit = rateLimitDeadline(response, Date.now());
+      limitedUntil = Math.max(limitedUntil, responseLimit);
+      if (response.ok || response.status === 304) {
+        const remaining = response.headers.get('x-ratelimit-remaining');
+        const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000;
+        if (remaining !== null && /^\d+$/.test(remaining) && reset > Date.now()) {
+          const rounds = Math.max(1, Math.floor(Number(remaining) / providersByRepo.size));
+          budgetCheckAt = Math.max(budgetCheckAt, Date.now() + Math.ceil((reset - Date.now()) / rounds));
+        }
+      }
+      if (response.status === 304 && etag) return response;
+      if (!response.ok) {
+        if (!responseLimit && response.status === 403 && response.body) {
+          const detail = await bounded(response, 64 * 1024);
+          if (/rate limit/i.test(detail.toString())) {
+            responseLimit = Date.now() + CHECK_INTERVAL_MS;
+            limitedUntil = Math.max(limitedUntil, responseLimit);
+          }
+        } else await response.body?.cancel();
+        if (responseLimit) throw fail('GitHub 请求已限流');
+        throw fail('下载服务返回 HTTP ' + response.status);
+      }
+      return response;
+    };
     const results = await mapLimit([...providersByRepo], 3, async ([repo, providers]) => {
       const previous = old.candidates.filter(item => providers.includes(item.provider));
       const repoErrors = [];
+      const def = PROVIDERS[providers[0]];
+      const endpoint = def.releaseTag ? '/releases/tags/' + encodeURIComponent(def.releaseTag)
+        : (def.versionTag ? '/tags' : '/releases') + '?per_page=100';
+      const base = 'https://api.github.com/repos/' + repo + endpoint;
+      const entries = new Map();
+      let singlePageTag, incomplete = false;
       try {
-        parentSignal?.throwIfAborted();
-        if (limitedUntil) throw fail('GitHub 请求已限流');
-        const headers = {Accept:'application/vnd.github+json', 'User-Agent':'NeuralFrame-Component-Library'};
-        if (etags[repo]) headers['If-None-Match'] = etags[repo];
-        const fixedTag = PROVIDERS[providers[0]].releaseTag;
-        const endpoint = fixedTag ? '/releases/tags/' + encodeURIComponent(fixedTag) : '/releases?per_page=100';
-        const response = await this.fetcher(`https://api.github.com/repos/${repo}${endpoint}`, {
-          headers, signal:requestSignal(parentSignal, 30000)
-        });
-        let responseLimit = rateLimitDeadline(response, Date.now());
-        limitedUntil = Math.max(limitedUntil, responseLimit);
-        if (response.ok || response.status === 304) {
-          const remaining = response.headers.get('x-ratelimit-remaining');
-          const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000;
-          if (remaining !== null && /^\d+$/.test(remaining) && reset > Date.now()) {
-            const rounds = Math.max(1, Math.floor(Number(remaining) / providersByRepo.size));
-            budgetCheckAt = Math.max(budgetCheckAt, Date.now() + Math.ceil((reset - Date.now()) / rounds));
+        for (let page = 1; ; page++) {
+          const response = await readPage(page === 1 ? base : base + '&page=' + page, page === 1 && etags[repo]);
+          if (response.status === 304) return {items:previous.map(item => ({...item, stale:false})), errors:repoErrors};
+          const data = JSON.parse((await bounded(response, 12 * MB)).toString());
+          const rows = def.releaseTag && data?.tag_name === def.releaseTag ? [data] : data;
+          if (!Array.isArray(rows)) throw fail('版本列表格式错误');
+          for (const item of rows) {
+            const tag = def.versionTag ? item?.name : item?.tag_name;
+            if (typeof tag !== 'string' || (!def.versionTag && item.assets != null &&
+                !(Array.isArray(item.assets) && item.assets.every(asset => typeof asset?.name === 'string')))) throw fail('版本列表格式错误');
+            entries.set(tag, item);
           }
+          const next = !def.releaseTag && /<([^>]+)>;\s*rel="next"/i.exec(response.headers.get('link') || '');
+          if (!next) {
+            // A first-page ETag cannot validate changes to an older page.
+            if (page === 1 && rows.length < 100) singlePageTag = response.headers.get('etag');
+            break;
+          }
+          if (Number(new URL(next[1]).searchParams.get('page')) !== page + 1) throw fail('版本列表分页错误');
         }
-        if (response.status === 304 && etags[repo]) {
-          etags[repo] = response.headers.get('etag') || etags[repo];
-          return {items:previous.map(item => ({...item, stale:false})), errors:repoErrors};
-        }
-        if (!response.ok) {
-          if (!responseLimit && response.status === 403 && response.body) {
-            const detail = await bounded(response, 64 * 1024);
-            if (/rate limit/i.test(detail.toString())) {
-              responseLimit = Date.now() + CHECK_INTERVAL_MS;
-              limitedUntil = Math.max(limitedUntil, responseLimit);
-            }
-          } else await response.body?.cancel();
-          if (responseLimit) throw fail('GitHub 请求已限流');
-          throw fail('下载服务返回 HTTP ' + response.status);
-        }
-        const listing = JSON.parse((await bounded(response, 12 * MB)).toString());
-        const releases = fixedTag && listing?.tag_name === fixedTag ? [listing] : listing;
-        if (!Array.isArray(releases)) throw fail('版本列表格式错误');
-        const found = repo === MODEL_REPO
-          ? await smarterGamersModels(releases, this.fetcher, previous, repoErrors, parentSignal)
-          : providers.flatMap(provider => candidates(releases, provider));
-        const tag = response.headers.get('etag');
-        if (tag && !repoErrors.length) etags[repo] = tag;
-        else delete etags[repo];
-        return {items:found, errors:repoErrors};
       } catch (error) {
         parentSignal?.throwIfAborted();
         for (const provider of providers) repoErrors.push({provider, message:error.message});
-        return {items:previous.map(item => ({...item, stale:true})), errors:repoErrors};
+        if (!entries.size) return {items:previous.map(item => ({...item, stale:true})), errors:repoErrors};
+        incomplete = true;
       }
+      const releases = [...entries.values()];
+      const items = repo === MODEL_REPO
+        ? await smarterGamersModels(releases, this.fetcher, previous, repoErrors, parentSignal)
+        : providers.flatMap(key => candidates(releases, key));
+      if (singlePageTag && !repoErrors.length) etags[repo] = singlePageTag;
+      else delete etags[repo];
+      if (incomplete) items.push(...previous.filter(item => !entries.has(item.tag)).map(item => ({...item, stale:true})));
+      return {items, errors:repoErrors};
     });
     parentSignal?.throwIfAborted();
     const items = results.flatMap(result => result.items);
@@ -380,7 +425,7 @@ class ComponentUpdates{
   async download(id,{mirror='',priority='mirror'}={}){if(this.busy)throw fail('组件更新正在进行');this.busy=true;this.controller=new AbortController();let temp;
     await sweepPartials(this.lib.root).catch(()=>{});
     try{const c=pinnedModels.find(p=>p.id===id) || this.readIndex().candidates.find(c=>c.id===id),provider=c&&PROVIDERS[c.provider];
-      if(!c||!provider||componentFor(c.provider)!==c.component||!c.downloadable||!validDownloadUrl(c,provider)||!provider.asset.test(c.name)||!/^([a-f0-9]{64})$/.test(c.sha256))throw fail('下载记录无效或缺少 SHA-256，请重新检查更新');
+      if(!c||!provider||componentFor(c.provider)!==c.component||!c.downloadable||!provider.asset?.test(c.name)||!validDownloadUrl(c,provider)||!/^([a-f0-9]{64})$/.test(c.sha256))throw fail('下载记录无效或缺少 SHA-256，请重新检查更新');
       this.onProgress({stage:'prepare',name:c.name,loaded:0,total:c.size});
       const pinned = pinnedModelFor(c);
       const cached = findCachedPackage(this.lib.catalog().packages, c, pinned);

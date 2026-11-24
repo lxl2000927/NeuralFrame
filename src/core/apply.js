@@ -1337,7 +1337,7 @@ function recoverableManifest(gameDir) {
   return null;
 }
 
-async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTarget, registryRunner } = {}) {
+async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTarget, registryRunner, milesDriver } = {}) {
   const log = (code, params) => onLog && onLog({ code, params: params || {} });
   const manifestPath = journal.safePath(gameDir, path.join(BACKUP_DIR, MANIFEST));
   let manifest = null;
@@ -1358,7 +1358,8 @@ async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTar
   const detachOwnedLayer = vulkanLayer.checkOwnedTarget(manifest.vulkanLayer, vulkanLayerTarget);
   const detachOwnedRegistry = legacyRegistry.checkOwned(manifest.legacyRegistry, gameDir);
   const detachDelta = manifest.route === 'sm86-delta' && manifest.graphicsRoute?.deltaCache?.owned;
-  const needsDetach = detachOwnedLayer || detachOwnedRegistry || detachDelta;
+  const detachMiles = manifest.graphicsRoute?.milesProfile || require('./miles-profile').owns(gameDir,milesDriver?.base);
+  const needsDetach = detachOwnedLayer || detachOwnedRegistry || detachDelta || detachMiles;
   const awaitingDetach = !archived && needsDetach && ['detach-vulkan', 'detach-external'].includes(manifest.restorePhase);
   delete manifest.restorePhase;
   async function retireManifest() {
@@ -1375,7 +1376,7 @@ async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTar
       if (needsDetach) {
         // The registry and shared layer are outside the game transaction. Keep
         // a live, retryable record after committing the local restore.
-        await saveActiveManifest(gameDir, { ...manifest, restorePhase: detachOwnedRegistry || detachDelta ? 'detach-external' : 'detach-vulkan' });
+        await saveActiveManifest(gameDir, { ...manifest, restorePhase: detachOwnedRegistry || detachDelta || detachMiles ? 'detach-external' : 'detach-vulkan' });
       } else if (!archived) await retireManifest();
     });
   }
@@ -1384,6 +1385,7 @@ async function restore(gameDir, onLog, onRestored, { beforeFiles, vulkanLayerTar
     log(removed ? 'vulkanLayerRemoved' : 'vulkanLayerKept');
   } else if (manifest.vulkanLayer) log('vulkanLayerKept');
   if (detachDelta) await require('./delta-cache').detach(gameDir, manifest);
+  if (detachMiles) await require('./miles-profile').detach(gameDir,milesDriver);
   if (detachOwnedRegistry) await legacyRegistry.detach(detachOwnedRegistry, gameDir, registryRunner);
   if (needsDetach) {
     await journal.transaction(gameDir, async () => {

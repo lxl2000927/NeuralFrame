@@ -1,10 +1,11 @@
-import {useEffect,useMemo,useRef,useState} from "react";
+import {useEffect,useLayoutEffect,useMemo,useRef,useState} from "react";
 import {ChevronDown, Download, Search, X} from "lucide-react";
 import {getBridge} from "../bridge";
 import {t} from "../i18n";
 import {errorText,gameRouteLabels} from "../domain";
 import type {BatchScanProgress,BatchScanTask,CompatibilityReport,Game} from "../types";
 import {Empty,Modal} from "../components";
+import {moveMenuFocus} from "../menuFocus";
 import "./BatchScan.css";
 
 type Row=CompatibilityReport["rows"][number];
@@ -24,6 +25,8 @@ export function BatchScan({games,onClose,message}:{games:Game[];onClose:()=>void
   const [status,setStatus]=useState<"all"|Status>("all");
   const [menuOpen,setMenuOpen]=useState(false);
   const searchInput=useRef<HTMLInputElement>(null),trigger=useRef<HTMLButtonElement>(null),menu=useRef<HTMLDivElement>(null);
+  const initialFocus=useRef<"Home"|"End">("Home");
+  const returnExportFocus=useRef(false);
   const activeId=useRef<string|null>(null),pending=useRef<BatchScanProgress[]>([]),forceStart=useRef(false);
   // A scan describes the library as it was when the dialog opened. Background
   // artwork and individual scan results can replace the games array meanwhile.
@@ -88,7 +91,13 @@ export function BatchScan({games,onClose,message}:{games:Game[];onClose:()=>void
     document.addEventListener("pointerdown",close,true);
     return()=>document.removeEventListener("pointerdown",close,true);
   },[menuOpen]);
-  useEffect(()=>{if(menuOpen)menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();},[menuOpen]);
+  useLayoutEffect(()=>{
+    if(menuOpen) moveMenuFocus(menu.current,initialFocus.current);
+    else if(!exporting && returnExportFocus.current) {
+      returnExportFocus.current=false;
+      trigger.current?.focus();
+    }
+  },[menuOpen,exporting]);
   const rescan=()=>{forceStart.current=true;setMenuOpen(false);setGeneration(value=>value+1);};
   const stop=async()=>{
     if(!task||task.status!=="running")return;
@@ -100,10 +109,11 @@ export function BatchScan({games,onClose,message}:{games:Game[];onClose:()=>void
   const exportReport=async(format:"json"|"csv")=>{
     setMenuOpen(false);
     if(!report)return;
+    returnExportFocus.current=true;
     setExporting(true);
     try{const result=await getBridge().gamesExportScan(report,format);if(!result.ok&&!result.cancelled)throw Error(result.message||t("导出失败"));if(result.ok)message(t("已导出"));}
     catch(reason){setError(errorText(reason));}
-    finally{setExporting(false);trigger.current?.focus();}
+    finally{setExporting(false);}
   };
   const rows=task?.rows||[];
   const total=task?.total??directories.length;
@@ -126,24 +136,20 @@ export function BatchScan({games,onClose,message}:{games:Game[];onClose:()=>void
   const showDriver=Boolean(rows.some(row=>row.driverHint));
   const closed=()=>{setMenuOpen(false);onClose();};
   const menuKeys=(event:React.KeyboardEvent<HTMLDivElement>)=>{
-    const items=[...(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')||[])];
-    const index=items.indexOf(document.activeElement as HTMLButtonElement);
     if(event.key==="Escape"){
       // Keep Escape from reaching the dialog: the menu closes first, the dialog stays.
       event.preventDefault();event.stopPropagation();setMenuOpen(false);trigger.current?.focus();return;
     }
-    if(event.key==="Tab"){setMenuOpen(false);return;}
-    let next=-1;
-    if(event.key==="ArrowDown")next=index<items.length-1?index+1:0;
-    else if(event.key==="ArrowUp")next=index>0?index-1:items.length-1;
-    else if(event.key==="Home")next=0;
-    else if(event.key==="End")next=items.length-1;
-    else return;
-    event.preventDefault();items[next]?.focus();
+    if(event.key==="Tab"){trigger.current?.focus();setMenuOpen(false);return;}
+    if(moveMenuFocus(menu.current,event.key))event.preventDefault();
   };
   const triggerKeys=(event:React.KeyboardEvent<HTMLButtonElement>)=>{
-    // Enter and Space already activate the button; only ArrowDown needs handling here.
-    if(event.key==="ArrowDown"){event.preventDefault();setMenuOpen(true);}
+    if(event.key==="ArrowDown" || event.key==="ArrowUp"){
+      event.preventDefault();
+      initialFocus.current=event.key==="ArrowUp"?"End":"Home";
+      if(menuOpen)moveMenuFocus(menu.current,initialFocus.current);
+      else setMenuOpen(true);
+    }
   };
   const statusButtons=<div className="batch-status-filter" role="group" aria-label={t("按状态筛选")}>
     <button type="button" aria-pressed={status==="all"} onClick={()=>setStatus("all")}>{t("全部")} <b>{counts.all}</b></button>
@@ -151,7 +157,7 @@ export function BatchScan({games,onClose,message}:{games:Game[];onClose:()=>void
   </div>;
   const exportMenu=<>
     <button type="button" ref={trigger} className="batch-export-trigger" aria-haspopup="menu" aria-expanded={menuOpen}
-      disabled={!report||exporting} onClick={()=>setMenuOpen(open=>!open)} onKeyDown={triggerKeys}>
+      disabled={!report||exporting} onClick={()=>{initialFocus.current="Home";setMenuOpen(open=>!open);}} onKeyDown={triggerKeys}>
       <Download size={15} aria-hidden="true"/>{exportingLabel()}<ChevronDown size={14} aria-hidden="true"/>
     </button>
     {menuOpen&&<div ref={menu} role="menu" className="batch-export-menu" aria-label={report?.complete===false?t("导出部分报告格式"):t("导出完整报告格式")} onKeyDown={menuKeys}>

@@ -31,16 +31,18 @@ export function PerformanceMonitor({games,dir,onGame,target,onTarget,active,refr
   const exe = explicit ? exes.find(item=>sameExecutable(item.path,explicit)) :
     exes.find(item=>sameExecutable(item.rel,details?.installedExe)) || exes.find(item=>sameExecutable(item.path,details?.exePath)) || exes[0];
   const api = exe && effective(exe,exe.apiOverride || "auto");
+  const previewOnly = !!exe && (exe.launcherProtected ?? details?.launcherProtected) === true;
   let issue = read?.error || "";
   if (!dir) issue = "请先添加游戏。";
   else if (!issue) {
     if (!details) issue = "读取游戏配置…";
-    else if (exe?.launcherProtected ?? details.launcherProtected) issue = "此游戏使用独立加载路线，不支持 F7 插件。";
     else if (explicit && !exe) issue = "所选游戏程序已不在扫描列表中，请重新选择。";
-    else if (!exe || !api || !supportsPerformanceMonitor(api)) issue = "当前程序或渲染 API 不支持 F7 性能监控。";
-    else if (exe.installIssue) issue = exe.installIssue;
-    else if (details.installedExe && (!sameExecutable(details.installedExe,exe.rel) || details.installedApi && details.installedApi !== api.api))
-      issue = "请为当前已部署的游戏程序和渲染 API 配置性能监控。";
+    else if (!previewOnly) {
+      if (!exe || !api || !supportsPerformanceMonitor(api)) issue = "当前程序或渲染 API 不支持 F7 性能监控。";
+      else if (exe.installIssue) issue = exe.installIssue;
+      else if (details.installedExe && (!sameExecutable(details.installedExe,exe.rel) || details.installedApi && details.installedApi !== api.api))
+        issue = "请为当前已部署的游戏程序和渲染 API 配置性能监控。";
+    }
   }
   const installed = !!exe?.performanceMonitor?.installed;
   const bits = exportBits || (exe?.bitness === 32 ? "32" : "64");
@@ -56,7 +58,7 @@ export function PerformanceMonitor({games,dir,onGame,target,onTarget,active,refr
   };
   return <section className="monitor-panel" aria-label={t("F7 性能监控")}>
     <header className="monitor-heading"><Activity aria-hidden="true" size={21}/><h2>{t("F7 性能监控")}</h2>
-      {exe && !issue && <span className="monitor-installed" data-installed={installed}>{t(installed ? "已安装" : "未安装")}</span>}</header>
+      {exe && !issue && <span className="monitor-installed" data-installed={!previewOnly && installed}>{t(previewOnly ? "仅预览" : installed ? "已安装" : "未安装")}</span>}</header>
     <fieldset className="monitor-body" disabled={busy}>
       <div className="monitor-target">
         <label>{t("目标游戏")}<Select label={t("目标游戏")} value={dir} disabled={!games.length}
@@ -65,7 +67,7 @@ export function PerformanceMonitor({games,dir,onGame,target,onTarget,active,refr
           options={exes.map(item=>[item.path,item.rel])} onChange={path=>onTarget({dir,path})}/></label>}
       </div>
       {issue ? <p className="monitor-issue" role="status">{t(issue)} {read?.error && <button onClick={()=>setRetry(v=>v+1)}>{t("重试")}</button>}</p>
-        : exe && <MonitorSettings key={exe.path} exe={exe} dir={dir} run={run}/>}
+        : exe && <MonitorSettings key={JSON.stringify([dir,exe.path,previewOnly])} exe={exe} dir={dir} run={previewOnly ? undefined : run}/>}
     </fieldset>
     <details className="monitor-export"><summary><Download size={15} aria-hidden="true"/>{t("导出插件文件")}<ChevronDown size={15} aria-hidden="true"/></summary><div className="monitor-files">
       <Select label={t("插件位数")} value={bits} options={[["64","64-bit"],["32","32-bit"]]} onChange={value=>{setExportBits(value);setFileMessage("");}} disabled={saving}/>
@@ -77,8 +79,8 @@ export function PerformanceMonitor({games,dir,onGame,target,onTarget,active,refr
   </section>;
 }
 
-function MonitorSettings({exe,dir,run}:{exe:GameExecutable;dir:string;run:Run}) {
-  const saved = exe.performanceMonitor;
+function MonitorSettings({exe,dir,run}:{exe:GameExecutable;dir:string;run?:Run}) {
+  const saved = run ? exe.performanceMonitor : undefined;
   const [draft,setDraft] = useState<{mode?:number;corner?:number}>({});
   const defaultMode = saved?.mode ?? (saved?.installed ? 0 : 1);
   const defaultCorner = saved?.corner ?? 1;
@@ -86,6 +88,7 @@ function MonitorSettings({exe,dir,run}:{exe:GameExecutable;dir:string;run:Run}) 
   const corner = draft.corner ?? defaultCorner;
   const changed = mode !== defaultMode || corner !== defaultCorner;
   const apply = async () => {
+    if (!run) return;
     // Send only edited fields so an independent change from the Home menu survives.
     const patch = {...(!saved?.installed && {install:true as const}), ...(mode !== defaultMode && {mode}), ...(corner !== defaultCorner && {corner})};
     if (await run(token=>getBridge().enhancedApply(dir,{exePath:exe.path,apiOverride:exe.apiOverride || "auto",
@@ -99,8 +102,10 @@ function MonitorSettings({exe,dir,run}:{exe:GameExecutable;dir:string;run:Run}) 
           <span>{t(label)}</span>
         </label>)}</div>
       </fieldset>
-      <p className="monitor-keys"><kbd>F7</kbd>{t("切换显示模式")}<kbd>Home</kbd>{t("调整浮窗位置")}</p>
-      <button className="primary" disabled={saved?.installed && !changed} onClick={()=>void apply()}>{t(saved?.installed ? "预览监控设置" : "预览安装并应用设置")}</button>
+      {run ? <>
+        <p className="monitor-keys"><kbd>F7</kbd>{t("切换显示模式")}<kbd>Home</kbd>{t("调整浮窗位置")}</p>
+        <button className="primary" disabled={saved?.installed && !changed} onClick={()=>void apply()}>{t(saved?.installed ? "预览监控设置" : "预览安装并应用设置")}</button>
+      </> : <p className="monitor-issue">{t("独立加载路线暂不支持游戏内 F7。可在这里预览显示模式和浮窗位置。")}</p>}
     </div>
     <fieldset className="monitor-position"><legend>{t("浮窗位置")}</legend>
       <div className="monitor-screen">

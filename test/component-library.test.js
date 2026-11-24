@@ -53,6 +53,60 @@ test('overlapping imports retain both package records and recover after a failed
   assert.equal((await f.add(f.a)).id, first.id);
   assert.equal(f.library.catalog().packages.length, 2);
 });
+
+test('per-game component reads skip the global cache receipt scan', async t => {
+  const f = fixture(t), dirs = t.mock.fn(() => [f.game]);
+  await f.add(f.a);
+  const lib = new ComponentLibrary(f.userData, {gameDirectories:dirs});
+  const game = await lib.list(f.game);
+  assert.equal(game.packages.length, 1);
+  assert.equal(game.profile.dir, f.game);
+  assert.equal(game.cache, undefined);
+  assert.equal(dirs.mock.callCount(), 0);
+  assert.equal((await lib.list()).cache.packages.length, 1);
+  assert.equal(dirs.mock.callCount(), 1);
+});
+
+test('ray reconstruction rejects a renamed SR DLL and admits a matching RR package', async t => {
+  const f = fixture(t), add = file => f.library.importPackage({component:'dlss-rr', files:{'nvngx_dlssd.dll':file}});
+  await assert.rejects(add(f.a), /光线重建/);
+  const rr = path.join(f.source, 'rr.dll');
+  writePe(rr, {bitness:64, text:'nvngx_dlssd.pdb'});
+  const p = await add(rr);
+  assert.equal((await f.library.verify(p)).files[0].sha256, await digest(rr));
+  assert.equal(f.library.compatibility(p).ready, false);
+});
+
+test('legacy model migration skips unchanged files across restarts and repairs a changed snapshot', async t => {
+  const f = fixture(t);
+  const file = writeNr(path.join(f.source, 'legacy.dll'));
+  await journal.atomicJson(path.join(f.userData,'neural-models','index.json'), [{filePath:file}]);
+  const load = async () => {
+    const lib = new ComponentLibrary(f.userData);
+    const imports = t.mock.method(lib, 'importPackage');
+    await lib.init();
+    return {lib, count:imports.mock.callCount()};
+  };
+  const first = await load(), pkg = first.lib.catalog().packages[0];
+  assert.equal(first.count, 1);
+  const writes = t.mock.method(journal, 'atomicJson');
+  assert.equal((await load()).count, 0);
+  assert.equal(writes.mock.callCount(), 0);
+  writes.mock.restore();
+  const cached = path.join(first.lib.directory(pkg), 'nvngx_dlssnr.dll');
+  fs.writeFileSync(cached, 'bad snapshot');
+  const repaired = await load();
+  assert.equal(repaired.count, 1);
+  assert.equal(await digest(cached), pkg.files[0].sha256);
+  writeNr(file, '310.9.30.0', 120);
+  const changed = await load();
+  assert.equal(changed.count, 1);
+  assert.equal(changed.lib.catalog().packages.length, 2);
+  fs.writeFileSync(path.join(first.lib.root, 'seed.json'), '{');
+  const rebuilt = await load();
+  assert.equal(rebuilt.count, 1);
+  assert.equal(rebuilt.lib.catalog().packages.length, 2);
+});
 test('a known game on an offline volume protects cached packages on first startup', async t=>{
   const f=fixture(t),lib=new ComponentLibrary(f.userData,{gameDirectories:()=>[f.game]});
   const pkg=await lib.importPackage({component:'encore',files:{'rtx-encore.dll':f.a},archiveSha256:'b'.repeat(64)});
@@ -104,7 +158,7 @@ test('damaged release cache preserves installed packages and can be rebuilt by c
     assert.equal(recovered.ok, true);
     assert.deepEqual(recovered.errors, []);
     assert.ok(requests > before, 'damaged metadata never keeps a stale check throttle');
-    assert.equal(JSON.parse(fs.readFileSync(updater.cache, 'utf8')).sourcesVersion, 4);
+    assert.equal(JSON.parse(fs.readFileSync(updater.cache, 'utf8')).sourcesVersion, 6);
     assert.deepEqual(f.library.catalog(), catalog);
     assert.deepEqual(f.library.profile(f.game), profile);
     assert.deepEqual(fs.readFileSync(path.join(f.game, 'nvngx_dlss.dll')), fs.readFileSync(f.a));
@@ -343,7 +397,7 @@ test('update checks coalesce, survive restart and revalidate each repository ind
   const mirror = 'RankFTW/rhi-repo';
   const repoCount = new Set(Object.values(require('../src/core/component-definitions').PROVIDERS).map(p => p.repo)).size;
   const fetcher = async (url, {headers}) => {
-    const repo = new URL(url).pathname.slice('/repos/'.length, -'/releases'.length);
+    const repo = new URL(url).pathname.split('/').slice(2,4).join('/');
     calls.push(repo);
     if (phase !== 'first') assert.equal(headers['If-None-Match'], '"' + repo + '"');
     if (phase === 'offline' && repo === mirror) throw Error('offline');
@@ -351,7 +405,7 @@ test('update checks coalesce, survive restart and revalidate each repository ind
     const names = repo === mirror && phase !== 'changed' ? ['nvngx_dlssnr_1.zip', 'nvngx_dlss_1.zip'] : [];
     const assets = names.map((name, id) => ({id, name, size:1, digest:'sha256:' + 'a'.repeat(64),
       browser_download_url:`https://github.com/${repo}/releases/download/v1/${name}`}));
-    return Response.json(repo === modelRepo ? [] : [{id:1, tag_name:'v1', assets}], {headers:{etag:'"' + repo + '"'}});
+    return Response.json(repo === modelRepo || repo === 'crosire/reshade' ? [] : [{id:1, tag_name:'v1', assets}], {headers:{etag:'"' + repo + '"'}});
   };
   const updater = new ComponentUpdates(library, {fetcher});
   const [first, parallel] = await Promise.all([updater.check(), updater.check()]);
@@ -377,6 +431,61 @@ test('update checks coalesce, survive restart and revalidate each repository ind
   phase = 'changed';
   assert.deepEqual((await reopened.check()).candidates, []);
   assert.equal(calls.length, 4 * repoCount);
+});
+
+test('RR archives and official ReShade tags include older pages and survive a partial refresh', async t => {
+  const {library} = fixture(t);
+  const repo = 'RankFTW/rhi-repo', seen = [];
+  let failOlderPage = false;
+  function release(version) {
+    const tag = 'dlssd-' + version;
+    const names = ['nvngx_dlssd_' + version + '.zip','nvngx_dlss_1.zip','nvngx_dlssd_999.0.zip'];
+    return {id:tag,tag_name:tag,assets:names.map((name,id)=>({
+      id,name,size:100,digest:'sha256:' + 'b'.repeat(64),
+      browser_download_url:`https://github.com/${repo}/releases/download/${tag}/${name}`
+    }))};
+  }
+  const updater = new ComponentUpdates(library,{fetcher:async (url,{headers}) => {
+    const tags = url.includes('/crosire/reshade/tags?');
+    if (!tags && !url.includes('/' + repo + '/releases?')) return Response.json([]);
+    seen.push({url,etag:headers['If-None-Match']});
+    const nextPage = url.includes('&page=2');
+    if (nextPage && failOlderPage) return new Response(null,{status:503});
+    const rows = tags ? (nextPage ? [{name:'v0.10.0'},{name:'nightly'}] : [{name:'v6.8.0'}])
+      : [release(nextPage ? '310.0' : '310.9.16')];
+    return Response.json(rows,{headers:nextPage ? {} : {etag:'"first"',link:`<${url}&page=2>; rel="next"`}});
+  }});
+  await journal.atomicJson(updater.cache,{sourcesVersion:4,nextCheckAt:Date.now()+86400000,candidates:[],errors:[],etags:{[repo]:'"old"'}});
+  const first = await updater.check();
+  const history = (index,provider) => index.candidates.filter(c => c.provider === provider);
+  const rr = history(first,'rhi-rr'), tags = history(first,'reshade');
+  assert.deepEqual(rr.map(c => c.version),['310.9.16','310.0']);
+  assert.ok(rr.every(c => c.downloadable && c.component === 'dlss-rr' && !c.compatibility.ready));
+  assert.deepEqual(tags.map(c => c.version),['6.8.0','0.10.0']);
+  assert.ok(tags.every(c => c.releaseOnly && !c.downloadable && !c.sha256));
+  assert.equal(require('../src/core/project-links').projectUrl({componentSource:tags[1].releaseUrl}),tags[1].releaseUrl);
+  await assert.rejects(updater.download(tags[1].id),/下载记录无效/);
+  failOlderPage = true;
+  const partial = await updater.refreshReleases(updater.readIndex());
+  assert.ok(partial.errors.some(e => e.provider === 'rhi-rr'));
+  for (const provider of ['rhi-rr','reshade']) {
+    assert.deepEqual(history(partial,provider).map(c=>!!c.stale),[false,true]);
+  }
+  assert.equal(seen.length,8);
+  assert.ok(seen.every(call=>!call.etag),'an old first-page ETag cannot skip the second page');
+});
+
+test('during API cooldown ReShade reads public tags without admitting source archives', async t => {
+  const {library} = fixture(t);
+  const updater = new ComponentUpdates(library,{fetcher:async url => {
+    assert.equal(url,'https://github.com/crosire/reshade.git/info/refs?service=git-upload-pack');
+    const refs=['v6.7.1','v6.10.0','v6.7.1^{}','nightly'];
+    return new Response(refs.map(tag => '003e' + 'a'.repeat(40) + ' refs/tags/' + tag + '\n').join(''));
+  }});
+  await journal.atomicJson(updater.cache,{sourcesVersion:5,nextCheckAt:Date.now()+600000,candidates:[],errors:[{provider:'reshade',message:'GitHub 请求已限流'}]});
+  const result = await updater.check({published:true});
+  assert.deepEqual(result.candidates.map(c=>c.version),['6.10.0','6.7.1']);
+  assert.ok(result.candidates.every(c=>c.releaseOnly && !c.downloadable));
 });
 
 test('a manual check during an API cooldown reads the public stable release and retains verified history', async t => {
@@ -595,6 +704,28 @@ test('SmarterGamers uses standalone release assets and deduplicates them against
   assert.equal(downloads,1);
 });
 
+test('all stable model releases survive migration from the truncated index and pointer requests are bounded', async t => {
+  const f = fixture(t), bytes = Buffer.from('historical-model');
+  const releases = Array.from({length:17}, (_, i) => modelRelease('v' + (30 - i),
+    i === 16 ? [[modelFile, bytes]] : []));
+  let active = 0, peak = 0;
+  const updater = new ComponentUpdates(f.library, {fetcher:async (url, {headers}) => {
+    if (url.startsWith('https://raw.githubusercontent.com/')) {
+      peak = Math.max(peak, ++active);
+      try { await new Promise(resolve => setImmediate(resolve)); return new Response(lfsPointer(bytes)); }
+      finally { active--; }
+    }
+    if (!url.includes(modelRepo)) return Response.json([]);
+    assert.equal(headers['If-None-Match'], undefined);
+    return Response.json(releases);
+  }});
+  await journal.atomicJson(updater.cache, {sourcesVersion:5, candidates:[], errors:[], etags:{[modelRepo]:'"old"'}, nextCheckAt:Date.now()+600000});
+  const result = await updater.check();
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.candidates.map(c=>c.tag), releases.map(r=>r.tag_name));
+  assert.ok(peak >= 1 && peak <= 3);
+});
+
 test('invalid tagged metadata leaves only that tag stale and retries even when the release list is unchanged', async t => {
   const f=fixture(t), bytes=Buffer.from('model');
   const releases=[modelRelease('v4'),modelRelease('v3')];
@@ -684,42 +815,41 @@ test('cancel aborts a transfer without publishing a package or leaving partial f
  assert.equal(updater.busy,false);assert.equal(f.library.catalog().packages.length,0);assert.deepEqual(fs.readdirSync(path.join(f.library.root,'downloads')),[]);
 });
 
-test('pausing a large transfer preserves completed ranges for the next attempt', async t => {
-  const f = fixture(t), size = 8 * 1024 * 1024;
-  const updater = new ComponentUpdates(f.library, {fetcher:async(_url,{signal,headers}) => {
-    const start = Number(/bytes=(\d+)-/.exec(headers.Range)[1]);
-    return new Response(new ReadableStream({
-      start(controller) {
-        controller.enqueue(new Uint8Array(10));
-        signal.addEventListener('abort', () => controller.error(Error('aborted')), {once:true});
+for (const discard of [false, true]) {
+  test(discard ? 'discard cancellation removes retained ranges instead of pausing' :
+    'pausing a large transfer preserves completed ranges for the next attempt', async t => {
+    const f = fixture(t), size = 8 * 1024 * 1024, sha256 = 'a'.repeat(64), starts = [];
+    const updater = new ComponentUpdates(f.library, {fetcher:async (_url,{headers}) => {
+      const [,from,to] = /^bytes=(\d+)-(\d+)$/.exec(headers.Range);
+      const start = Number(from), end = Number(to);
+      starts.push(start);
+      // The downloader requests the remaining ranges only after closing the
+      // first range file. Trigger cancellation at that observable boundary.
+      if (start > 0) {
+        updater.cancel({discard});
+        throw Error('cancelled by test');
       }
-    }), {status:206, headers:{'Content-Range':`bytes ${start}-1048575/${size}`}});
-  }});
-  await journal.atomicJson(updater.cache,{candidates:[{id:'pause',provider:'mfg',component:'mfg-renodx',name:'renodx-mfgunlock.addon64',url:'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1/file',size,sha256:'a'.repeat(64),downloadable:true}],errors:[]});
-  setTimeout(() => updater.cancel(), 10);
-  const cancelled = await updater.download('pause');
-  assert.equal(cancelled.cancelled, true);
-  assert.match(cancelled.message, /保留进度/);
-  const parts = path.join(f.library.root, 'partial-downloads', 'a'.repeat(64));
-  assert.equal(fs.existsSync(parts), true);
-  assert.ok(fs.readdirSync(parts).length > 0);
-});
-
-test('discard cancellation removes retained ranges instead of pausing', async t => {
-  const f = fixture(t), size = 8 * 1024 * 1024;
-  const updater = new ComponentUpdates(f.library, {fetcher:async(_url,{signal,headers}) => {
-    const start = Number(/bytes=(\d+)-/.exec(headers.Range)[1]);
-    return new Response(new ReadableStream({start(controller) {
-      controller.enqueue(new Uint8Array(10));
-      signal.addEventListener('abort', () => controller.error(Error('aborted')), {once:true});
-    }}), {status:206, headers:{'Content-Range':`bytes ${start}-1048575/${size}`}});
-  }});
-  await journal.atomicJson(updater.cache,{candidates:[{id:'discard',provider:'mfg',component:'mfg-renodx',name:'renodx-mfgunlock.addon64',url:'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1/file',size,sha256:'b'.repeat(64),downloadable:true}],errors:[]});
-  setTimeout(() => updater.cancel({discard:true}), 10);
-  const cancelled = await updater.download('discard');
-  assert.equal(cancelled.cancelled, true);assert.equal(cancelled.discarded, true);
-  assert.equal(fs.existsSync(path.join(f.library.root, 'partial-downloads', 'b'.repeat(64))), false);
-});
+      return new Response(new Uint8Array(end - start + 1), {status:206,
+        headers:{'Content-Range':`bytes ${start}-${end}/${size}`}});
+    }});
+    await journal.atomicJson(updater.cache,{candidates:[{id:'pause',provider:'mfg',component:'mfg-renodx',
+      name:'renodx-mfgunlock.addon64',url:'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/download/1/file',
+      size,sha256,downloadable:true}],errors:[]});
+    const cancelled = await updater.download('pause');
+    assert.equal(cancelled.cancelled, true);
+    assert.equal(cancelled.discarded, discard);
+    const parts = path.join(f.library.root,'partial-downloads',sha256);
+    if (discard) {
+      assert.equal(fs.existsSync(parts), false);
+    } else {
+      assert.match(cancelled.message, /保留进度/);
+      assert.equal(fs.statSync(path.join(parts,'0-1048575.part')).size, 1024 * 1024);
+      starts.length = 0;
+      assert.equal((await updater.download('pause')).cancelled, true);
+      assert.ok(starts.length > 0 && starts.every(start => start >= 1024 * 1024));
+    }
+  });
+}
 
 test('selective idle cleanup preserves other components, recent versions and paused transfers', async t => {
   const f=fixture(t);

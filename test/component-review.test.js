@@ -22,6 +22,60 @@ function fixture(t) {
   const install = async () => { await backends.install(config); return { ok: true }; };
   return { root, game, payload, review, config, install, request: { kind: 'install' } };
 }
+test('nested component backups and version locks recognize slash-separated manifest paths', async t => {
+  const {game,review,config} = fixture(t);
+  const rel = 'OptiScaler/plugins/nvngx_dlss.dll';
+  const dll = path.join(game,rel);
+  writePe(dll,{bitness:64,version:[3,0,0,0]});
+  const manifest = core.beginManifest(game,config.exePath,'dxgi');
+  manifest.replaced.push({rel,oldVersion:'2.0.0.0',newVersion:'3.0.0.0'});
+  writePe(core.originalPath(game,manifest,rel),{bitness:64,version:[2,0,0,0]});
+  await core.saveActiveManifest(game,manifest);
+  const pinned = await review.setLock(game,true);
+  const record = review.read(game);
+  record.lock.files = Object.fromEntries(Object.entries(pinned.lock.files).map(([file,info]) => [file.split(path.sep).join('/'),info]));
+  await review.save(game,record);
+  const row = (await review.inventory(game)).rows.find(row => row.rel === path.relative(game,dll));
+  assert.equal(row.backup?.version,'2.0.0.0');
+  assert.equal(row.lockState,'match');
+  const {preview:plan} = await review.run(game,{kind:'enhanced'},async () => ({ok:true}));
+  assert.deepEqual(plan.conflicts,[]);
+});
+test('reviewing a large model yields the main thread and confirms the actual installed bytes', async t => {
+  const {game,payload,review} = fixture(t);
+  const name = 'nvngx_dlssnr.dll', source = path.join(payload,name), dest = path.join(game,name);
+  fs.appendFileSync(source, Buffer.alloc(4 * 1024 * 1024));
+  const expected = require('node:crypto').createHash('sha256').update(fs.readFileSync(source)).digest('hex');
+  const read = fs.readSync;
+  t.mock.method(fs, 'readSync', function(fd, buffer, offset, length, position) {
+    assert.ok(length <= 65536, 'large file reads must not block the review thread');
+    return read.call(this, fd, buffer, offset, length, position);
+  });
+  const copy = async () => { await preview.fs.promises.copyFile(source,dest); return {ok:true}; };
+  const request = {kind:'install'};
+  const {preview:plan} = await review.run(game,request,copy);
+  assert.equal(plan.rows.find(row => row.rel === name).after.sha256,expected);
+  assert.equal(fs.existsSync(dest),false);
+  await review.run(game,request,copy,plan.token);
+  assert.equal(review.read(game).receipts[name].sha256,expected);
+});
+test('a source changed during its streamed fingerprint requires a fresh review', async t => {
+  const {game,payload,review} = fixture(t);
+  const source = path.join(payload,'nvngx_dlssnr.dll'), dest = path.join(game,'nvngx_dlssnr.dll');
+  const open = fs.createReadStream;
+  let changed = false;
+  t.mock.method(fs,'createReadStream',function(file,options) {
+    if (!changed && file === source) {
+      changed = true;
+      fs.appendFileSync(source,'external change');
+    }
+    return open.call(this,file,options);
+  });
+  const copy = async () => { await preview.fs.promises.copyFile(source,dest); return {ok:true}; };
+  await assert.rejects(review.run(game,{kind:'install'},copy),{code:'errPreviewChanged'});
+  assert.equal(fs.existsSync(dest),false);
+  assert.ok((await review.run(game,{kind:'install'},copy)).preview);
+});
 test('inventory exposes architecture and deployment eligibility for individual runtime copies', async t => {
   const {game,review} = fixture(t);
   const nested=path.join('OptiScaler','plugins','nvngx_dlss.dll');

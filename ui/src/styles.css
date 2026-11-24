@@ -86,7 +86,7 @@ textarea {
 .addon-info .addon-tag.error { margin: 0 6px 0 0; padding: 2px 6px; }
 .form-stack { display: grid; gap: 14px; }
 .form-stack label { display: grid; gap: 6px; }
-.form-stack textarea { padding: 9px 12px; min-height: 96px; resize: vertical; color: var(--text); border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+.form-stack textarea { min-height: 96px; resize: vertical; }
 .library-page { container: library-page / inline-size; }
 @media (max-width: 1100px) {
   .addon-entry { flex-wrap: wrap; }
@@ -560,15 +560,10 @@ small {
 .recent-list button > span:last-child { display:grid; gap:2px; min-width:0; }
 .recent-list strong { overflow:hidden; text-overflow:ellipsis; font-weight:600; }
 .recent-list small { font-size:12px; font-variant-numeric:tabular-nums; }
-.recent-list small,.about-brand small {color:var(--muted);}
+.recent-list small {color:var(--muted);}
 .home-activity {margin-top:18px;}
 .home-activity pre,.release-notes {white-space:pre-wrap;overflow-wrap:anywhere;}
 .home-activity pre {max-height:220px; padding:12px; overflow:auto; border-radius:var(--radius-lg); background:var(--surface);font-size:12px;}
-.about-brand {display:flex; align-items:center;gap:14px;}
-.about-brand img {width:54px;height:54px;object-fit:contain;}
-.about-brand h2 {margin:0;}
-.about-overview { margin-bottom: 16px; padding: 20px; border: 1px solid var(--panel-edge); border-radius: var(--radius-lg); }
-.about-overview .inline-actions { margin-top: 16px; }
 .release-notes {padding:12px;}
 .addon-tag {display:inline-block; padding:2px 6px; border:1px solid var(--border); border-radius:4px; color:var(--muted);font-size:12px;overflow-wrap:anywhere;}
 .game-row {
@@ -1115,7 +1110,6 @@ small {
 }
 .setting-label > span { font-weight: 600; }
 .setting-label > small { line-height: 1.55; }
-.settings-page > fieldset > h2:first-child { margin-top: 0; }
 .appearance-settings .setting-row:has(.select-trigger) {
   display: grid;
   grid-template-columns: max-content minmax(0, 180px);
@@ -1163,7 +1157,7 @@ small {
 }
 .select-trigger:hover:enabled {
   background: var(--hover);
-  border-color: #737373;
+  border-color: var(--control-border);
 }
 .select-trigger[aria-expanded="true"] {
   border-color: var(--accent);
@@ -1172,7 +1166,7 @@ small {
   outline: none;
 }
 .select-trigger:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--muted);
   outline-offset: 2px;
 }
 .select-trigger:disabled {
@@ -2221,33 +2215,33 @@ button:active:enabled {
   transform: translateY(1px);
 }
 button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--muted);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: none;
 }
 /* Action buttons share the history toolbar's face and feedback. Composite controls
    (navigation, fields and selectable rows) draw their own surfaces. */
 button:where(:not(
-  [role="tab"], [role="combobox"], [role="radio"], [role="switch"],
+  [role="tab"], [role="combobox"], [role="radio"], [role="switch"], [role="menuitem"], .action-menu-items button,
   .window-controls button, .nav-item, .game-row, .card-main, .card-api,
   .search-box button, .recent-list button, .toast-close
 )) {
-  background: var(--surface);
-  border-color: var(--border);
+  background: var(--button-bg, var(--surface));
+  border-color: var(--button-border, var(--border));
   border-radius: var(--radius);
   color: var(--button-text, var(--text));
   box-shadow: inset 0 1px 0 var(--rim), var(--command-shadow);
 
   @media (hover: hover) {
     &:enabled:hover {
-      background-color: color-mix(in srgb, var(--button-tint, var(--accent)) 12%, var(--surface));
+      background-color: color-mix(in srgb, var(--button-tint, var(--accent)) 12%, var(--button-bg, var(--surface)));
       border-color: color-mix(in srgb, var(--button-tint, var(--accent)) 55%, var(--control-border));
       color: var(--button-text, var(--accent-text));
       box-shadow: inset 0 1px 0 var(--rim), 0 2px 5px var(--inset-edge);
     }
   }
   &:enabled:active {
-    background-color: color-mix(in srgb, var(--button-tint, var(--accent)) 18%, var(--surface));
+    background-color: color-mix(in srgb, var(--button-tint, var(--accent)) 18%, var(--button-bg, var(--surface)));
     box-shadow: inset 0 1px 3px var(--inset-edge);
   }
   &:disabled { box-shadow: none; }
@@ -2258,6 +2252,12 @@ button:where(:not(
     &:enabled:hover .lucide-copy rect { transform: translate(1px, 1px); }
     &:enabled:hover .lucide-refresh-cw { transform: rotate(28deg); }
   }
+}
+button.primary { font-weight: 600; }
+button.primary:enabled {
+  --button-bg: var(--selected);
+  --button-border: var(--accent);
+  --button-text: var(--accent-text);
 }
 button.danger {
   --button-text: var(--danger-text);
@@ -2283,16 +2283,39 @@ textarea {
     box-shadow var(--dur-fast) linear,
     background-color var(--dur-fast) linear;
 }
-input:not([type="checkbox"]):not([type="radio"]):hover:enabled,
+input:not([type="checkbox"]):not([type="radio"]):where(:not(.text-field)):hover:enabled,
 select:hover:enabled {
   border-color: var(--control-border);
 }
-input:not([type="checkbox"]):not([type="radio"]):where(:not(.search-box input)):focus-visible,
+input:not([type="checkbox"]):not([type="radio"]):where(:not(.text-field, .search-box input)):focus-visible,
 select:focus-visible,
-textarea:focus-visible {
+textarea:where(:not(.text-field)):focus-visible {
   border-color: var(--accent);
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+.text-field {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.text-field::placeholder { color: var(--muted); }
+.text-field:where(:enabled:hover:not(:focus, [aria-invalid="true"])) { border-color: var(--control-border); }
+.text-field:focus {
+  border-color: var(--muted);
+  outline: 2px solid var(--muted);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+.text-field[aria-invalid="true"] { border-color: var(--danger-text); outline-color: var(--danger-text); }
+.text-field:disabled { opacity: .55; }
+@media (forced-colors: active) {
+  .text-field:focus, button:focus-visible { outline-color: Highlight; }
 }
 
 input[type="checkbox"],
@@ -2474,13 +2497,11 @@ input[type="radio"]:disabled {
 
 /* Elevate groups once. Rows and nested controls stay on their parent surface. */
 .home-recents,
-.about-overview,
 .addon-entry,
 .module-card,
 .history-list,
 .settings-table,
 .page-scroll > .advanced,
-.settings-page > fieldset > .advanced,
 .page-scroll > .table-wrap {
   background: var(--panel-fill), var(--surface);
   border-color: var(--panel-edge);
@@ -2719,12 +2740,6 @@ input[type="radio"]:disabled {
 :is(.game-detail .apply-bar, .profile-game-actions) .primary, .modal footer .primary {
   min-height: 32px;
 }
-:is(.game-detail .apply-bar, .profile-game-actions) .primary:enabled {
-  color: var(--accent-text);
-  background: var(--selected);
-  border-color: var(--accent);
-  font-weight: 600;
-}
 .library-page td button {
   min-height: 24px;
   padding: 2px 8px;
@@ -2746,9 +2761,15 @@ input[type="radio"]:disabled {
   background: var(--surface);
   box-shadow: var(--command-shadow);
 }
+.section-toolbar .action-menu-items {
+  inset-block-start: calc(100% + 6px);
+  inset-block-end: auto;
+}
 .action-menu-items button {
   justify-content: flex-start;
+  color: var(--button-text, var(--text));
   border-color: transparent;
   box-shadow: none;
   text-align: start;
 }
+.action-menu-items button:focus-visible { outline-offset: -2px; }

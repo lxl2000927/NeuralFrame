@@ -89,6 +89,40 @@ test('optional Intel runtimes and NGX core do not identify which API a silent ex
   }
 });
 
+test('imported XeSS, XeLL and NGX runtimes cannot supply the executable renderer', async t => {
+  const dir = game(t,'scan-imported-sdk-');
+  const pe = require('../src/core/pe');
+  const {writePe} = require('./fixtures/pe');
+  const exe = silentPe(path.join(dir,'Game.exe'));
+  const getImports = pe.getImports;
+  let imported;
+  t.mock.method(pe,'getImports',file => file === exe ? [imported] : getImports(file));
+  for (imported of ['libxess.dll','libxess_fg.dll','libxell.dll','_nvngx.dll']) {
+    const file = writePe(path.join(dir,imported), {text:'D3D12CreateDevice'});
+    assert.equal((await scanGame(dir)).chosen?.api ?? null, null, imported);
+    fs.unlinkSync(file);
+  }
+  imported = 'engine_renderer.dll';
+  writePe(path.join(dir,imported), {text:'D3D11CreateDevice'});
+  assert.equal((await scanGame(dir)).chosen.apiLabel,'DirectX 11');
+});
+
+test('import lookup does not enumerate the same directory for every missing sibling', async t => {
+  const dir = game(t,'scan-import-list-');
+  const pe = require('../src/core/pe');
+  const exe = silentPe(path.join(dir,'Game.exe'));
+  const getImports = pe.getImports, readdir = fs.readdirSync;
+  const imports = Array.from({length:65}, (_,i) => 'optional-' + i + '.dll');
+  let listings = 0;
+  t.mock.method(pe,'getImports',file => file === exe ? imports : getImports(file));
+  t.mock.method(fs,'readdirSync',function(file,...args) {
+    if (file === dir) listings++;
+    return readdir.call(this,file,...args);
+  });
+  assert.equal((await scanGame(dir)).chosen,null);
+  assert.ok(listings < 15, `Listed the EXE directory ${listings} times`);
+});
+
 test('unloadable engine modules and runtime lookalikes do not identify a game or grant it an API', async t => {
   const dir = game(t,'scan-invalid-engine-');
   const {writePe} = require('./fixtures/pe');
@@ -176,6 +210,32 @@ test('a hidden engine executable is offered in the picker beside the detected on
     assert.equal(exe.api, null);
     assert.equal(exe.apiLabel, null);
   }
+});
+
+test('companion artbooks, SDK installers, browser helpers and mod managers do not become install targets', async t => {
+  const dir = game(t,'scan-companions-');
+  const {writePe} = require('./fixtures/pe');
+  const target = writePe(path.join(dir,'Game','Game.exe'), {text:'D3D12CreateDevice'});
+  for (const rel of ['Engine/Binaries/Win64/EpicWebHelper.exe', 'Tools/windowsdesktop-runtime-8.0.7-win-x64.exe',
+    'Tools/YAFSML.exe', 'Tools/ERModsManager.exe', 'Tools/Smithbox.exe', 'ArtbookOST/Digital Artbook.exe']) {
+    writePe(path.join(dir,rel), {text:'D3D11CreateDevice'});
+  }
+  assert.deepEqual((await scanGame(dir)).exeCandidates.map(exe => exe.path), [target]);
+});
+
+test('a silent sibling tool cannot borrow a nested game renderer; explicit and evidenced builds remain available', async t => {
+  const dir = game(t,'scan-disjoint-mods-');
+  const {writePe} = require('./fixtures/pe');
+  const target = writePe(path.join(dir,'Game','Game.exe'),{text:'D3D12CreateDevice'});
+  const launcher = silentPe(path.join(dir,'PlayGame.exe'));
+  const tool = silentPe(path.join(dir,'Community Mods','Editor.exe'));
+  const alternate = silentPe(path.join(dir,'Legacy','Game.exe'));
+  const hiddenEngine = silentPe(path.join(dir,'Project','Engine-Win64-Shipping.exe'));
+  const ownsFeature = silentPe(path.join(dir,'Alternate','HiddenEngine.exe'));
+  writePe(path.join(path.dirname(ownsFeature),'nvngx_dlss.dll'));
+  const scan = await scanGame(dir);
+  assert.deepEqual(new Set(scan.exeCandidates.map(exe => exe.path)), new Set([target,launcher,alternate,hiddenEngine,ownsFeature]));
+  assert.equal((await scanGame(dir,tool)).chosen?.path, tool);
 });
 
 test('a folder of tools with no game evidence offers nothing', async (t) => {

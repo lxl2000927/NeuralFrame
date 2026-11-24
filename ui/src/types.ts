@@ -88,9 +88,13 @@ export type EngineInfo = {
 export type MfgAdvanced = {
   model?: number; structure?: number; tone?: number; characterMask?: boolean; character?: number; diagnosticLogging?: boolean;
 };
-export type GraphicsRouteSettings = {neural?:boolean; multiplier?:number; sceneCut?:boolean; engine?:"DLSS"|"XeSS"};
+export type NativeRuntimeKind = "sr" | "rr" | "fg" | "streamline";
+export type GraphicsRouteSettings = {
+  neural?:boolean; multiplier?:number; sceneCut?:boolean; engine?:"DLSS"|"XeSS";
+  xeMode?:"auto"|"compatibility"; upgradeHost?:boolean; nativeRuntimes?:NativeRuntimeKind[];
+};
 export type GraphicsRouteStatus = Omit<GraphicsRouteSettings,"multiplier"|"engine"> & {
-  route:string; exePath:string; filesPresent:boolean; error?:string; providerVersion?:string;
+  route:string; exePath:string; filesPresent:boolean; error?:string; providerVersion?:string; driverDefault?:boolean;
   multiplier?:number|null; enabled?:boolean|null; dynamic?:boolean|null; engine?:"DLSS"|"XeSS"|"FSR FG";
 };
 export type Status = {
@@ -179,10 +183,14 @@ export type GameExecutable = {
   hasXeMfgDlssSrDx12?: boolean; hasXeMfgDlssSrVk?: boolean; hasXeMfgDlssFgDx12?: boolean;
   hasXeMfgDlssRrDx12?: boolean; hasXeMfgDlssRrVk?: boolean;
   xeMfgOptiHost?: "dx12"|"dx12-vulkan"|null;
+  xeMfgHostCurrent?:boolean;
   optiFgHost?:boolean; hasOptiFgDx12Upscaler?:boolean; optiFgInputs?:string[];
   hasOptiScalerConfig?:boolean;
   hasNativeFg?: boolean;
   hasNativeDlssFg?: boolean;
+  hasGameStreamlineFg?: boolean;
+  steamMiles?: boolean;
+  sm86NativeKinds?: NativeRuntimeKind[];
   hasAnrAddonHost?: boolean;
   classicMfgIssue?: string | null;
   emulator?: { name: string; system?: string; hint?: string }; installIssue?: string;
@@ -278,6 +286,9 @@ export type Preview = {
   antiCheat?: { components: string[] };
   externalSteps?: { file: string; args: string[] }[];
 };
+export type ResetGame = {dir:string; name:string; files?:number; restored?:boolean; error?:string; warning?:string};
+export type ResetProgress = {dir:string; index:number; total:number};
+export type ResetResult = Result & {games?:ResetGame[]; removedPackages?:number; removedBytes?:number};
 export type Result = {
   ok: boolean;
   message?: string;
@@ -497,6 +508,7 @@ export interface Lab {
   restoreGame(dir: string, token?: string): Promise<Result>;
   restoreStatus(dir: string): Promise<{ canRestore: boolean }>;
   libraryComponents(dir?: string): Promise<Library>;
+  librarySelection(dir: string): Promise<Result & {selected?: Record<string,string>}>;
   libraryCheck(manual?:boolean): Promise<Updates & Result>;
   libraryDownload(id: string, source?: DownloadSourceOptions | string): Promise<Result>;
   libraryCancel(options?:{discard?:boolean}): Promise<unknown>;
@@ -581,6 +593,9 @@ export interface Lab {
   pathForFile(file: File): string | null;
   gameMenu(dir: string, options?: unknown): Promise<unknown>;
   reset(): Promise<boolean>;
+  previewResetDeployments(): Promise<Result & {token?:string; games?:ResetGame[]}>;
+  resetWithCache(token?:string): Promise<ResetResult>;
+  onResetProgress(fn:(progress: ResetProgress) => void): () => void;
   setSkin(skin: string): Promise<unknown>;
   setRail(rail: string): Promise<unknown>;
 }
@@ -617,7 +632,7 @@ export type HardwareProfile = {
   description?: string;
 };
 export type HardwareProfileSource = "selected" | "manifest" | "default" | "detected" | "blackwell-mobile" | "low-vram" | "fallback";
-export type HardwareInfo = { cpu: string; cpuCores: number; ramGB: number; os: string; gpu: { name: string; driver: string; detected?: boolean; architecture?: {sm?: string | null}; vramTotalMB: number | null; vramUsedMB: number | null; powerDefaultW: number | null; powerMaxW: number | null }; display?: { resolution?: string; refreshRateHz?: number } | null };
+export type HardwareInfo = { cpu: string; cpuCores: number; ramGB: number; os: string; gpu: { name: string; driver: string; detected?: boolean; nvidiaPresent?: boolean | null; architecture?: {sm?: string | null}; vramTotalMB: number | null; vramUsedMB: number | null; powerDefaultW: number | null; powerMaxW: number | null }; display?: { resolution?: string; refreshRateHz?: number } | null };
 export type HardwareResult = Result & { hardwareProfile: string; hardwareProfileSource?: HardwareProfileSource; hardwareProfiles: Record<string, HardwareProfile>; hardware: HardwareInfo };
 export type RuntimeStack = { id: string; name: string; dlssVersion: string; dlssgVersion?: string; streamlineVersion: string; feederVersion: string };
 

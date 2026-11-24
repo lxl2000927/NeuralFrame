@@ -9,6 +9,9 @@ const VERSION = engines.recommended('encore').version, CONFIG = 'rtx-encore.json
 const FG_FILES = ['nvngx_dlssg.dll','sl.interposer.dll','sl.common.dll','sl.dlss_g.dll','sl.reflex.dll','sl.pcl.dll'];
 const PROXIES = ['version.dll','dinput8.dll','winmm.dll','dxgi.dll'];
 const fail = message => Object.assign(new Error(message), {code:'errEncore'});
+function assertModelVersion(version) {
+  if (!/^310\.(?:8\.0|9\.16)(?:\.0)?$/.test(version || '')) throw fail('当前 Encore 适配支持 310.8.0 / 310.9.16 神经模型。');
+}
 const key = value => path.resolve(value).toLowerCase();
 const digest = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const statusHashes = new Map();
@@ -17,7 +20,9 @@ function matchesReceipt(file, sha256) {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || !/^[a-f0-9]{64}$/.test(sha256)) return false;
     if (previewActive()) return digest(file) === sha256;
-    const stamp = [stat.dev,stat.ino,stat.size,stat.mtimeMs,stat.ctimeMs].join(':');
+    // A version switch can preserve the old file size and Windows timestamps.
+    // A new deployment receipt must verify its own bytes before reusing a status result.
+    const stamp = [sha256,stat.dev,stat.ino,stat.size,stat.mtimeMs,stat.ctimeMs].join(':');
     let cached = statusHashes.get(file);
     if (!cached || cached.stamp !== stamp) {
       cached = {stamp,sha256:digest(file)};
@@ -188,7 +193,7 @@ async function install(options, log = () => {}) {
   if (settings.upscaling === 'dlss') items.push({...sourceFile(payloadDir,'sr-modern','nvngx_dlss.dll'),name:'nvngx_dlss.dll'});
   if (settings.neuralMode !== 'off') {
     if (!model?.filePath || !model.sha256 || digest(model.filePath) !== model.sha256) throw fail('Encore 神经模型未就绪或文件已变化，请重新预览。');
-    if (!/^310\.(?:8\.0|9\.16)(?:\.0)?$/.test(model.version || '')) throw fail('当前 Encore 适配支持 310.8.0 / 310.9.16 神经模型。');
+    assertModelVersion(model.version);
     items.push({source:model.filePath,sha256:model.sha256,name:'nvngx_dlssnr.dll'});
   }
   for (const item of items) check(full(item.name));
@@ -236,4 +241,4 @@ function checkPreview(gameDir, rows, kind) {
       throw fail('Encore 配套组件由安装路线统一管理，请通过画质与补帧页修改：'+row.rel);
   }
 }
-module.exports = {VERSION,CONFIG,FG_FILES,PROXIES,sourceFile,assertTarget,assertOwnedFiles,installedEngine,inspect,install,checkPreview};
+module.exports = {VERSION,CONFIG,FG_FILES,PROXIES,sourceFile,assertTarget,assertModelVersion,assertOwnedFiles,installedEngine,inspect,install,checkPreview};

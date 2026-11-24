@@ -454,6 +454,8 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
       mode = 'dynamic'; effective = '动态倍率，待游戏内验证';
     } else if (hostControlsFrames) {
       mode = 'host'; effective = '由 OptiScaler 游戏内菜单控制';
+    } else if (graphicsRoute.driverDefault) {
+      mode = 'follow'; effective = '跟随驱动默认';
     }
     mfgStatus.currentConfig = {installed:graphicsRoute.filesPresent,backend:graphicsRoute.route,
       mode,multiplier:/^x[2-6]$/.test(mode) ? graphicsRoute.multiplier : null};
@@ -652,13 +654,18 @@ async function applyCombinedStages(gameDir, config, onLog) {
     const settings = {...current.settings,...config.encore,
       ...(neuralMode !== undefined ? {neuralMode} : {}), ...(mfgMode !== undefined ? {mfgMode} : {}),
       ...(config.neuralModelId ? {neuralModelId} : {})};
-    let model;
+    let model, modelDownload;
     if (settings.neuralMode !== 'off') {
       require('./install-guards').assertNeuralGpu(hardware.gpu.nvidiaPresent);
       const available = neuralModels.listNeuralModels({payloadDir:effectivePayloadDir,userDataDir,gpuName,hardwareProfile:effectiveProfile});
       model = neuralModels.findLocalModel(available,settings.neuralModelId,config.neuralModelSha256);
-      if (!model && settings.neuralModelId !== '310.8.SF-v2') throw Object.assign(new Error('请先在模型库下载或导入所选神经渲染模型。'),{code:'errModelNotOnDisk'});
+      if (!model && settings.neuralModelId !== '310.8.SF-v2') {
+        modelDownload = neuralModels.modelDownloadFor(settings.neuralModelId,config.neuralModelSha256,gpuName);
+        if (!modelDownload || !config.requirePayload) throw Object.assign(new Error('请先在模型库下载或导入所选神经渲染模型。'),{code:'errModelNotOnDisk'});
+        encore.assertModelVersion(modelDownload.version);
+      }
       if (model) {
+        encore.assertModelVersion(model.version);
         const inspected = neuralModels.inspectNeuralModelBinary(model.filePath,{fresh:true});
         const compatible = neuralModels.evaluateModelGpuCompatibility(inspected,gpuName);
         if (!inspected.valid || inspected.sha256 !== model.sha256 || !compatible.compatible)
@@ -667,7 +674,7 @@ async function applyCombinedStages(gameDir, config, onLog) {
     }
     if (config.requirePayload) await config.requirePayload({kind:'enhanced',route:'encore',
       reuseProxy:current.installed && config.encorePackageId === undefined,
-      config:{...config,neuralMode:settings.neuralMode,encore:settings},customModel:!!model,target:scan.chosen,scan});
+      config:{...config,neuralMode:settings.neuralMode,encore:settings},customModel:!!model,modelDownload,target:scan.chosen,scan});
     if (settings.neuralMode !== 'off' && !model) throw Object.assign(new Error('请先准备所选神经渲染模型。'),{code:'errModelNotOnDisk'});
     await backends.install({gameDir,exePath,api:scan.chosen.api,apiLabel:scan.chosen.apiLabel,bitness:scan.chosen.bitness,
       route:'encore',payloadDir:effectivePayloadDir,encoreSettings:settings,model,gpuName,userDataDir,
@@ -725,14 +732,14 @@ async function applyCombinedStages(gameDir, config, onLog) {
     const localModels = neuralMode && neuralMode !== 'off' && checkLocalModel
       ? neuralModels.listNeuralModels({payloadDir:effectivePayloadDir,userDataDir:effectiveUserDataDir,gpuName,hardwareProfile:effectiveProfile}) : [];
     const customModel = Boolean(neuralModels.findLocalModel(localModels, neuralModelId, config.neuralModelSha256));
-    const release = localModels.find(model => model.id === neuralModelId && model.downloadId);
-    if (release && !customModel) {
-      throw Object.assign(new Error(`请先在模型库中将 ${release.version} 下载入库。`), {code:'errModelNotOnDisk'});
-    }
+    const modelDownload = !customModel && localModels.length
+      ? neuralModels.modelDownloadFor(neuralModelId,config.neuralModelSha256,gpuName) : null;
+    if (localModels.length && !customModel && !modelDownload && neuralModelId !== '310.8.SF-v2')
+      throw Object.assign(new Error('请先在模型库导入所选神经渲染模型。'),{code:'errModelNotOnDisk'});
     const isOpti = mfgBackend === 'mfg-unlocker-asi' || (!mfgBackend && targetManifest?.route === 'optiscaler');
     await config.requirePayload({kind:'enhanced',config:{...config,neuralModelId,hardwareProfile:effectiveProfile,runtimeStack:effectiveRuntimeStack},
       route:neuralMode && neuralMode!=='off' ? (retainedConsumer || (needsFullFeeder?'feeder':'native')) : (isOpti?'optiscaler':'native'),
-      mfgRoute:isOpti?'optiscaler':'native',target,scan,customModel});
+      mfgRoute:isOpti?'optiscaler':'native',target,scan,customModel,modelDownload});
   }
   let neuralResult = null;
   let mfgResult = null;

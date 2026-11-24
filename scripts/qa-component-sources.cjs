@@ -36,7 +36,7 @@ const snapshot={root:'QA',warnings:[],definitions:DEFINITIONS,packages:[],
    if(id==='mfg-universal')await expect(drawer.locator('.component-detail-purpose')).toContainText(/AMD、Intel 和 NVIDIA.*DLSS-G.*需要兼容的 NVIDIA/);
    if(id==='xemfg-intel'){
     await expect(drawer.locator('.component-detail-purpose')).toContainText('Intel XeFG 帧生成与 XeLL 低延迟运行库');
-    await expect(drawer.getByText(/独立 XeMFG 路线使用 Intel XeSS SDK 3\.0\.2 与 MFG Unlocker 1\.7\.1/)).toBeVisible();
+    await expect(drawer.getByText(/独立 XeMFG 路线使用 Intel XeSS SDK 3\.0\.2 与 MFG Unlocker 1\.7\.2/)).toBeVisible();
     await drawer.locator('.component-source-detail').getByRole('button',{name:source,exact:true}).click();
     assert.equal(await p.evaluate(()=>window.qa.audit().projectLink.componentSource),'https://github.com/intel/xess/releases/tag/v3.0.2');
    }
@@ -69,7 +69,7 @@ const snapshot={root:'QA',warnings:[],definitions:DEFINITIONS,packages:[],
   await catalog.locator('[data-version-id="runtime:xemfg-intel"]').locator('.component-status').click();
   const drawer=p.locator('.component-drawer');
   await expect(drawer.getByRole('heading',{name:'Intel XeSS Frame Generation and XeLL',exact:true})).toBeVisible();
-  await expect(drawer.getByText(/Standalone XeMFG pairs Intel XeSS SDK 3\.0\.2 with MFG Unlocker 1\.7\.1/)).toBeVisible();
+  await expect(drawer.getByText(/Standalone XeMFG pairs Intel XeSS SDK 3\.0\.2 with MFG Unlocker 1\.7\.2/)).toBeVisible();
   await expect(drawer.locator('.component-project-evidence')).not.toContainText(/[\u4e00-\u9fff]/);
   if(output)await drawer.screenshot({path:path.join(output,'xemfg-intel-library-en.png'),animations:'disabled'});
   await p.keyboard.press('Escape');
@@ -82,7 +82,7 @@ const snapshot={root:'QA',warnings:[],definitions:DEFINITIONS,packages:[],
   await p.getByRole('radio',{name:/Standalone XeMFG/}).click();
   await p.getByRole('button',{name:'Preview frame generation settings',exact:true}).click();
   const modal=p.getByRole('dialog');await expect(modal.getByRole('heading',{name:'Prepare components'})).toBeVisible();
-  await expect(modal.getByRole('listitem').filter({hasText:'MFG Unlocker 1.7.1'})).toBeVisible();
+  await expect(modal.getByRole('listitem').filter({hasText:'MFG Unlocker 1.7.2'})).toBeVisible();
   await expect(modal.getByRole('listitem').filter({hasText:'Intel XeSS Frame Generation and XeLL'})).toBeVisible();
   await modal.getByRole('button',{name:'Cancel',exact:true}).click();
   assert.deepEqual(errors,[]);

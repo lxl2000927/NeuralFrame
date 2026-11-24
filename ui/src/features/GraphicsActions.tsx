@@ -3,17 +3,16 @@ import { Ellipsis, Undo2 } from "lucide-react";
 import type { Draft, Status } from "../types";
 import type { applyPatch } from "../domain";
 import { t } from "../i18n";
+import { moveMenuFocus } from "../menuFocus";
 
 export function ActionMenu({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
-  const initialFocus = useRef<"first" | "last" | null>(null);
-  const enabledItems = () => Array.from(panel.current?.querySelectorAll<HTMLButtonElement>("button:enabled") ?? []);
+  const initialFocus = useRef<"Home" | "End">("Home");
   useLayoutEffect(() => {
-    if (open && initialFocus.current) enabledItems().at(initialFocus.current === "last" ? -1 : 0)?.focus();
-    initialFocus.current = null;
+    if (open) moveMenuFocus(panel.current, initialFocus.current);
   }, [open]);
   useEffect(() => {
     if (!open) return;
@@ -27,26 +26,28 @@ export function ActionMenu({ children }: { children: ReactNode }) {
     if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setOpen(false);
   }} onKeyDown={e => {
     if (open && e.key === "Escape") {
+      e.preventDefault();
       e.stopPropagation();
       trigger.current?.focus();
       setOpen(false);
       return;
     }
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    e.preventDefault();
-    const down = e.key === "ArrowDown";
-    if (!open) {
-      initialFocus.current = down ? "first" : "last";
-      setOpen(true);
+    if (open && e.key === "Tab") {
+      trigger.current?.focus();
+      setOpen(false);
       return;
     }
-    const items = enabledItems();
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
-    if (items.length) items.at(index < 0 ? (down ? 0 : -1) : (index + (down ? 1 : -1)) % items.length)?.focus();
+    if (open) {
+      if (moveMenuFocus(panel.current, e.key)) e.preventDefault();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      initialFocus.current = e.key === "ArrowUp" ? "End" : "Home";
+      setOpen(true);
+    }
   }}>
     <button ref={trigger} type="button" className="icon-button" aria-label={t("更多操作")} title={t("更多操作")} aria-expanded={open}
-      onClick={e => {
-        initialFocus.current = !open && e.detail === 0 ? "first" : null;
+      onClick={() => {
+        initialFocus.current = "Home";
         setOpen(!open);
       }}><Ellipsis size={17} /></button>
     {open && <div ref={panel} className="action-menu-items" onPointerDownCapture={e => {

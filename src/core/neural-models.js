@@ -448,6 +448,14 @@ function inspectNeuralModelBinary(filePath, { fresh = false } = {}) {
 }
 
 // 评估模型与当前 GPU 及所选硬件档位的兼容性状态，返回明确的徽章与解释
+function modelDownloadFor(id, expectedSha256, gpuName) {
+  const model = MODEL_DATABASE.find(entry => entry.id === normalizeModelId(id) && entry.downloadId);
+  if (!model || (expectedSha256 && expectedSha256 !== model.sha256)) return null;
+  const gpu = evaluateModelGpuCompatibility(model, gpuName);
+  if (!gpu.compatible) throw Object.assign(new Error(gpu.reason), {code:'errModelGpuIncompatible'});
+  return model;
+}
+
 function evaluateModelGpuCompatibility(modelOrInspection, gpuName = '') {
   const gpu = detectGpuArchitecture(gpuName);
   const archs = Array.isArray(modelOrInspection?.architectures) ? modelOrInspection.architectures : [];
@@ -1223,6 +1231,7 @@ module.exports = {
   identifyNgxBuffer,
   inspectNeuralModelBinary,
   evaluateModelGpuCompatibility,
+  modelDownloadFor,
   listNeuralModels,
   importNeuralModel,
   parseNeuralRuntimeLogs,

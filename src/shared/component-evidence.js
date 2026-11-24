@@ -8,6 +8,9 @@ const SOURCES = {
   renodx190: { label: 'RenoDX MFG 1.9.0 版本说明', url: 'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/blob/1.9.0/docs/releases/1.9.0.md' },
   renodx155: { label: 'RenoDX MFG 1.5.5 版本说明', url: 'https://github.com/mavismmg/MFGAdaUnlock-RenoDx/blob/1.5.5/docs/releases/1.5.5.md' },
   universal171: { label: 'MFG Unlocker 1.7.1 项目说明', url: 'https://github.com/dashdogy/MFG-Unlocker/blob/v1.7.1/README.md' },
+  universal172: {label:'MFG Unlocker 1.7.2',url:'https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.7.2'},
+  xemfg172: {label:'XeMFG 1.7.2',url:'https://github.com/dashdogy/MFG-Unlocker/blob/v1.7.2/docs/xemfg.md'},
+  delta442: {label:'RTX-FG-Manager 4.3.42',url:'https://github.com/pandaligx/RTX-FG-Manager/releases/tag/v4.3.42'},
   xemfg171: { label: 'MFG Unlocker 1.7.1 XeMFG 输入与设置', url: 'https://github.com/dashdogy/MFG-Unlocker/blob/v1.7.1/docs/xemfg.md' },
   intel302: { label: 'Intel XeSS SDK 3.0.2 发行版', url: 'https://github.com/intel/xess/releases/tag/v3.0.2' },
   universal170: { label: 'MFG Unlocker 1.7.0 项目说明', url: 'https://github.com/dashdogy/MFG-Unlocker/blob/v1.7.0/README.md' },
@@ -49,6 +52,11 @@ add('mfg-renodx', ['1.5.5'], '已有指定环境的功能测试',
 
 const native50 = record('RTX 50', '原生多帧生成 · 菜单控制', 'RTX 50 已原生支持 DLSS 多帧生成；项目不修改 NVIDIA 的帧生成代码，只提供相关菜单控制。');
 const nativeIntegration = record('DLSS 多帧生成', '需要游戏原生集成', '需要游戏已有 Streamline DLSS 帧生成集成；可用倍率还取决于显卡、运行库及驱动设置，菜单出现不代表游戏已生效。');
+add('mfg-universal',['1.7.2'],'已整理项目支持说明',
+  '固定倍率 XeMFG 可复用 RTX 游戏的原生帧生成开关。',[
+    native50, nativeIntegration,
+    record('XeMFG 接入方式','DX12 · 原生 Streamline 帧生成','RTX 20–50 可在游戏里启停固定倍率 XeMFG，也可选择交换链兼容模式。'),
+  ],['universal172','xemfg172'],'2026-11-23');
 add('mfg-universal', ['1.7.1'], '已整理项目支持说明',
   '1.7.1 对 DLSS 多帧生成、神经渲染和实验性 XeMFG 分别说明条件，不能把其中一条路线的支持范围用于全部功能。', [
     native50,
@@ -60,7 +68,7 @@ add('xemfg-intel', ['3.0.2'], '已整理版本说明与验证范围',
   '独立 XeMFG 使用此版本的 Intel 帧生成与低延迟运行库。游戏需要提供运动矢量和深度。', [
     record('DirectX 12', '实验性路线', 'DX12 可使用游戏启用的 DLSS-G、DLSS 超分或光线重建、XeSS 或 FSR 3.1 及更新版超分输入。'),
     record('Vulkan', '独立 XeMFG', '独立版从 Vulkan 游戏的 DLSS 超分或光线重建获取输入。OptiScaler 插件需要与 Vulkan 适配的宿主。'),
-  ], ['intel302', 'xemfg171'], '2026-11-19');
+  ], ['intel302', 'xemfg172'], '2026-11-23');
 add('mfg-universal', ['1.7.0'], '已整理项目支持说明',
   '1.7.0 将 RTX 20 的 DLSS 多帧生成列为实验性；神经渲染需要另备兼容模型，未沿用后续版本的 DX11 新增说明。', [
     native50,
@@ -96,6 +104,10 @@ add('sm86-delta', ['0.4.2+rtxfg.1'], '已整理版本说明与验证范围',
   '三角洲行动专用 DX12 / Vulkan 包，通过独立运行库加载。', [
     record('倍率上限', 'DLSS 6× · XeSS 4×', '游戏、驱动和所选引擎共同决定实际倍率。'),
   ], ['delta436'], '2026-11-16');
+add('sm86-delta',['0.4.2+rtxfg.3'],'已整理版本说明与验证范围',
+  '三角洲使用私有 Streamline。Steam 版《迈尔斯》使用独立的 NVIDIA 游戏倍率配置。',[
+    record('倍率上限','DLSS 6× · XeSS 4×','游戏、驱动和所选引擎共同决定实际倍率。'),
+  ],['delta442'],'2026-11-23');
 add('encore', ['2.4.1'], '已整理版本说明与验证范围',
   '2.4.1 新增神经渲染多阶段控制并修复帧生成启动问题；发布记录明确区分自动检查、早期测试反馈和仍待游戏内确认的修复。', [
     record('神经渲染多阶段控制', '实验性功能', '提供 pre / post / final 阶段与最多 4 轮处理；实际可用输入与功能取决于游戏和渲染接口，不能由菜单选项推断生效。'),

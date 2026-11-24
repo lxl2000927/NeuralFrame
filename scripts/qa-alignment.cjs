@@ -2,7 +2,7 @@ const { launchFixture } = require('../test/fixtures/launch-electron.cjs');
 const { expect } = require('@playwright/test');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
 const output=process.env.NEURALFRAME_QA_OUT;if(output)fs.mkdirSync(output,{recursive:true});
-(async()=>{const { app, close } = await launchFixture({ env: { NEURALFRAME_QA_PAUSE_SCANS: '1', NEURALFRAME_QA_BATCH_MANUAL: '1' } });try{
+(async()=>{const { app, close } = await launchFixture({ env: { NEURALFRAME_QA_SOFTWARE_UPDATE:'1', NEURALFRAME_QA_PAUSE_SCANS: '1', NEURALFRAME_QA_BATCH_MANUAL: '1' } });try{
  const p=await app.firstWindow();p.setDefaultTimeout(15000);const errors=[];p.on('pageerror',error=>errors.push(error.message));
  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].show());
  const dir='D:\\QA\\Game';
@@ -14,15 +14,72 @@ const output=process.env.NEURALFRAME_QA_OUT;if(output)fs.mkdirSync(output,{recur
  await p.keyboard.press('ArrowRight');assert.equal(Number(await separator.getAttribute('aria-valuenow')),Math.min(520,before+16));
  assert.equal(await p.evaluate(()=>localStorage.getItem('neuralframe.gameListWidth')),String(Math.min(520,before+16)));
  await nav.getByRole('button',{name:'设置',exact:true}).click();const font=p.getByRole('slider',{name:'界面字体大小'});
+ const settings=p.locator('.settings-page');
+ const tabs=settings.getByRole('tablist',{name:'设置分类'}), selected=settings.getByRole('tabpanel');
+ const tab=name=>tabs.getByRole('tab',{name,exact:true});
+ await expect(tab('界面外观')).toHaveAttribute('aria-selected','true');
+ await expect(tabs.getByRole('tab')).toHaveCount(6);
+ await expect(p.getByRole('button',{name:'关于 NeuralFrame'})).toHaveCount(0);
+ for(const [name,control] of [
+   ['窗口与启动','关闭窗口时保留托盘'],['游戏库与扫描','自动扫描其他磁盘'],['硬件信息','本机物理显卡'],
+   ['数据与缓存','重置软件设置'],['软件更新','检查更新'],['界面外观','主题'],
+ ]){
+   await tab(name).click();await expect(tab(name)).toHaveAttribute('aria-selected','true');
+   await expect(selected).toHaveCount(1);await expect(selected).toHaveAccessibleName(name);
+   await expect(selected.getByText(control,{exact:true}).first()).toBeVisible();
+ }
+ await p.setViewportSize({width:720,height:375});await tab('游戏库与扫描').click();
+ await selected.getByText('扫描来源与排除目录',{exact:true}).click();
+ assert.ok(await selected.evaluate(el=>{el.scrollTop=el.scrollHeight;return el.scrollTop>0;}),'A long category scrolls independently');
+ await tab('窗口与启动').click();assert.equal(await selected.evaluate(el=>el.scrollTop),0);
+ await expect(tab('窗口与启动')).toBeInViewport();
+ await p.setViewportSize({width:1280,height:900});await tab('界面外观').click();
+ await tab('界面外观').press('ArrowRight');await expect(tab('窗口与启动')).toBeFocused();
+ await expect(selected).toHaveAccessibleName('窗口与启动');
+ await nav.getByRole('button',{name:'首页',exact:true}).click();
+ await nav.getByRole('button',{name:'设置',exact:true}).click();await expect(selected).toHaveAccessibleName('窗口与启动');
+ await p.getByRole('button',{name:'发现新版本 0.1.4'}).click();
+ const release=p.getByRole('dialog',{name:'软件更新'});await expect(release).toContainText('v0.1.3');await expect(release).toContainText('QA release notes');
+ await release.getByRole('button',{name:'下载更新'}).click();
+ await expect(release.getByRole('progressbar')).toHaveAttribute('value','1048576');
+ await release.getByRole('button',{name:'稍后再说'}).click();await expect(release).toHaveCount(0);
+ await expect(selected).toHaveAccessibleName('软件更新');await tab('硬件信息').click();
+ await nav.getByRole('button',{name:'首页',exact:true}).click();await p.getByRole('button',{name:'发现新版本 0.1.4'}).click();
+ await expect(release.getByRole('progressbar')).toHaveAttribute('value','1048576');
+ await p.evaluate(()=>window.qa.finishSoftwareDownload());await release.getByRole('button',{name:'打开安装程序'}).click();
+ assert.equal(await p.evaluate(()=>window.qa.audit().openedSoftware),'NeuralFrame-0.1.4-Setup-x64.exe');
+ await release.getByRole('button',{name:'稍后再说'}).click();
+ await settings.getByRole('button',{name:'检查更新',exact:true}).click();await expect(release).toBeVisible();
+ await release.getByRole('button',{name:'稍后再说'}).click();
+ await tab('界面外观').click();
  await font.focus();await p.keyboard.press('Home');for(let index=0;index<4;index++)await p.keyboard.press('ArrowRight');
  await expect(font).toHaveValue('16');assert.equal(await p.evaluate(()=>localStorage.getItem('neuralframe.fontScale')),'16');
  assert.equal(await p.evaluate(()=>document.documentElement.style.getPropertyValue('--user-font-size')),'16px');
- for(const width of [960,720]){await p.setViewportSize({width,height:800});await p.evaluate(value=>document.documentElement.dataset.theme=value===960?'light':'dark',width);
+ for(const width of [1440,960,720]){
+   await p.setViewportSize({width,height:800});const theme=width===720?'深色':'浅色';
+   const themePicker=settings.getByRole('combobox',{name:'主题',exact:true});
+   await themePicker.click();await p.getByRole('option',{name:theme,exact:true}).click();
+   await expect(themePicker).toHaveText(theme);
+   await expect(p.locator('html')).toHaveAttribute('data-theme',width===720?'dark':'light');
+   const content=await selected.getByRole('heading',{name:'界面外观'}).boundingBox();
+   const primary=await p.locator('.sidebar').boundingBox();
+   assert.ok(content.x-primary.x-primary.width<=32,'Settings content begins beside the main sidebar');
+   assert.ok(await selected.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'The selected page fits the viewport');
+   await expect(font).toHaveValue('16');
    const dimensions=await p.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));assert.ok(dimensions.scroll<=dimensions.client+1,JSON.stringify(dimensions));
    if(output)await p.screenshot({path:path.join(output,`alignment-settings-${width}.png`),animations:'disabled'});}
  await p.setViewportSize({width:1280,height:900});await nav.getByRole('button',{name:'游戏',exact:true}).click();
+ const readsBeforePreset=await p.evaluate(()=>window.qa.audit().gameLibraryReads || 0);
  const presetButton=p.getByRole('button',{name:'配置预设',exact:true});await expect(presetButton).toBeEnabled();await presetButton.click();
- let dialog=p.getByRole('dialog',{name:'本地配置预设'});await dialog.getByRole('textbox',{name:'预设名称'}).fill('QA quality');await dialog.getByRole('button',{name:'保存当前配置'}).click();
+ let dialog=p.getByRole('dialog',{name:'本地配置预设'});
+ const presetName=dialog.getByRole('textbox',{name:'预设名称'}), save=dialog.getByRole('button',{name:'保存当前配置'});
+ await expect(presetName).toBeFocused();await expect(save).toBeDisabled();
+ await expect.poll(()=>p.evaluate(()=>window.qa.audit().selectionReads)).toBeGreaterThan(0);
+ assert.equal(await p.evaluate(()=>window.qa.audit().gameLibraryReads || 0),readsBeforePreset,'Opening presets only reads the saved component choices');
+ await expect(presetName).toHaveCSS('outline-offset','-2px');await expect(presetName).toHaveCSS('box-shadow','none');
+ const inputBox=await presetName.boundingBox(), saveBox=await save.boundingBox();
+ assert.ok(Math.abs(inputBox.height-saveBox.height)<=1,'Preset name and save button align');
+ await presetName.fill('QA quality');await expect(save).toBeEnabled();await presetName.press('Enter');await expect(save).toBeDisabled();
  await expect(dialog.getByText('QA quality',{exact:true})).toBeVisible();await dialog.getByRole('button',{name:'导出预设 QA quality'}).click();
  const exported=await p.evaluate(()=>window.qa.audit().presetExported);assert.equal(exported.name,'QA quality');assert.equal(JSON.stringify(exported).includes('D:\\QA'),false);
  await dialog.getByRole('button',{name:'关闭',exact:true}).click();await presetButton.click();dialog=p.getByRole('dialog',{name:'本地配置预设'});
@@ -60,6 +117,18 @@ const output=process.env.NEURALFRAME_QA_OUT;if(output)fs.mkdirSync(output,{recur
  await expect(dialog.getByRole('columnheader',{name:'驱动补帧'})).toBeVisible();
  const driverRow=dialog.locator('tbody tr').nth(2);
  await expect(driverRow.getByRole('cell').nth(4)).toHaveText('—');await expect(driverRow.getByRole('cell').nth(5)).toContainText('RX 6000 系列需要独占全屏');
+ for(const width of [1280,720]){
+   await p.setViewportSize({width,height:800});await dialog.getByRole('button',{name:'导出完整报告'}).click();
+   const menu=dialog.getByRole('menu');const bounds=await menu.boundingBox(),frame=await dialog.boundingBox();
+   assert.ok(bounds.x>=frame.x && bounds.x+bounds.width<=frame.x+frame.width,'export choices fit within the dialog');
+   if(output)await p.screenshot({path:path.join(output,'export-menu-'+width+'.png')});
+   await menu.getByRole('menuitem',{name:'导出 CSV'}).click();assert.equal(await p.evaluate(()=>window.qa.audit().scanExported.format),'csv');
+ }
+ await p.setViewportSize({width:1280,height:900});
+ const exportTrigger=dialog.getByRole('button',{name:'导出完整报告'});
+ await exportTrigger.press('ArrowUp');await expect(dialog.getByRole('menuitem',{name:'导出 CSV'})).toBeFocused();
+ await p.keyboard.press('Home');await expect(dialog.getByRole('menuitem',{name:'导出 JSON'})).toBeFocused();
+ await p.keyboard.press('Escape');await expect(exportTrigger).toBeFocused();
  await dialog.getByRole('button',{name:'导出完整报告'}).click();await dialog.getByRole('menuitem',{name:'导出 JSON'}).click();const scan=await p.evaluate(()=>window.qa.audit().scanExported);assert.equal(scan.format,'json');assert.equal(scan.report.readOnly,true);assert.equal(JSON.stringify(scan.report).includes('D:\\QA'),false);
  await dialog.getByRole('button',{name:'关闭报告',exact:true}).click();
  await p.getByRole('radio',{name:/XeMFG 独立帧生成/}).click();
@@ -89,9 +158,21 @@ const output=process.env.NEURALFRAME_QA_OUT;if(output)fs.mkdirSync(output,{recur
    {name:'sl.interposer.dll',rel:'Engine/Streamline/sl.interposer.dll',present:true,version:'2.4.0.0',bitness:64},
    {name:'libxess_fg.dll',rel:'Plugins/Intel/libxess_fg.dll',present:true,version:'3.0.0.0',sha256:'a'.repeat(64),routeSha256:'a'.repeat(64)},
  ]));
- await p.getByRole('tab',{name:'组件与版本'}).click();await p.getByText('选择配套组件版本',{exact:true}).click();
+ await p.getByRole('tab',{name:'组件与版本'}).click();
+ const toolbar=p.locator('[data-tab="components"] .section-toolbar').first();
+ const more=toolbar.getByRole('button',{name:'更多操作'});await more.press('ArrowDown');
+ const enabledMenuItems=toolbar.locator('.action-menu-items button:enabled');
+ await expect(enabledMenuItems.first()).toBeFocused();await p.keyboard.press('End');await expect(enabledMenuItems.last()).toBeFocused();
+ await p.keyboard.press('Escape');await expect(more).toBeFocused();await more.click();
+ const rescan=toolbar.getByRole('button',{name:'重新检测文件'});
+ const over=await rescan.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));});
+ assert.ok(over,'the component menu item can be clicked inside the scroll area');
+ if(output)await p.screenshot({path:path.join(output,'component-menu.png')});
+ const reads=await p.evaluate(()=>window.qa.audit().gameLibraryReads);await rescan.click();
+ await p.waitForFunction(previous=>window.qa.audit().gameLibraryReads>previous,reads);
+ await p.getByText('自定义组件版本',{exact:true}).click();
  await expect(p.getByRole('combobox',{name:'DLSS 超分辨率'})).toHaveAttribute('data-value','');
- await p.getByRole('combobox',{name:'DLSS 超分辨率'}).click();await p.getByRole('option',{name:'3.7.10',exact:true}).click();
+ await p.getByRole('combobox',{name:'DLSS 超分辨率'}).click();await p.getByRole('option',{name:'3.7.10 · example/sr-only',exact:true}).click();
  await p.getByRole('button',{name:'2 个文件位置'}).click();
  const x64=p.getByRole('row').filter({hasText:'Plugins/NVIDIA/nvngx_dlss.dll'});
  const x86=p.getByRole('row').filter({hasText:'Win32/nvngx_dlss.dll'});
@@ -105,5 +186,21 @@ const output=process.env.NEURALFRAME_QA_OUT;if(output)fs.mkdirSync(output,{recur
  await p.getByRole('radio',{name:/ANR FG B20/}).first().click();await presetButton.click();
  await expect(saved.getByRole('button',{name:'应用',exact:true})).toBeDisabled();
  await expect(saved.getByText('预设路线与当前游戏配置路线不一致')).toBeVisible();
+ await dialog.getByRole('button',{name:'关闭',exact:true}).click();
+ await nav.getByRole('button',{name:'设置',exact:true}).click();await tab('数据与缓存').click();
+ const openReset=selected.getByRole('button',{name:'查看重置选项'});
+ await expect(selected.getByRole('button',{name:'清理缓存',exact:true})).toHaveCount(0);
+ const reset=p.getByRole('dialog',{name:'清理缓存并恢复初始状态'});
+ await openReset.click();const restoreGames=reset.getByRole('checkbox',{name:'同时还原所有已部署游戏'});
+ await expect(restoreGames).not.toBeChecked();await restoreGames.check();await expect(reset.getByText('Fixture game')).toBeVisible();
+ await reset.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await p.evaluate(()=>window.qa.audit().storageResets),undefined);
+ await openReset.click();await expect(restoreGames).not.toBeChecked();await restoreGames.check();
+ await reset.getByRole('button',{name:'还原并清理'}).click();await expect(reset.getByText('已还原',{exact:true})).toBeVisible();
+ assert.deepEqual(await p.evaluate(()=>window.qa.audit().storageResets),['reviewed-games']);
+ await reset.getByRole('button',{name:'关闭',exact:true}).click();
+ await openReset.click();await reset.getByRole('button',{name:'清理并重置'}).click();
+ await expect(reset.getByRole('status')).toContainText('1 KB');
+ assert.deepEqual(await p.evaluate(()=>window.qa.audit().storageResets),['reviewed-games',null]);
+ await reset.getByRole('button',{name:'关闭',exact:true}).click();await tab('界面外观').click();await expect(font).toHaveValue('14');
  assert.deepEqual(errors,[]);console.log('Alignment UI passed: layout controls, installed frame preset restore, route isolation, background scan refresh and report exports.');
  }finally{await close();}})().catch(error=>{console.error(error);process.exitCode=1;});

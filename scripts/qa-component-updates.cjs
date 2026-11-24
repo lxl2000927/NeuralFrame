@@ -5,7 +5,9 @@ const output=process.env.NEURALFRAME_QA_OUT;if(output)fs.mkdirSync(output,{recur
 const compatibility={kind:'pending',ready:false,assessment:'unsupported'};
 const release=(id,extra={})=>({id,component:'mfg-renodx',repo:'mavismmg/MFGAdaUnlock-RenoDx',tag:id,name:'plugin.addon64',size:2048,
  downloadable:true,sha256:'a'.repeat(64),compatibility,...extra});
-const snapshot={root:'QA',warnings:[],definitions:{'mfg-renodx':{name:'MFG 解锁插件 · RenoDX'}},runtimePacks:[],
+const snapshot={root:'QA',warnings:[],definitions:{'mfg-renodx':{name:'MFG 解锁插件 · RenoDX'},'dlss-sr':{name:'DLSS SR'}},
+ runtimePacks:[{id:'paired-sr',name:'DLSS SR',component:'dlss-sr',version:'3.7',upstreams:[{name:'mavismmg/qa'}],
+   downloaded:false,size:512,compatibility:{kind:'route',ready:false,assessment:'route'}}],
  packages:[{id:'cached',component:'mfg-renodx',version:'cached',source:'mavismmg/MFGAdaUnlock-RenoDx',present:true,compatibility}],
  cache:{totalBytes:4096,removableBytes:2048,partialBytes:0,packages:[{id:'cached',component:'mfg-renodx',version:'cached',source:'test',size:2048,removable:true,selected:false,bundled:false,protectedReason:'',at:'2026-01-01T00:00:00Z',lastUsedAt:null}]},
  updates:{checkedAt:new Date().toISOString(),errors:[],candidates:[
@@ -64,13 +66,17 @@ const snapshot={root:'QA',warnings:[],definitions:{'mfg-renodx':{name:'MFG 解�
   await firstDownload.getByRole('button',{name:'校验缓存',exact:true}).click();
   await secondDownload.getByRole('button',{name:'加入下载队列',exact:true}).click();
   await expect(secondDownload.getByRole('button',{name:'已加入下载队列',exact:true})).toBeDisabled();
+  const paired=catalog.locator('[data-version-id="runtime:paired-sr"]');
+  await paired.getByRole('button',{name:'加入下载队列',exact:true}).click();
+  await expect(paired.getByRole('button',{name:'已加入下载队列'})).toBeDisabled();
   await p.getByRole('button',{name:/下载队列/}).first().click();
-  const queue=p.getByRole('region',{name:'下载队列'});await expect(queue).toContainText('等待 1 项');
-  await queue.getByRole('button',{name:'移出队列 mfg-second'}).click();await expect(queue.locator('.queue-entry')).toHaveCount(0);await expect(queue.locator('.queue-current')).toBeVisible();
+  const queue=p.getByRole('region',{name:'下载队列'});await expect(queue).toContainText('等待 2 项');
+  await queue.getByRole('button',{name:'移出队列 mfg-second'}).click();await expect(queue.locator('.queue-entry')).toHaveCount(1);await expect(queue.locator('.queue-current')).toBeVisible();
   await queue.getByRole('button',{name:'关闭下载队列',exact:true}).click();
   await p.evaluate(()=>window.qa.releaseLibraryDownload('mfg-test'));
   await expect(firstDownload.locator('.download-active')).toHaveCount(0);
   await expect(secondDownload.locator('.download-active')).toHaveCount(0);
+  await expect.poll(()=>p.evaluate(()=>window.qa.audit().prepared)).toBe(1);
   assert.equal((await p.evaluate(()=>window.qa.audit())).secondDownloaded,undefined,'A removed queued item must never start');
   const thirdDownload=catalog.locator('[data-version-id="release:mfg-third"]');
   await p.evaluate(()=>{window.qa.holdLibraryDownload('mfg-test');window.qa.holdLibraryDownload('mfg-third');});

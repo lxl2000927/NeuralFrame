@@ -10,7 +10,7 @@ const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const fail=m=>Object.assign(Error(m),{code:'errComponentLibrary'});
 async function digest(file) {
   const hash = crypto.createHash('sha256');
-  const input = fs.createReadStream(file);
+  const input = fs.createReadStream(file, { highWaterMark: 1024 * 1024 });
   const closed = finished(input, { cleanup: true });
   input.on('data', chunk => hash.update(chunk));
   await closed;
@@ -18,6 +18,15 @@ async function digest(file) {
 }
 
 function read(file,fallback){try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch(e){if(e.code==='ENOENT')return fallback;throw fail('组件记录损坏：'+path.basename(file));}}
+function readSeed(file) {
+  try {
+    const seed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return seed && typeof seed === 'object' && !Array.isArray(seed) ? seed : null;
+  } catch (error) {
+    if (error.code === 'ENOENT' || error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
 function safe(root,rel){if(typeof rel!=='string'||!rel||path.isAbsolute(rel)||rel.split(/[\\/]/).some(p=>!p||p==='..'||p==='.'||/[:<>"|?*]/.test(p)))throw fail('无效的组件路径');return journal.safePath(root,rel);}
 function directoryBytes(directory) {
   let total = 0;
@@ -54,7 +63,8 @@ class ComponentLibrary {
   constructor(userData,{payloadDir,overlayDir,gameDirectories=()=>[]}={}){this.userData=userData;this.root=path.join(userData,'component-library-v1');this.payloadDir=payloadDir;this.overlayDir=overlayDir;this.gameDirectories=gameDirectories;this.manifestRefs=new Map();this.initialized=false;this.ready=null;}
   catalog(){const data=read(path.join(this.root,'catalog.json'),{schema:1,packages:[]});if(data.schema!==1||!Array.isArray(data.packages))throw fail('不支持的组件目录格式');return data;}
   async init(){if(this.initialized)return;if(this.ready)return this.ready;this.ready=(async()=>{
-    const marker=path.join(this.root,'seed.json'),seed=read(marker,{});
+    const marker=path.join(this.root,'seed.json'),previous=readSeed(marker);
+    const previousContents=JSON.stringify(previous),seed=previous || {};
     this.warnings=[];
     const candidates=this.payloadDir?builtins(this.payloadDir,this.overlayDir):[];
     const adapted = new Map(this.catalog().packages.filter(p => p.trustedAdapter).map(p => [p.id, p]));
@@ -64,7 +74,7 @@ class ComponentLibrary {
       const key = spec.component + spec.version;
       const stamp = hash(JSON.stringify(Object.entries(spec.files).map(([name, file]) => {
         const stat = fs.statSync(file);
-        return [name, file, stat.size, stat.mtimeMs];
+        return [name, file, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs];
       })));
       // Older seed records only held the stamp, even if a manual import had
       // won deduplication. Reconcile those records once against the actual bytes.
@@ -82,10 +92,11 @@ class ComponentLibrary {
       }
       seed[key] = { stamp, id: installed.id, localStamp: this.cacheStamp(installed) };
     }
-    await this.importLegacyModels();
-    await journal.atomicJson(marker,seed);this.initialized=true;
+    await this.importLegacyModels(seed);
+    if (JSON.stringify(seed) !== previousContents) await journal.atomicJson(marker, seed);
+    this.initialized=true;
   })();try{await this.ready;}finally{this.ready=null;}}
-  async importLegacyModels() {
+  async importLegacyModels(seed) {
     let rows;
     try {
       rows = read(path.join(this.userData, 'neural-models', 'index.json'), []);
@@ -94,17 +105,30 @@ class ComponentLibrary {
       this.warnings.push('旧模型索引无法读取，可从原 DLL 重新导入。');
       return;
     }
+    const migrated = {};
+    const packages = new Map(this.catalog().packages.filter(p => p.component === 'dlss-nr').map(p => [p.id, p]));
     for (const row of rows) {
       if (typeof row?.filePath !== 'string' || !path.isAbsolute(row.filePath)) {
         if (!this.warnings.includes('旧模型索引含无效路径。')) this.warnings.push('旧模型索引含无效路径。');
         continue;
       }
       try {
-        await this.importPackage({component:'dlss-nr', version:row.version, files:{'nvngx_dlssnr.dll':row.filePath}, source:'从旧模型库迁入'});
+        const id = hash(key(row.filePath));
+        const previous = seed.legacyModels?.[id];
+        const stat = fs.lstatSync(row.filePath);
+        const stamp = [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
+        const cached = packages.get(previous?.id);
+        if (stat.isFile() && previous?.stamp === stamp && cached && previous.localStamp && previous.localStamp === this.cacheStamp(cached)) {
+          migrated[id] = previous;
+          continue;
+        }
+        const imported = await this.importPackage({component:'dlss-nr', version:row.version, files:{'nvngx_dlssnr.dll':row.filePath}, source:'从旧模型库迁入'});
+        migrated[id] = {stamp, id:imported.id, localStamp:this.cacheStamp(imported)};
       } catch {
         this.warnings.push('旧模型未迁入：' + row.filePath);
       }
     }
+    seed.legacyModels = migrated;
   }
   package(id){if(!/^[a-f0-9]{64}$/.test(String(id)))throw fail('无效的组件版本');const p=this.catalog().packages.find(p=>p.id===id);if(!p||!DEFINITIONS[p.component])throw fail('组件版本不存在');return p;}
   directory(p){return safe(path.join(this.root,'packages'),p.id);}
@@ -113,7 +137,7 @@ class ComponentLibrary {
       return hash(JSON.stringify(p.files.map(f => {
         const stat = fs.lstatSync(safe(this.directory(p), f.rel));
         if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== f.size) throw fail('组件缓存已变化');
-        return [f.rel, f.sha256, stat.size, stat.mtimeMs, stat.ctimeMs];
+        return [f.rel, f.sha256, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs];
       })));
     } catch { return null; }
   }
@@ -140,10 +164,21 @@ class ComponentLibrary {
       if(binary&&!bits)throw fail('不是有效的 Windows 二进制：'+rel);
       if(binary&&/32|winmm/i.test(rel)&&bits!==32)throw fail('需要 32 位组件：'+rel);
       if(binary&&!/32|winmm/i.test(rel)&&bits!==64)throw fail('需要 64 位组件：'+rel);
-      if(spec.component==='dlss-nr'&&!require('./neural-models').inspectNeuralModelBinary(file).valid)throw fail('不是有效的神经渲染模型');
-      if(spec.component==='dlss-fg'&&!require('./mfg-manager').inspectDlssgBinary(file).valid)throw fail('不是有效的 NVIDIA 帧生成运行库');
-      if(spec.component==='dlss-sr'&&require('./neural-models').identifyNgxBuffer(fs.readFileSync(file)).kind!=='dlss_sr')throw fail('不是有效的 DLSS 超分运行库');
-      entries.push({rel,sha256:await digest(file),size:st.size,version:binary?pe.getFileVersion(file):null,bitness:bits||null});
+      let sha256;
+      if (spec.component === 'dlss-nr' || spec.component === 'dlss-fg') {
+        const isModel = spec.component === 'dlss-nr';
+        const info = isModel ? require('./neural-models').inspectNeuralModelBinary(file, {fresh:true}) : require('./mfg-manager').inspectDlssgBinary(file);
+        if (!info.valid) throw fail(isModel ? '不是有效的神经渲染模型' : '不是有效的 NVIDIA 帧生成运行库');
+        sha256 = info.sha256;
+      }
+      if (spec.component === 'dlss-sr' || spec.component === 'dlss-rr') {
+        const feature = spec.component === 'dlss-sr' ? 'sr' : 'rr';
+        const product = feature === 'sr' ? 'DLSS Super Resolution' : 'DLSS Ray Reconstruction';
+        const identified = pe.matchesNvidiaFeature(file, feature) && (pe.versionMentions(file, product) ||
+          require('./neural-models').identifyNgxBuffer(await fs.promises.readFile(file)).kind === 'dlss_' + feature);
+        if (!identified) throw fail(feature === 'sr' ? '不是有效的 DLSS 超分运行库' : '不是有效的 DLSS 光线重建运行库');
+      }
+      entries.push({rel,sha256:sha256 || await digest(file),size:st.size,version:binary?pe.getFileVersion(file):null,bitness:bits||null});
     }
     const describeEngine=spec.component==='encore' ? files=>require('./engine-packages').describe('encore',{files}) : null;
     const assessed=describeEngine?.(entries);
@@ -205,9 +240,9 @@ class ComponentLibrary {
     for(const p of catalog.packages)if(used.has(p.id)){p.lastUsedAt=new Date().toISOString();changed=true;}
     if(changed)await journal.atomicJson(path.join(this.root,'catalog.json'),catalog);
     return {ok:true};}
-  referencedPackages(packages) {
+  referencedPackages(packages, extraGameDirectories = []) {
     const known = new Set(packages.map(p => p.id)), referenced = new Set(), uncertain = new Set();
-    const dirs = new Set();
+    const dirs = new Set(extraGameDirectories);
     const directory = path.join(this.root, 'games');
     let files;
     try { files = fs.readdirSync(directory, {withFileTypes:true}); }
@@ -282,8 +317,8 @@ class ComponentLibrary {
     }
     return {referenced,uncertain:unreadableGames ? known : uncertain};
   }
-  cacheInfo() {
-    const packages = this.catalog().packages, {referenced,uncertain} = this.referencedPackages(packages);
+  cacheInfo(extraGameDirectories, packages = this.catalog().packages) {
+    const {referenced,uncertain} = this.referencedPackages(packages, extraGameDirectories);
     const rows = packages.map(p => {
       const size = p.files.reduce((sum, file) => sum + (file.size || 0), 0);
       const selected = referenced.has(p.id), bundled = p.trustedAdapter === true;
@@ -299,9 +334,9 @@ class ComponentLibrary {
       removableBytes:rows.filter(row => row.removable).reduce((sum, row) => sum + row.size, 0) + partialBytes,
       partialBytes};
   }
-  async cleanCache({component='',olderThanDays=0}={}) {
+  async cleanCache({component='',olderThanDays=0,extraGameDirectories=[]}={}) {
     const cutoff=Number(olderThanDays)>0?Date.now()-Number(olderThanDays)*86400000:0;
-    const before = this.cacheInfo(), removed = before.packages.filter(row => row.removable &&
+    const before = this.cacheInfo(extraGameDirectories), removed = before.packages.filter(row => row.removable &&
       (!component || row.component===component) && (!cutoff || Date.parse(row.lastUsedAt || row.at || 0) < cutoff));
     const includeTemporary=!component&&!cutoff;
     const trash = path.join(this.root, 'cleanup-' + crypto.randomUUID());
@@ -331,7 +366,7 @@ class ComponentLibrary {
       await Promise.all(directories.map(directory => fs.promises.rm(directory, {recursive:true,force:true})));
     } catch { warning = '组件记录已更新，部分临时文件稍后重试清理。'; }
     return {ok:true, removedPackages:removed.length, removedBytes:removed.reduce((sum,row)=>sum+row.size,0)+(includeTemporary?before.partialBytes:0),
-      warning, cache:this.cacheInfo()};
+      warning, cache:this.cacheInfo(extraGameDirectories)};
   }
   async list(dir){await this.init();const packages=this.catalog().packages.map(p=>({...p,compatibility:this.compatibility(p),engine:['encore','mfg-universal'].includes(p.component)?require('./engine-packages').describe(p.component,p):undefined,modelRequirements:modelRequirements(p),present:p.files.every(f=>{
     try {
@@ -339,7 +374,8 @@ class ComponentLibrary {
       return stat.isFile() && (f.size == null || stat.size === f.size);
     } catch { return false; }
   })}));
-    return {ok:true,root:this.root,definitions:DEFINITIONS,packages,warnings:this.warnings||[],profile:dir?this.profile(dir):null,cache:this.cacheInfo()};}
+    return {ok:true,root:this.root,definitions:DEFINITIONS,packages,warnings:this.warnings||[],profile:dir?this.profile(dir):null,
+      ...(!dir && {cache:this.cacheInfo(undefined, packages)})};}
   async apply(dir,selection,options){return require('./component-deploy').applySelection(this,dir,selection,options);}
   async rollback(dir,snapshotId){return require('./component-deploy').rollback(this,dir,snapshotId);}
 }

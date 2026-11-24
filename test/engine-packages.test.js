@@ -103,11 +103,11 @@ test('a mismatched notice cannot corrupt a verified Encore package or invalidate
   assert.equal(f.library.catalog().packages.length,1);
 });
 
-test('OptiScaler retains its original 1.7.0 engine while the independent route recommends 1.7.1',async t=>{
+test('OptiScaler retains its original 1.7.0 engine while the independent route recommends 1.7.2',async t=>{
   const f=fixture(t),pack=catalog.packs.find(p=>p.id==='mfg-optiscaler-170');
   assert.equal(pack.version,'1.7.0');assert.notEqual(pack.files[0].path,catalog.packs.find(p=>p.id==='mfg-universal').files[0].path);
   const pkg=await f.library.importPackage({component:'mfg-universal',files:{'MFGUnlocker.dll':path.join(payload.root,pack.files[0].path)}});
   const selected=await engines.resolve({component:'mfg-universal',packageId:pkg.id,userDataDir:f.library.userData,payloadDir:payload.root});
   assert.equal(selected.version,'1.7.0');assert.equal(selected.recommended,false);assert.equal(selected.compatible,true);
-  assert.equal(engines.recommended('mfg-universal').version,'1.7.1');
+  assert.equal(engines.recommended('mfg-universal').version,'1.7.2');
 });

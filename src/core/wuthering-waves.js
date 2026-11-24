@@ -17,9 +17,10 @@ const UI_CONFIG = 'RTX40MFG-UI.ini';
 const ENGINE_RECEIPT = '.rtx-fg-v3/install.json';
 const MODEL = 'nvngx_dlssnr.dll';
 const MODEL_RECEIPT = '.rtx-fg-nr/ownership.json';
-// The signed RTXManager distribution of the same 1.7.0 upstream proxy.
+// Signed RTXManager builds are recognized in place, independently of the original packages.
 const RTX_PROXY_HASH = 'e476ce87b215bc987c5ca0dddcd5b4e3ca4fd05c764a6c446863e04fceba8e83';
 const RTX_PROXY_171_HASH = 'a6b51a6fff2035acfe902c817ca32c7f93e1635c9efb04804c5b2e6bf588d129';
+const RTX_PROXY_172_HASH = 'e0fd9fa55d08b2dc62a3ea95f5149dd4d57fbac3e00eb9293e8b83c9fbf16f34';
 const runtime = () => require('./mfg-manager').MFG_UNLOCKERS.asiPlugin;
 const fail = (message) => Object.assign(new Error(message), { code: 'errWutheringWaves' });
 const digest = (file, algorithm = 'sha256') =>
@@ -81,7 +82,12 @@ function addonPaths(root) {
 
 function identifyEngine(hash, manifest) {
   if (!hash) return null;
-  let identity = require('./engine-packages').identify('mfg-universal', hash);
+  const engines = require('./engine-packages');
+  let identity = engines.identify('mfg-universal', hash);
+  if (hash === RTX_PROXY_172_HASH) {
+    const {version, capabilities} = engines.byVersion('mfg-universal','1.7.2');
+    identity = {verified:true, compatible:true, recommended:false, version, capabilities:{...capabilities}};
+  }
   if (!identity?.verified) {
     const signed = hash === RTX_PROXY_HASH || hash === RTX_PROXY_171_HASH;
     if (hash !== runtime().sha256 && !signed) return null;
@@ -582,7 +588,7 @@ async function configure(dir, root, scan, config, onLog) {
       throw fail('鸣潮的原版 DLSS 文件已改变，请先还原旧补丁或用启动器修复：' + item.dest);
   }
   const settings = readControl(control);
-  let chosen;
+  let chosen, modelDownload;
   if (enableNr) {
     const id =
       models.normalizeModelId(config.neuralModelId) ||
@@ -598,7 +604,10 @@ async function configure(dir, root, scan, config, onLog) {
             id,
             config.neuralModelSha256
           );
-    if (!chosen && id !== '310.8.SF-v2') throw fail('请先在模型库下载或导入所选神经渲染模型。');
+    if (!chosen && id !== '310.8.SF-v2') {
+      modelDownload = models.modelDownloadFor(id,config.neuralModelSha256,gpuName);
+      if (!modelDownload || !config.requirePayload) throw fail('请先在模型库下载或导入所选神经渲染模型。');
+    }
     if (!chosen && !config.requirePayload) throw fail('所选神经渲染模型尚未就绪。');
     if (chosen) {
       const inspected = models.inspectNeuralModelBinary(chosen.filePath, {fresh:true});
@@ -614,7 +623,7 @@ async function configure(dir, root, scan, config, onLog) {
       route: 'wuwa-proxy',
       config,
       reuseProxy: (!!hash && config.mfgPackageId === undefined) || !!config.mfgPackageId,
-      customModel: !!chosen
+      customModel: !!chosen, modelDownload
     });
   if (enableNr && !chosen) throw fail('所选神经渲染模型尚未就绪。');
   const selectedEngine = !hash || config.mfgPackageId !== undefined ?

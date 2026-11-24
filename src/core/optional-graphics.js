@@ -30,6 +30,25 @@ function checkOwned(gameDir, manifest) {
     const file = journal.safePath(gameDir, rel);
     if (fs.existsSync(file) && digest(file) !== sha) throw fail('部署后文件已变化，请先处理：' + rel);
   }
+  const originals = Object.entries(manifest?.graphicsRoute?.nativeFiles || {});
+  if (originals.length) {
+    const paths = originals.map(([rel])=>({path:journal.safePath(gameDir,rel)}));
+    const exe = journal.safePath(gameDir,manifest.game.exe);
+    const foreign = require('./sm86-native').externalOwners(gameDir,exe,paths);
+    if (paths.some(file=>foreign.has(path.normalize(file.path).toLowerCase()))) throw fail('已有原生运行库被 RTXManager 接管。');
+  }
+  const host = manifest?.graphicsRoute?.hostUpgrade;
+  if (host) {
+    const exe = journal.safePath(gameDir,manifest.game.exe);
+    require('./xemfg-optiscaler').assertHostUnclaimed(gameDir,exe,journal.safePath(gameDir,host.rel));
+    originals.push([host.rel, host]);
+  }
+  for (const [rel, record] of originals) {
+    if (record.original===null && manifest.added.includes(rel)) continue;
+    const original = apply.originalPath(gameDir,manifest,rel);
+    if (!manifest.replaced.some(item=>item.rel===rel) || !fs.existsSync(original) || digest(original)!==record.original)
+      throw fail('原件备份与部署记录不一致：' + rel);
+  }
 }
 
 function readConfig(file) {
@@ -60,6 +79,7 @@ function validateTarget(options) {
   const { gameDir, exePath, api, apiLabel, bitness, route, gpuName, target } = options;
   const protectedRoot = require('./wuthering-waves').gameRoot(gameDir, exePath);
   const current = { ...target, path: exePath, api, apiLabel, bitness, launcherProtected: !!target?.launcherProtected || !!protectedRoot };
+  if (route === 'sm86-delta') current.steamMiles = (process.platform==='win32' || !!options.milesDriver) && require('./steam-identity').isSteamMiles(exePath);
   if (route === 'anr-addon') {
     current.hasAnrAddonHost = anrProvider.hasAddonHost(exePath,api);
     if (!current.hasAnrAddonHost) throw fail('ANR 附加包需要当前游戏可加载、支持自定义帧生成提供程序的 OptiScaler。');
@@ -73,6 +93,12 @@ function validateTarget(options) {
     throw fail('所选路线与当前程序、图形 API 或帧生成输入不匹配。');
   if (route.startsWith('sm86') && !/\bRTX\s*(?:20|30|40|50)\d\d/i.test(gpuName || ''))
     throw fail('Dlssg_for_sm86 需要 NVIDIA GeForce RTX 20–50 系列显卡。');
+  if (options.graphics?.nativeRuntimes !== undefined) {
+    if (!route.startsWith('sm86')) throw fail('原生运行库选项仅适用于 sm86。');
+    const selected=require('./sm86-native').validate(options.graphics.nativeRuntimes);
+    if (target?.sm86NativeKinds && selected.some(kind=>!target.sm86NativeKinds.includes(kind)))
+      throw fail('所选游戏程序缺少对应的原生运行库，请重新选择。');
+  }
   if (route.startsWith('anr')) {
     const reason = routes.anrGpuReason(gpuName);
     if (reason) throw fail(reason);
@@ -493,8 +519,9 @@ async function install(options) {
       }
     }
     const multiplier = graphics.multiplier;
+    const miles = route === 'sm86-delta' && require('./steam-identity').isSteamMiles(exePath);
     const max = isAnr || graphics.engine !== 'XeSS' ? 6 : 4;
-    if (multiplier !== undefined && (!Number.isInteger(multiplier) || multiplier < 2 || multiplier > max))
+    if (multiplier !== undefined && (!Number.isInteger(multiplier) || multiplier < (miles ? 1 : 2) || multiplier > max))
       throw fail('补帧倍率超出此引擎范围。');
     if (graphics.engine !== undefined && !['DLSS', 'XeSS'].includes(graphics.engine))
       throw fail('未知的补帧引擎。');
@@ -531,15 +558,19 @@ async function install(options) {
         const engine = graphics.engine || ini.getIni(base, 'FrameGeneration', 'Engine') || 'DLSS';
         const frames =
           multiplier === undefined
-            ? Number(ini.getIni(base, 'FrameGeneration', 'MaxGeneratedFrames'))
+            ? Number(ini.getIni(base, 'FrameGeneration', 'MaxGeneratedFrames') ?? 3)
             : multiplier - 1;
-        if (!Number.isInteger(frames) || frames < 1 || frames > (engine === 'DLSS' ? 5 : 3))
+        if (!['DLSS','XeSS'].includes(engine) || !Number.isInteger(frames) || frames < (miles ? 0 : 1) || frames > (engine === 'DLSS' ? 5 : 3))
           throw fail('所选引擎不支持当前倍率。');
         const fields = [
           ['FrameGeneration', 'Engine', graphics.engine],
           ['FrameGeneration', 'MaxGeneratedFrames', frames],
         ];
-        if (route === 'sm86-delta') {
+        if (miles) {
+          const count = ini.getIni(base,'General','Enabled') === '0' || frames===0 ? null : frames;
+          const milesProfile = await require('./miles-profile').schedule(gameDir,exePath,count,options.milesDriver);
+          manifest.graphicsRoute = {...manifest.graphicsRoute,milesProfile};
+        } else if (route === 'sm86-delta') {
           manifest.graphicsRoute = {
             ...manifest.graphicsRoute,
             deltaCache: await require('./delta-cache').register(gameDir, exePath),
@@ -575,6 +606,11 @@ async function install(options) {
       manifest.graphicsRoute = { providerDir: path.relative(gameDir, addonDir) };
     }
     if (isAnr) manifest.graphicsRoute.generatedLoader = !!generatedLoader;
+    if (route.startsWith('sm86') && graphics.nativeRuntimes !== undefined) {
+      manifest.graphicsRoute = {...manifest.graphicsRoute,...await require('./sm86-native').update({
+        gameDir,exePath,route,selection:graphics.nativeRuntimes,manifest,files,checkedSource,copy
+      })};
+    }
   }
   if (overlayOnBackend) manifest.performanceMonitor = {files, settings, shared};
   else manifest.graphicsRoute = { ...manifest.graphicsRoute, files, settings, shared };
@@ -654,18 +690,20 @@ function inspect(gameDir, manifest) {
     }
   }
   const pack = catalog.packs.find(item => item.id === manifest.route);
-  const core = pack?.files.find(item => item.path.endsWith('/nvngx_dlssg.dll'));
-  const providerFile = core && Object.keys(records?.files || {}).find(rel => path.basename(rel).toLowerCase() === 'nvngx_dlssg.dll' &&
-    (anr || records.files[rel] === core.sha256));
+  const delta = manifest.route==='sm86-delta';
+  const core = pack?.files.find(item => item.path.endsWith(delta ? '/version.dll' : '/nvngx_dlssg.dll'));
+  const providerFile = core && Object.keys(records?.files || {}).find(rel => path.basename(rel).toLowerCase() === path.basename(core.path) &&
+    (anr || delta || records.files[rel] === core.sha256));
   if (providerFile) {
     const file = journal.safePath(gameDir, providerFile), sha = records.files[providerFile];
-    const version = sha === core.sha256 ? pack.version : anr && anrProvider.identify(sha)?.version;
+    const version = sha === core.sha256 ? pack.version : delta && sha==='9c54ac17483e3aa2bf7d65bd934823d89141e5d7addc39565c599e733dbce561'
+      ? '0.4.2+rtxfg.1' : anr && anrProvider.identify(sha)?.version;
     const size = fs.existsSync(file) ? fs.statSync(file).size : 0;
     if (version && (sha === core.sha256 ? size === core.size : size > 0 && size < 32 * 1024 * 1024) && digest(file) === sha)
       status.providerVersion = version;
-    else if (anr) {
+    else if (anr || delta) {
       status.filesPresent = false;
-      status.error = 'ANR 提供程序与部署记录不一致。';
+      status.error = anr ? 'ANR 提供程序与部署记录不一致。' : 'sm86 R3 入口与部署记录不一致。';
     }
   }
   if (!config) return status;
@@ -678,7 +716,8 @@ function inspect(gameDir, manifest) {
   const engine = anr ? undefined : ini.getIni(text, 'FrameGeneration', 'Engine');
   const rawFrames = ini.getIni(text, anr ? '' : 'FrameGeneration', anr ? 'max_generated' : 'MaxGeneratedFrames');
   const frames = Number(rawFrames);
-  const validFrames = Number.isInteger(frames) && frames >= 1 && frames <= (engine === 'XeSS' ? 3 : 5);
+  const minFrames = delta && require('./steam-identity').isSteamMiles(exePath) ? 0 : 1;
+  const validFrames = rawFrames!==null && Number.isInteger(frames) && frames >= minFrames && frames <= (engine === 'XeSS' ? 3 : 5);
   const sceneCut = anr ? ini.getIni(text, '', 'scene_cut') : null;
   const invalid = [];
   if (!validFrames) invalid.push(anr ? 'max_generated' : 'MaxGeneratedFrames');
@@ -686,6 +725,9 @@ function inspect(gameDir, manifest) {
   if (anr && !['0','1'].includes(sceneCut)) invalid.push('scene_cut');
   return {
     ...status,
+    ...(minFrames===0 && validFrames && frames===0 && {driverDefault:true}),
+    ...(!anr && ['0','1'].includes(ini.getIni(text,'General','Enabled')) && {enabled:ini.getIni(text,'General','Enabled')==='1'}),
+    ...(manifest.graphicsRoute?.nativeRuntimes && {nativeRuntimes:manifest.graphicsRoute.nativeRuntimes}),
     ...(invalid.length && {error: '请检查配置文件中的 ' + invalid.join('、')}),
     neural:
       manifest.graphicsRoute?.neural ??

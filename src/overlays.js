@@ -114,11 +114,19 @@ function createOverlayLibrary(root, builtinFile, forbiddenRoots = []) {
         }
       } catch (e) { errors.push(e.message); }
     }
+    const installations = installedRecords(error => errors.push(error.message));
+    return { overlays: overlays.map(({ file, ...entry }) => entry), installations, errors };
+  }
+  function installedRecords(onError) {
+    try { fs.lstatSync(records); }
+    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    directory(records);
     const installations = [];
     for (const file of fs.readdirSync(records).filter(n => /^[a-f0-9]{64}\.json$/.test(n))) {
-      try { installations.push(installation(file.slice(0, -5))); } catch (e) { errors.push(e.message); }
+      try { installations.push(installation(file.slice(0, -5))); }
+      catch (error) { if (!onError) throw error; onError(error); }
     }
-    return { overlays: overlays.map(({ file, ...entry }) => entry), installations, errors };
+    return installations;
   }
   function add(file) {
     const binary = readNative(file);
@@ -235,6 +243,6 @@ function createOverlayLibrary(root, builtinFile, forbiddenRoots = []) {
       fs.unlinkSync(path.join(records, `${recordId}.json`));
     }
   }
-  return { list, add, remove, resolve, install, uninstall, forgetMissing, builtinStatus: () => builtin(false) };
+  return { list, installedRecords, add, remove, resolve, install, uninstall, forgetMissing, builtinStatus: () => builtin(false) };
 }
 module.exports = { readNative, createOverlayLibrary };

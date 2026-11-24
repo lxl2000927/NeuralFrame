@@ -68,6 +68,19 @@ test('same asset bytes across releases are one version; unknown hashes are not m
   assert.equal(versions[0].releases.length,2);
 });
 
+test('ReShade tags annotate the matching paired pack and keep older source-only versions distinct', () => {
+  const pack={id:'reshade',component:'reshade',version:'6.8.0',downloaded:false};
+  const tags=['6.8.0','5.9.2'].map(version=>({id:version,component:'reshade',provider:'reshade',
+    tag:'v'+version,version,releaseOnly:true,downloadable:false}));
+  const [{versions}]=groupLibrary(library([pack],[]),tags);
+  assert.equal(versions.length,2);
+  assert.equal(versions[0].pack,pack);
+  assert.deepEqual(versions[0].releases,[tags[0]]);
+  assert.equal(versionAcquisition(versions[0]).disabled,false);
+  assert.equal(versionAcquisition(versions[1]).disabled,true);
+  assert.match(versionAcquisition(versions[1]).notice,/源码标签/);
+});
+
 test('known upstream bytes share the paired download before anything has been downloaded', () => {
   const data=library([{id:'nr',component:'dlss-nr',packageIds:[],downloaded:false,compatibility:ready}],[]);
   const [{versions}]=groupLibrary(data,[{id:'upstream',component:'dlss-nr',pairedPackId:'nr'}]);

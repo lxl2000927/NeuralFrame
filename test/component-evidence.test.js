@@ -8,7 +8,7 @@ const text = evidence => JSON.stringify(evidence);
 test('uncollected releases never borrow evidence from a known version', () => {
   for (const [component, version] of [
     ['mfg-renodx', '1.9.1'], ['mfg-renodx', '1.9.0-beta.1'], ['mfg-renodx', '1.9.0 patched'],
-    ['mfg-universal', '1.7.2'], ['encore', '2.4.3'], ['streamline', '2.13'],
+    ['mfg-universal', '1.7.3'], ['encore', '2.4.3'], ['streamline', '2.13'],
     ['renodx-nr', '8.5.0-rc10'], ['unknown', '1.9.0'], ['__proto__', 'constructor'],
   ]) {
     const result = projectEvidence(component, version);
@@ -50,7 +50,7 @@ test('RenoDX 1.9.0 distinguishes real XMX tests, simulated NVIDIA tests and nati
 });
 
 test('Universal MFG evidence preserves native RTX 50 semantics and release-specific DX11 changes', () => {
-  for (const version of ['1.7.0', '1.7.1']) {
+  for (const version of ['1.7.0', '1.7.1', '1.7.2']) {
     const result = projectEvidence('mfg-universal', version);
     const native = result.records.find(item => item.scope === 'RTX 50');
     assert.match(native.status, /原生多帧生成/);
@@ -142,11 +142,11 @@ test('production runtime rows resolve exact evidence through the actual UI wrapp
   const rows = groupLibrary({ runtimePacks, packages: [] }, []).flatMap(group => group.versions);
   const expected = new Map([
     ['feeder', ['v1.17.0', 'v1.19.0']],
-    ['mfg-universal', ['v1.7.1','v1.7.1']],
-    ['xemfg-intel', ['v3.0.2','v1.7.1']],
+    ['mfg-universal', ['v1.7.2','v1.7.2']],
+    ['xemfg-intel', ['v3.0.2','v1.7.2']],
     ['mfg-optiscaler-170', ['v1.7.0']],
     ['encore', ['v2.5.0']], ['anr',['FG-V.B20']], ['anr-addon',['FG-V.B20']],
-    ['sm86',['0.4.2','sm86-10']], ['sm86-delta',['v4.3.36']],
+    ['sm86',['0.4.2','sm86-10']], ['sm86-delta',['v4.3.42']],
     ['mfg-renodx', ['1.5.5']],
     ['sl-modern', ['v2.14.16']],
     ['sr-modern', ['v310.9.16']],

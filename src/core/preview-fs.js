@@ -25,6 +25,13 @@ function entry(p) {
   return { file: String(p), source: String(p), stat, directory: stat.isDirectory() };
 }
 function bytes(e) { return e.buffer || native.readFileSync(e.source); }
+// Large simulated copies share their original backing file. A reader that
+// streams or hashes it can use the same bytes without materializing a copy.
+function readSource(file) {
+  if (!active()) return file;
+  const e = entry(file);
+  return e.buffer || e.source;
+}
 function put(p, e) {
   const s = active();
   // Junctions must never make a seemingly game-local plan target other data.
@@ -113,4 +120,4 @@ async function simulate(work) {
   if (cause) throw cause;
   return { state, result };
 }
-module.exports = { fs, active, external, simulate, bytes, stats };
+module.exports = { fs, active, external, simulate, bytes, stats, readSource };

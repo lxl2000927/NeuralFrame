@@ -48,7 +48,8 @@ test(`cancelling a component download during library ${phase} prevents the trans
   assert.equal(competing.code,'errJobBusy','a rejected competing request must preserve the first cancellation owner');
   handlers.get('library-cancel')({sender:{}});
   assert.equal(cancellations,0,'another window cannot cancel this request');
-  handlers.get('library-cancel')(event);
+  handlers.get('library-cancel')(event,{discard:true});
+  assert.equal(cancellations,0,'a queued cancellation cannot discard a later transfer or abort an unrelated version check');
   finishWait();
   if (read) await read;
   assert.equal((await pending).cancelled,true,'cancellation must survive the pre-download wait');
@@ -59,7 +60,7 @@ test(`cancelling a component download during library ${phase} prevents the trans
 });
 }
 
-test('queued runtime preparation honours owner cancellation before touching the cache', async () => {
+test('queued runtime preparation honours owner cancellation before touching the cache', async t => {
   const main = path.resolve(__dirname,'../main.js'), realRequire = createRequire(main), handlers = new Map();
   const electron = {app:{setAppUserModelId(){},whenReady:()=>({then(){}}),on(){},getPath:()=>os.tmpdir()},
     ipcMain:{handle:(id,fn)=>handlers.set(id,fn)}};
@@ -83,6 +84,36 @@ test('queued runtime preparation honours owner cancellation before touching the 
   assert.equal(starts,0);
   assert.equal((await prepare(event)).ok,true);
   assert.equal(starts,1);
+
+  for (const outcome of ['cancelled', 'failed']) {
+    context.library.initialized = true;
+    context.runtime.prepare = async () => {
+      // The first pack is already published and reusable when the next pack stops.
+      if (outcome === 'failed') throw Error('second pack unavailable');
+      return {ok:false,cancelled:true};
+    };
+    const stopped = await handlers.get('component-prepare')(event,['runtime:first','runtime:second']);
+    assert.equal(stopped.ok,false);
+    assert.equal(context.library.initialized,false,'the next catalog read must index packs completed before ' + outcome);
+  }
+  context.runtime.prepare = async () => ({ok:true});
+  const {RANKFTW_NR_310916:model} = require('../src/core/component-definitions');
+  const {ComponentUpdates} = require('../src/core/component-updates');
+  const transfers = [];
+  t.mock.method(ComponentUpdates.prototype,'download',async function(id, source) {
+    transfers.push([id,source.priority]);
+    this.onProgress({stage:'verify'});
+    return {ok:true};
+  });
+  context.library.root = os.tmpdir();
+  const progress = [];
+  event.sender.send = (channel,detail)=>progress.push([channel,detail.stage]);
+  const prepareModel = deps => handlers.get('component-prepare')(event,deps,{priority:'official'});
+  assert.equal((await prepareModel(['runtime:fixture','model:' + model.id,'model:' + model.id])).ok,true);
+  assert.deepEqual(transfers,[[model.id,'official']]);
+  assert.ok(progress.some(([channel,stage])=>channel === 'component-progress' && stage === 'verify'));
+  assert.equal((await prepareModel(['model:unknown'])).ok,false);
+  assert.equal(transfers.length,1);
 });
 
 test('component browsers share reads during update checks and wait for committed game writes', async () => {
@@ -122,6 +153,22 @@ test('component browsers share reads during update checks and wait for committed
   await write;
   assert.equal(reads, 3);
   assert.equal(invalidations, 1);
+
+  const game = path.join(os.tmpdir(), 'preset-game');
+  let saved = { example:'old' }, finishSelection;
+  context.library.profile = () => ({selected:saved});
+  context.library.select = async (_dir, selection) => {
+    await new Promise(resolve => { finishSelection = resolve; });
+    saved = selection;
+    return {ok:true};
+  };
+  const applySelection = handlers.get('library-select')({},game,{example:'new'});
+  const current = handlers.get('library-selection')({},game);
+  assert.equal((await handlers.get('library-selection')({},game + '-other')).selected.example,'old');
+  finishSelection();
+  await applySelection;
+  assert.equal((await current).selected.example,'new');
+  assert.equal(reads,3,'reading preset selections must never list the catalog or inventory');
 });
 test('the F7 file picker exports the selected bundled architecture only after checksum verification',async t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'export-f7-'));

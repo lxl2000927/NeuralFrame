@@ -46,6 +46,22 @@
 .game-detail .tabs { margin-bottom: 8px; background: var(--bg); box-shadow: none; }
 .game-detail .tabs button { min-height: 28px; padding-block: 3px; }
 .game-detail .tabs button[aria-selected="true"] { font-weight: 600; }
+.game-version-settings {
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.game-combination {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px 18px; padding: 14px 18px;
+}
+.game-combination h2 { margin: 0; font-size: 15px; }
+.game-combination p { margin: 4px 0 0; }
+.game-combination .combination-context { font-size: 13px; font-weight: 600; }
+.game-version-settings .game-version-overrides { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-lg) var(--radius-lg); box-shadow: none; }
+.game-version-overrides summary small { margin-inline-start: auto; font-weight: 400; color: var(--muted); }
+.game-version-overrides .inline-actions { flex-wrap: wrap; }
 .game-detail .apply-bar { min-height: 44px; padding-block: 5px; }
 .detail-scroll[data-tab="graphics"] { padding-block-end: 10px; }
 .game-setup {
@@ -136,6 +152,11 @@
 .game-detail .module-actions { padding-top: 8px; gap: 6px; }
 .game-detail .module-actions button { min-height: 30px; padding: 3px 9px; font-size: 13px; }
 .game-detail .module-actions .module-command { flex: 1 1 auto; }
+.sm86-runtimes { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 8px 14px; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.sm86-runtimes legend { padding-inline: 4px; font-weight: 600; }
+.sm86-runtimes label { display: flex; gap: 6px; align-items: center; }
+.sm86-runtimes small, .sm86-runtimes label:has(:disabled) { color: var(--muted); }
+.sm86-runtimes .footnote { grid-column: 1/-1; margin: 0; }
 @container game-editor (max-width: 690px) {
   .game-detail .graphics-modules { grid-template-columns: minmax(0, 1fr); }
 }

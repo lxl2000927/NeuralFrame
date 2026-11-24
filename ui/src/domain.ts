@@ -55,7 +55,7 @@ export function usesFramePanel(route?:string|null): route is keyof typeof frameR
 export const gameRouteLabels:Record<string,string> = {
   native:"原生 DLSS（RenoDX）", feeder:"Feeder + ReShade", renodx:"RenoDX DLSS Tool", optiscaler:"OptiScaler DLSS-NR",
   encore:"Encore 新增帧生成（实验性）", anr:"ANR FG B20", "anr-addon":"ANR FG B20 · OptiScaler Add-on",
-  sm86:"Dlssg_for_sm86 0.4.2","sm86-delta":"Dlssg_for_sm86 · 三角洲 DX12 / Vulkan",
+  sm86:"Dlssg_for_sm86 0.4.2","sm86-delta":"Dlssg_for_sm86 R3 · 三角洲 / 迈尔斯",
   "wuwa-proxy":"鸣潮兼容路线（version.dll）", streamline:"旧版通用预设", ...frameRouteLabels,
 };
 export function groupByLauncher(games: Game[], grouped: boolean) {

@@ -89,7 +89,7 @@ test('Radeon configuration with the actual OptiScaler and Intel files previews, 
   assert.equal(fs.existsSync(f.local('version.dll')),false);
   assert.equal(fs.existsSync(f.local('nvngx_dlssg.dll')),false);
   const state = graphics.inspect(f.gameDir,backends.readManifest(f.gameDir));
-  assert.equal(state.providerVersion,'1.7.1');
+  assert.equal(state.providerVersion,'1.7.2');
   assert.equal(state.filesPresent,true);
   const current = fs.readFileSync(f.local('OptiScaler.ini'),'utf8');
   assert.equal(getIni(current,'FrameGen','FGInput'),'Upscaler');
@@ -101,6 +101,33 @@ test('Radeon configuration with the actual OptiScaler and Intel files previews, 
   assert.equal(fs.readFileSync(f.local('OptiScaler.ini'),'utf8'),original.replace('Keep=me','Keep=player'));
   assert.equal(fs.existsSync(f.plugin),false);
   assert.equal(detectHost(f.exePath),'dx12-vulkan');
+});
+
+test('an optional 1.7.2 host upgrade previews the original path, preserves its backup and handles later host edits',async t=>{
+  const f=fixture(t);f.addHost();
+  const opts={...await f.options(),graphics:{upgradeHost:true}};
+  const {simulate}=require('../src/core/preview-fs');
+  const sha=file=>require('node:crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const dest=f.local('winmm.dll'),old=sha(dest);
+  const paired=path.join(payloadDir,'enhanced/xemfg-host/OptiScaler.dll');
+  const {result}=await simulate(()=>backends.install(opts));
+  assert.deepEqual(result.graphicsRoute.hostUpgrade,{rel:'winmm.dll',original:old});
+  assert.equal(sha(dest),old);
+  await backends.install(opts);
+  assert.equal(sha(dest),sha(paired));
+  assert.ok(graphics.inspect(f.gameDir,backends.readManifest(f.gameDir)).upgradeHost);
+  await backends.install(opts);
+  fs.appendFileSync(dest,'player modification');
+  await assert.rejects(backends.restore(f.gameDir),/已变化/);
+  fs.copyFileSync(paired,dest);
+  const receipt = f.local('.rtx-fg-v3/mfg-optiscaler-host.json');
+  fs.mkdirSync(path.dirname(receipt));
+  fs.writeFileSync(receipt,JSON.stringify({name:'winmm.dll'}));
+  await assert.rejects(backends.restore(f.gameDir),/RTXManager/);
+  assert.equal(sha(dest),sha(paired));
+  fs.unlinkSync(receipt);
+  assert.ok(await backends.restore(f.gameDir));
+  assert.equal(sha(dest),old);
 });
 
 test('standalone conflicts, protected targets and missing inputs stop the ASI route before changing the host',async t => {

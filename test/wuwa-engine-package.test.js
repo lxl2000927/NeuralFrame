@@ -17,7 +17,7 @@ test('original MFG package installs in an isolated no-index game with selected i
   const stock=writePe(path.join(root,'Engine/Plugins/nvngx_dlss.dll'),{version:[310,5,0,0]}),stockHash=digest(stock);
   const bin=path.dirname(exe),scan={chosen:{path:exe,bitness:64,api:'dxgi',apiLabel:'DirectX 12'}};
   const recommended=await engines.resolve({component:'mfg-universal',payloadDir:payload.root});
-  assert.equal(recommended.version,'1.7.1');
+  assert.equal(recommended.version,'1.7.2');
   const library=new ComponentLibrary(userDataDir);
   const pkg=await library.importPackage({component:'mfg-universal',version:recommended.version,
     files:{'MFGUnlocker.dll':recommended.filePath},source:'isolated original engine test'});
@@ -33,7 +33,7 @@ test('original MFG package installs in an isolated no-index game with selected i
   const status=wuwa.inspectProxy(bin,manifest);
   assert.equal(digest(path.join(bin,'version.dll')),engines.recommended('mfg-universal').sha256);
   assert.equal(status.mfg.packageId,pkg.id);
-  assert.equal(status.mfg.version,'1.7.1');
+  assert.equal(status.mfg.version,'1.7.2');
   assert.equal(status.mfg.engine.capabilities.diagnosticLogging,true);
   assert.equal(status.mfg.advanced.structure,1.25);
   assert.equal(status.mfg.advanced.diagnosticLogging,true);
@@ -44,7 +44,7 @@ test('original MFG package installs in an isolated no-index game with selected i
   });
   const combined=await readCombined();
   assert.equal(combined.launcherProtected,true);
-  assert.equal(combined.mfg.version,'1.7.1');
+  assert.equal(combined.mfg.version,'1.7.2');
   assert.equal(combined.mfg.packageId,pkg.id);
   assert.deepEqual(combined.mfg.engine,status.mfg.engine);
   assert.deepEqual(combined.mfg.advanced,config.mfgAdvanced);

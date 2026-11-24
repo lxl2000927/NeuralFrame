@@ -78,7 +78,7 @@ test('uninstalled model can link to a paired pack by DLL fingerprint without mis
 test('runtime metadata separates recommended independent MFG from its OptiScaler baseline and links original release bytes',()=>{
   const runtime=new RuntimePayload(path.join(os.tmpdir(),'nf-readonly-engines'));
   const packs=runtime.list(),current=packs.find(p=>p.id==='mfg-universal'),baseline=packs.find(p=>p.id==='mfg-optiscaler-170'),encore=packs.find(p=>p.id==='encore');
-  assert.equal(current.engine.recommended,true);assert.equal(current.engine.version,'1.7.1');
+  assert.equal(current.engine.recommended,true);assert.equal(current.engine.version,'1.7.2');
   assert.equal(baseline.engine.compatible,true);assert.equal(baseline.engine.recommended,false);assert.equal(baseline.engine.version,'1.7.0');
   assert.equal(encore.engine.recommended,true);assert.equal(encore.engine.version,'2.5.0');
   for(const pack of [current,baseline,encore]){assert.equal(pack.compatibility.kind,'route');assert.equal(pack.compatibility.ready,false);}

@@ -49,7 +49,7 @@ let pendingDownloads=[{name:'QA component',size:1024}];
 let updateCheckGate=null, releaseUpdateCheck;
 const downloadGates=new Map();
 const cancelledDownloads=new Set();
-const engineMfg={version:'1.7.1',verified:true,compatible:true,recommended:true,capabilities:{diagnosticLogging:true}};
+const engineMfg={version:'1.7.2',verified:true,compatible:true,recommended:true,capabilities:{diagnosticLogging:true}};
 const engineEncore={version:'2.5.0',verified:true,compatible:true,recommended:true,capabilities:{nrPassPlacement:true,dlssCustomScaleMin:33,spatialUpscaling:true}};
 const engineMfgOld={...engineMfg,version:'1.7.0',recommended:false,capabilities:{diagnosticLogging:false}};
 const engineEncoreOld={...engineEncore,version:'2.3.0',recommended:false,capabilities:{nrPassPlacement:false,dlssCustomScaleMin:50}};
@@ -110,7 +110,15 @@ const proxyTarget = id => ({dlss5DefaultsVersion:3,dlss5HookStage:2,dlss5Resolut
   dlss5ResolutionScaleAuto:false,dlss5PassCount:1,dlss5UpsampleFilter:3,dlss5CharacterMask:false,dlss5UiCorrection:1,dlss5OverallIntensity:1});
 const artFixture = (width,height) => 'data:image/svg+xml,' + encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="#657b73"/></svg>`);
+const updateFixture = process.env.NEURALFRAME_QA_SOFTWARE_UPDATE === '1';
+const runningVersion = updateFixture ? '0.1.3' : '0.1.0';
+let updateProgress, finishSoftwareDownload;
+const softwareRelease = updateFixture
+  ? {current:runningVersion, latest:'0.1.4', newer:true, notes:'QA release notes', platform:'windows-setup',
+    canInstall:true, staged:false, assetName:'NeuralFrame-0.1.4-Setup-x64.exe', size:4194304}
+  : {current:runningVersion, latest:null, newer:false};
 contextBridge.exposeInMainWorld('qa',{
+ finishSoftwareDownload:()=>finishSoftwareDownload?.(),
  setPresetImport:value=>{presetToImport=value;},
  setRecents:value=>{recentRows=value;},setLibraryGames:value=>{libraryGamesOverride=value;},
  finishDiscovery:()=>releaseDiscovery?.(), finishBatch:()=>releaseBatch?.(),finishLibrary:()=>releaseLibrary?.(),emitBatchRow:()=>batchPushRow(),batchTask:()=>batchCopy(batchTask),
@@ -143,6 +151,9 @@ contextBridge.exposeInMainWorld('lab',{
  addons:async()=>{audit.addonReads=(audit.addonReads||0)+1;return[{path:'D:\\QA\\fixture.addon64',file:'fixture.addon64',label:'Local add-on '+externalRevision,version:'1.0',active:false}]},
  history:async()=>{audit.historyReads=(audit.historyReads||0)+1;return{rows:[],warning:false}},
  settings:async()=>({folders:[],stateFile:'D:\\QA\\library.json',posterDir:'D:\\QA\\covers',closeToTray:false,autoScanDrives:false,safeGraphics:false,groupGamesByStore:false}),
+ previewResetDeployments:async()=>({ok:true,token:'reviewed-games',games:[{dir:'D:\\QA\\Game',name:'Fixture game',files:2}]}),
+ resetWithCache:async token=>{(audit.storageResets||=[]).push(token||null);return {ok:true,removedPackages:1,removedBytes:1024,games:token?[{dir:'D:\\QA\\Game',name:'Fixture game',restored:true}]:[]};},
+ onResetProgress:()=>()=>{},
  setTheme:async value=>value,
  setLang:async value=>{uiLanguage=value==='en'?'en':'zh';audit.language=uiLanguage;return uiLanguage},
  overlayPreferences:async()=>({ok:true,value:overlayPrefs}),
@@ -159,9 +170,10 @@ contextBridge.exposeInMainWorld('lab',{
  saveMonitorAddon:async bits=>({ok:[32,64].includes(bits)}),
  overlayBridge:async()=>({ok:true,value:overlayBridgeState}),
  openComponentFolder:async (dir,rel,scope)=>{audit.openedComponentFolder={dir,rel,scope};return {ok:true};},
+ librarySelection:async dir=>{audit.selectionReads=(audit.selectionReads||0)+1;return {ok:true,selected:componentSelections[dir]||{}};},
  libraryComponents:async dir=>{
    if(dir){audit.gameLibraryReads=(audit.gameLibraryReads||0)+1;return{ok:true,inventory:{ok:true,rows:inventoryRows,lock:null},profile:{selected:componentSelections[dir]||{}},
-     definitions:{'dlss-sr':{name:'DLSS 超分辨率'}},packages:[{id:'qa-sr',component:'dlss-sr',version:'3.7.10',present:true,compatibility:selectable,
+     definitions:componentStatusFixture?.definitions || {'dlss-sr':{name:'DLSS 超分辨率'}},packages:componentStatusFixture?.packages || [{id:'qa-sr',component:'dlss-sr',version:'3.7.10',source:'example/sr-only',present:true,compatibility:selectable,
        files:[{rel:'nvngx_dlss.dll',version:'3.7.10.0',bitness:64,sha256:'a'.repeat(64)}]}],runtimePacks:[]};}
    audit.libraryReads=(audit.libraryReads||0)+1;
    if(failLibraryOnce){failLibraryOnce=false;return{ok:false,code:'errJobBusy'};}
@@ -180,7 +192,7 @@ contextBridge.exposeInMainWorld('lab',{
      'renodx-nr':{name:'RenoDX 神经渲染插件'},'renodx-multipass':{name:'RenoDX 多通道插件'},'mfg-renodx':{name:'MFG 解锁插件 · RenoDX'},feeder:{name:'Feeder 配套组件'},overlay:{name:'F8 紧凑叠加层',internal:true}},packages,
      runtimePacks:[{id:'sr-baseline',component:'dlss-sr',name:'DLSS 超分辨率',version:'3.7.10',size:2048,downloaded:true,packageIds:['qa-sr'],compatibility:selectable},
        ...['renodx-nr','renodx-multipass'].map(id=>({id,component:id,version:'1.0',downloaded:false,compatibility:selectable})),
-       ...(engineCatalog ? [{id:'mfg-universal',component:'mfg-universal',version:'1.7.1',downloaded:true,engine:engineMfg,compatibility:routeManaged},
+       ...(engineCatalog ? [{id:'mfg-universal',component:'mfg-universal',version:'1.7.2',downloaded:true,engine:engineMfg,compatibility:routeManaged},
          {id:'encore',component:'encore',version:engineEncore.version,downloaded:true,engine:engineEncore,compatibility:routeManaged}] : [])],
      root:'QA',warnings:[],updates:libraryUpdates()};
  },
@@ -237,16 +249,24 @@ contextBridge.exposeInMainWorld('lab',{
  },
  onBatchScanProgress:fn=>{batchListeners.add(fn);return()=>batchListeners.delete(fn);},
  gamesExportScan:async(report,format)=>{audit.scanExported={report,format};return{ok:true,file:'D:\\QA\\report.'+format};},
- onUpdateProgress:()=>()=>{},downloadUpdate:async()=>({ok:false,message:'not available'}),applyUpdate:async()=>({ok:false}),rollbackUpdate:async()=>({ok:false}),
+ onUpdateProgress:fn=>{updateProgress=fn;return()=>{updateProgress=undefined;};},
+ downloadUpdate:async()=>{
+   if(!updateFixture)return {ok:false,message:'not available'};
+   updateProgress?.({phase:'download',received:1048576,total:softwareRelease.size});
+   await new Promise(resolve=>{finishSoftwareDownload=resolve;});
+   softwareRelease.staged=true;return {...softwareRelease,ok:true};
+ },
+ applyUpdate:async()=>{audit.openedSoftware=softwareRelease.assetName;return {ok:!!softwareRelease.staged};},
+ rollbackUpdate:async()=>({ok:false}),
  enhancedImportModel:async (_file,meta)=>{
    audit.imports=(audit.imports||[]).concat(meta?.expectedModelId||'any');
    if (meta?.expectedModelId !== '310.8.Lecram') return {ok:false,cancelled:true};
    audit.lecramImported=true;
    return {ok:true,model:{id:meta.expectedModelId,compatibility:{status:'incompatible'}}};
  },
- checkUpdate:async()=>({current:'0.1.0',latest:null,newer:false}),
+ checkUpdate:async()=>({...softwareRelease}),
  recents:async()=>{audit.recentsReads=(audit.recentsReads||0)+1;return recentRows},onJob:fn=>{jobListeners.add(fn);return()=>jobListeners.delete(fn)},scan:async()=>{audit.scans=(audit.scans||0)+1;await discoveryGate;return{ok:true,api:'DirectX 12'}},
- boot:async()=>({version:'0.1.0',theme:'dark',lang:uiLanguage}),library:async()=>{audit.gameLists=(audit.gameLists||0)+1;if(libraryGate){await libraryGate;}if(libraryGamesOverride)return libraryGamesOverride;return[{key:'qa',name:'Workflow test',dir:'D:\\QA\\Game',launcher:'Test fixture',
+ boot:async()=>({version:runningVersion,theme:'dark',lang:uiLanguage}),library:async()=>{audit.gameLists=(audit.gameLists||0)+1;if(libraryGate){await libraryGate;}if(libraryGamesOverride)return libraryGamesOverride;return[{key:'qa',name:'Workflow test',dir:'D:\\QA\\Game',launcher:'Test fixture',
    poster:{url:artFixture(60,90),tall:true},tile:artFixture(160,90)},
    {key:'qa-wuwa',name:'Wuthering Waves',dir:wuwaDir,launcher:'Test fixture',poster:{url:artFixture(60,90),tall:true},tile:artFixture(160,90)},
    {key:'qa-new',name:'Unconfigured game',dir:'D:\\QA\\New',launcher:'Test fixture',poster:{url:artFixture(60,90),tall:true},tile:artFixture(160,90)}]},
@@ -328,10 +348,11 @@ contextBridge.exposeInMainWorld('lab',{
      ? {mode:patch.performanceMonitor,corner:1} : {mode:1,corner:1,...monitorModes.get(patch.exePath),...patch.performanceMonitor});
    if(patch.route==='xemfg') {
      const previous=graphicsConfigs[_dir]?.route==='xemfg' ? graphicsConfigs[_dir] : {};
-     graphicsConfigs[_dir]={route:'xemfg',exePath:patch.exePath,filesPresent:true,providerVersion:'1.7.1',...previous,
+     graphicsConfigs[_dir]={route:'xemfg',exePath:patch.exePath,filesPresent:true,providerVersion:'1.7.2',...previous,
+       ...(patch.graphics?.xeMode && {xeMode:patch.graphics.xeMode}),
        ...(patch.graphics?.multiplier ? {multiplier:patch.graphics.multiplier,enabled:true,dynamic:false} : {})};
    }
-   if(patch.route==='xemfg-optiscaler')graphicsConfigs[_dir]={route:patch.route,exePath:patch.exePath,providerVersion:'1.7.1',filesPresent:true};
+   if(patch.route==='xemfg-optiscaler')graphicsConfigs[_dir]={route:patch.route,exePath:patch.exePath,providerVersion:'1.7.2',filesPresent:true,upgradeHost:patch.graphics?.upgradeHost || graphicsConfigs[_dir]?.upgradeHost};
    if(patch.route==='optifg')graphicsConfigs[_dir]={route:patch.route,exePath:patch.exePath,providerVersion:'0.2.0-patch1',filesPresent:true,
      enabled:graphicsConfigs[_dir]?.route==='optifg' ? graphicsConfigs[_dir].enabled : true,engine:'FSR FG',neural:false};
    if(['anr','anr-addon','sm86','sm86-delta'].includes(patch.route))

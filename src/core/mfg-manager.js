@@ -109,7 +109,7 @@ function evaluateMfgGpuSupport(gpuName = '', driverVersion = '', hardwareProfile
   // RenoDX Ada addon. Only a fingerprint-identified, integrated engine may use
   // this experimental support assessment; a filename/version label is not enough.
   if (['turing', 'ampere'].includes(arch.code) && standaloneEngine?.component === 'mfg-universal' &&
-      standaloneEngine.verified && standaloneEngine.compatible && /^1\.7\.[01](?:\.\d+)?$/.test(standaloneEngine.version)) {
+      standaloneEngine.verified && standaloneEngine.compatible && /^1\.7\.[012](?:\.\d+)?$/.test(standaloneEngine.version)) {
     return {
       gpuName, driverVersion, hardwareProfile, architecture: arch,
       hardwareOpticalFlow: false, hardwareFlipMetering: false,

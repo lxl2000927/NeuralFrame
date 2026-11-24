@@ -3,6 +3,7 @@
 // Finds the games already on the machine and installs DLSS 5 Neural
 // Rendering into them, using the scanners in src/core.
 const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Menu, Tray, nativeImage, screen } = require('electron');
+const { version: applicationVersion, distribution: releaseDistribution } = require('./package.json');
 const previewFs = require('./src/core/preview-fs');
 const fs = previewFs.fs;
 const { ComponentReview } = require('./src/core/component-review');
@@ -19,15 +20,26 @@ function runtimes() {
   });
 }
 async function requireRuntime(options) {
-  if (onDemandPayload()) await runtimes().require(require('./src/core/runtime-payload').requiredPacks(options));
+  const model = options.modelDownload;
+  const onDemand = onDemandPayload();
+  if (!onDemand && !model) return;
+  const ids = onDemand ? require('./src/core/runtime-payload').requiredPacks(options) : [];
+  await runtimes().require(ids, model);
 }
 function components() {
   return unifiedComponents ||= new (require('./src/core/component-library').ComponentLibrary)(app.getPath('userData'), {
     payloadDir: resolvePayloadRoot(), overlayDir: app.isPackaged ? path.join(process.resourcesPath, 'overlay') : path.join(__dirname, 'dist/overlay'),
-    gameDirectories: () => knownFolders(loadState(), lastGames).map(game => game.dir)
+    gameDirectories: () => {
+      const state = loadState();
+      return [...knownFolders(state, lastGames).map(game => game.dir), ...(state.hidden || [])];
+    }
   });
 }
-function updates() { return componentUpdates ||= new (require('./src/core/component-updates').ComponentUpdates)(components(),{fetcher:(...args)=>require('electron').net.fetch(...args)}); }
+function createComponentUpdates(onProgress) {
+  const { ComponentUpdates } = require('./src/core/component-updates');
+  return new ComponentUpdates(components(),{fetcher:(...args)=>require('electron').net.fetch(...args),onProgress});
+}
+function updates() { return componentUpdates ||= createComponentUpdates(); }
 async function managedReview(event, dir, request, work, token) {
   const library = components();
   const componentDeploy = require('./src/core/component-deploy');
@@ -648,7 +660,7 @@ ipcMain.handle('boot', () => {
     return fs.existsSync(file) ? pathToFileURL(file).href : null;
   };
   return {
-    version: require('./package.json').version,
+    version: applicationVersion,
     distribution: require('./package.json').distribution || null,
     // Said at launch rather than at the moment somebody presses Install. The
     // app used to look completely healthy right up until it could not work.
@@ -760,7 +772,7 @@ ipcMain.handle('save-diagnostics', async (event, dir, activity) => {
   const { text, sources } = diagnostics.report({
     gameDir: dir, exeDir, userData, approvedSources: found,
     facts: {
-      app: app.getVersion(), electron: process.versions.electron, platform: `${process.platform} ${os.release()}`,
+      app: applicationVersion, electron: process.versions.electron, platform: `${process.platform} ${os.release()}`,
       gpu, game: path.basename(dir), 'game folder': dir, 'executable folder': exeDir,
       activity: typeof activity === 'string' && activity.length <= 512 * 1024 ? `\n${activity}` : null
     }
@@ -1250,7 +1262,7 @@ ipcMain.handle('unhide', (_event, dir) => {
   return true;
 });
 
-ipcMain.handle('reset', () => {
+function resetApplicationSettings() {
   try { fs.unlinkSync(stateFile()); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   // Clear the in-memory object too; otherwise the next setting save resurrects
   // the configuration that was just reset on disk.
@@ -1258,7 +1270,8 @@ ipcMain.handle('reset', () => {
   invalidateLibraryView();
   overlayBridge?.refreshPreferences();
   return true;
-});
+}
+ipcMain.handle('reset', resetApplicationSettings);
 
 ipcMain.handle('open', async (_event, dir) => {
   if (dir === posterDir()) await fs.promises.mkdir(dir, { recursive: true });
@@ -1706,10 +1719,7 @@ ipcMain.handle('art-fetch', async (_event, dir, name, appid, kind, options = {})
 
 // ---------- installing ----------
 
-// Releases move quickly and nothing here updates itself, so someone can sit
-// on a build for weeks without knowing. One lookup per launch, no identifiers
-// sent, no download started: the answer is a version number and a link the
-// person may click. Any failure is silence - this must never delay a start.
+// Launch and manual checks share the same release. Downloads begin only on request.
 let updateAnswer = null;
 let updateInFlight = null;
 let updateTransfer = null;
@@ -1747,22 +1757,23 @@ function newerRelease(current, latest) {
   return false;
 }
 async function checkRelease() {
-  const current = app.getVersion();
+  const current = applicationVersion;
   const answer = {current, latest:null, newer:false};
   const currentImage = process.platform === 'linux' && process.env.APPIMAGE ? path.resolve(process.env.APPIMAGE) : null;
-  const channel = currentImage && require('./src/core/appimage-update');
+  const windows = process.platform === 'win32' && process.arch === 'x64';
+  const imageChannel = currentImage && require('./src/core/appimage-update');
+  if (windows) answer.platform = process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE ? 'windows-portable' : 'windows-setup';
   updateCandidate = null;
   if (currentImage) {
     answer.platform = 'linux-appimage';
     try {
-      await channel.recoverInterrupted(currentImage);
+      await imageChannel.recoverInterrupted(currentImage);
       answer.rollbackAvailable = fs.statSync(currentImage + '.previous', {throwIfNoEntry:false})?.isFile() === true;
     } catch (error) {
       answer.updateMessage = error.message;
     }
   }
-  const distribution = require('./package.json').distribution;
-  const repository = distribution?.channel === 'independent' ? distribution.releaseRepository : 'skyi7943-cmd/DLSS5-Swapper-Enhanced';
+  const repository = releaseDistribution?.channel === 'independent' ? releaseDistribution.releaseRepository : 'skyi7943-cmd/DLSS5-Swapper-Enhanced';
   if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository)) {
     return { ...answer, channel: 'independent', status: 'unconfigured',
       message: '独立分支尚未配置软件发布源；插件可在组件库中单独检查更新。' };
@@ -1777,11 +1788,12 @@ async function checkRelease() {
     const latest = String(release.tag_name || '').replace(/^v/, '');
     answer.latest = latest;
     answer.newer = newerRelease(current, latest);
-    if (currentImage && answer.newer && !answer.updateMessage) {
+    if ((windows || currentImage) && answer.newer && !answer.updateMessage) {
       try {
-        const candidate = await channel.resolve(release, {repository, arch:process.arch,
+        const channel = windows ? require('./src/core/windows-update') : imageChannel;
+        const candidate = await channel.resolve(release, {repository, arch:process.arch, platform:answer.platform,
           fetchImpl:(url, options) => require('electron').net.fetch(url, options)});
-        answer.staged = await channel.isStaged(candidate, currentImage);
+        answer.staged = await channel.isStaged(candidate, currentImage || windowsUpdateDirectory());
         updateCandidate = candidate;
         Object.assign(answer, {canInstall:true, assetName:candidate.name, size:candidate.size});
       } catch (error) {
@@ -1800,7 +1812,7 @@ async function checkRelease() {
 }
 ipcMain.handle('update-check', (_event, refresh) => {
   if (updateInFlight) return updateInFlight;
-  if (updateSwitching || updateTransfer) return updateAnswer || {current:app.getVersion(), latest:null, newer:false};
+  if (updateSwitching || updateTransfer) return updateAnswer || {current:applicationVersion, latest:null, newer:false};
   if (!refresh && updateAnswer) return updateAnswer;
   updateInFlight = checkRelease().then(answer => (updateAnswer = answer))
     .finally(() => { updateInFlight = null; });
@@ -1810,17 +1822,50 @@ function currentAppImage(){
   if(process.platform!=='linux'||!process.env.APPIMAGE)throw Error('仅 Linux AppImage 支持应用内更新');
   return path.resolve(process.env.APPIMAGE);
 }
-ipcMain.handle('update-download',async(event)=>{
-  if(updateTransfer)return updateTransfer;
-  if(updateInFlight || updateSwitching)return {...updateAnswer,ok:false,message:'软件更新操作正在进行'};
-  if(!updateAnswer?.canInstall||!updateCandidate)return Promise.resolve({...updateAnswer,ok:false,message:updateAnswer?.updateMessage||'没有可下载的 AppImage 更新'});
-  const current=currentAppImage(),channel=require('./src/core/appimage-update');
-  updateTransfer=channel.download(updateCandidate,current,{fetchImpl:(url,options)=>require('electron').net.fetch(url,options),
-    onProgress:progress=>{if(!event.sender.isDestroyed())event.sender.send('update-progress',progress);},
-  }).then(()=>{updateAnswer={...updateAnswer,staged:true};return{...updateAnswer,ok:true};}).catch(error=>({...updateAnswer,ok:false,message:error.message}))
-    .finally(()=>{updateTransfer=null;});
+function windowsUpdateDirectory() {
+  return path.join(app.getPath('downloads'), 'NeuralFrame');
+}
+ipcMain.handle('update-download', async (event) => {
+  if (updateTransfer) return updateTransfer;
+  if (updateInFlight || updateSwitching) return {...updateAnswer, ok:false, message:'软件更新操作正在进行'};
+  if (!updateAnswer?.canInstall || !updateCandidate)
+    return {...updateAnswer, ok:false, message:updateAnswer?.updateMessage || '没有可下载的软件更新'};
+  const windows = updateAnswer.platform.startsWith('windows-');
+  const channel = windows ? require('./src/core/windows-update') : require('./src/core/appimage-update');
+  const location = windows ? windowsUpdateDirectory() : currentAppImage();
+  updateTransfer = channel.download(updateCandidate, location, {
+    ...(windows && {cacheRoot:path.join(app.getPath('userData'), 'software-updates')}),
+    fetchImpl:(url, options) => require('electron').net.fetch(url, options),
+    onProgress:progress => { if (!event.sender.isDestroyed()) event.sender.send('update-progress', progress); },
+  }).then(() => {
+    updateAnswer = {...updateAnswer, staged:true};
+    return {...updateAnswer, ok:true};
+  }).catch(error => ({...updateAnswer, ok:false, message:error.message}))
+    .finally(() => { updateTransfer = null; });
   return updateTransfer;
 });
+
+async function openWindowsUpdate() {
+  if (updateSwitching || updateTransfer || updateInFlight) return {ok:false, message:'软件更新操作正在进行'};
+  updateSwitching = true;
+  try {
+    const channel = require('./src/core/windows-update');
+    const directory = windowsUpdateDirectory();
+    if (!updateAnswer?.staged || !updateCandidate || !await channel.isStaged(updateCandidate, directory)) {
+      updateAnswer = {...updateAnswer, staged:false};
+      throw Error('更新文件缺失或校验失败，请重新下载');
+    }
+    const file = path.join(directory, updateCandidate.name);
+    if (updateAnswer.platform === 'windows-portable') shell.showItemInFolder(file);
+    else {
+      const error = await shell.openPath(file);
+      if (error) throw Error(error);
+    }
+    return {ok:true};
+  } catch (error) {
+    return {ok:false, message:error.message};
+  } finally { updateSwitching = false; }
+}
 async function switchAppImage(rollback) {
   if (updateSwitching || updateTransfer || updateInFlight) return {ok:false, message:'软件更新操作正在进行'};
   updateSwitching = true;
@@ -1847,7 +1892,7 @@ async function switchAppImage(rollback) {
   setTimeout(() => { app.relaunch({execPath:current, args:[]}); app.exit(0); }, 250);
   return {ok:true, message:warning};
 }
-ipcMain.handle('update-apply', () => switchAppImage(false));
+ipcMain.handle('update-apply', () => updateAnswer?.platform?.startsWith('windows-') ? openWindowsUpdate() : switchAppImage(false));
 ipcMain.handle('update-rollback', () => switchAppImage(true));
 ipcMain.handle('details', async (_event, dir, priority) => {
   let inspection;
@@ -1881,6 +1926,8 @@ ipcMain.handle('details', async (_event, dir, priority) => {
       hasXeMfgDlssSrDx12: target.hasXeMfgDlssSrDx12, hasXeMfgDlssSrVk: target.hasXeMfgDlssSrVk,
       hasXeMfgDlssRrDx12: target.hasXeMfgDlssRrDx12, hasXeMfgDlssRrVk: target.hasXeMfgDlssRrVk,
       hasXeMfgDlssFgDx12: target.hasXeMfgDlssFgDx12,
+      hasGameStreamlineFg: target.hasGameStreamlineFg, steamMiles:target.steamMiles, sm86NativeKinds:target.sm86NativeKinds,
+      xeMfgHostCurrent:target.xeMfgHostCurrent,
       xeMfgOptiHost: target.xeMfgOptiHost, hasOptiScalerConfig: target.hasOptiScalerConfig,
       optiFgHost: target.optiFgHost, hasOptiFgDx12Upscaler: target.hasOptiFgDx12Upscaler, optiFgInputs: target.optiFgInputs,
       hasNativeDlssFg: target.hasNativeDlssFg, hasNativeFg: target.hasNativeFg, hasAnrAddonHost: target.hasAnrAddonHost,
@@ -1927,6 +1974,7 @@ ipcMain.handle('details', async (_event, dir, priority) => {
 
 let mutationBusy = false;
 let mutationFinished;
+let selectionWriteDir;
 const libraryReads = new Map();
 ipcMain.handle('set-api-override', async (_event, dir, exePath, value) => {
   if (mutationBusy) return { ok: false, code: 'errJobBusy' };
@@ -1960,9 +2008,11 @@ ipcMain.handle('set-reshade-proxy', async (_event, dir, exePath, value) => {
   else state.reshadeProxy[key] = value;
   return saveState(state) ? { ok: true } : { ok: false, code: 'errApiSave' };
 });
-async function exclusiveMutation(work) {
+async function exclusiveMutation(work, selectionDir) {
   if (mutationBusy) return { ok: false, code: 'errJobBusy', message: uiText('另一项操作正在进行，请稍后重试。', 'Another operation is in progress. Try again shortly.') };
   mutationBusy = true;
+  selectionWriteDir = typeof selectionDir === 'string' && path.isAbsolute(selectionDir)
+    ? path.resolve(selectionDir).toLowerCase() : undefined;
   let release;
   mutationFinished = new Promise(resolve => { release = resolve; });
   try {
@@ -1971,7 +2021,7 @@ async function exclusiveMutation(work) {
     return await work();
   }
   catch (err) { return { ok: false, code: err.code, message: err.message, dependencies: err.dependencies, downloads: err.downloads }; }
-  finally { mutationBusy = false; mutationFinished = undefined; gameInspection?.invalidate(); release(); }
+  finally { mutationBusy = false; mutationFinished = undefined; selectionWriteDir = undefined; gameInspection?.invalidate(); release(); }
 }
 
 ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, reviewToken) => exclusiveMutation(() => managedReview(event, dir, { kind: 'install', exePath, requestedRoute, requestedApi }, async () => {
@@ -2235,11 +2285,11 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi, re
   }
 }, reviewToken)));
 
-ipcMain.handle('restore', (event, dir, reviewToken) => exclusiveMutation(() => reviews().run(dir, { kind: 'restore' }, async () => {
+async function restoreGameFiles(event, dir) {
   let restoredManifest = null;
   const send = (e) => {
     if (e.code === 'restoreDone') restoredManifest = e.params;
-    if (!previewFs.active()) event.sender.send('job', { ...e, dir });
+    if (!previewFs.active() && !event.sender.isDestroyed?.()) event.sender.send('job', { ...e, dir });
   };
   try {
     let old = null;
@@ -2271,7 +2321,9 @@ ipcMain.handle('restore', (event, dir, reviewToken) => exclusiveMutation(() => r
   } catch (err) {
     return { ok: false, code: err.code, message: err.message };
   }
-}, reviewToken)));
+}
+ipcMain.handle('restore', (event, dir, reviewToken) => exclusiveMutation(() =>
+  reviews().run(dir, {kind:'restore'}, () => restoreGameFiles(event, dir), reviewToken)));
 
 // ---------- Enhanced Modules (DLSS 5 Neural Rendering + RTX 40 MFG + Diagnostics) ----------
 const neuralModels = require('./src/core/neural-models');
@@ -2373,7 +2425,15 @@ ipcMain.handle('library-components', async (_event, dir) => {
   }
   return libraryReads.get(key);
 });
-ipcMain.handle('library-select', (_event, dir, selection) => exclusiveMutation(()=>components().select(dir,selection)));
+ipcMain.handle('library-selection', async (_event, dir) => {
+  try {
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) throw Error('无效的游戏目录');
+    const target = path.resolve(dir).toLowerCase();
+    while (selectionWriteDir === target) await mutationFinished;
+    return {ok:true, selected:components().profile(dir).selected};
+  } catch (error) { return {ok:false, message:error.message, code:error.code}; }
+});
+ipcMain.handle('library-select', (_event, dir, selection) => exclusiveMutation(()=>components().select(dir,selection),dir));
 ipcMain.handle('library-check-runtime', (_event, id) => exclusiveMutation(async () => {
   await runtimes().require([id]);
   return { ok: true };
@@ -2400,15 +2460,17 @@ ipcMain.handle('library-download', (event, id, source) => {
       // First-use seeding can also outlive a cancellation from the row button.
       if (transfer.cancelled) return {ok:false, cancelled:true};
       updater.onProgress = p => { if (!event.sender.isDestroyed()) event.sender.send('library-progress', p); };
+      transfer.updater = updater;
       return await updater.download(id, downloadSourceOptions(source));
     }
     finally { updater.onProgress = () => {}; }
   }).finally(() => { if (libraryTransfer === transfer) libraryTransfer = null; });
 });
 ipcMain.handle('library-cancel', (event, options) => {
-  if (libraryTransfer && libraryTransfer.sender !== event.sender) return;
-  if (libraryTransfer) libraryTransfer.cancelled = true;
-  return updates().cancel({discard:options?.discard === true});
+  if (!libraryTransfer) return updates().cancel(); // Cancel a version check.
+  if (libraryTransfer.sender !== event.sender) return;
+  libraryTransfer.cancelled = true;
+  return libraryTransfer.updater?.cancel({discard:options?.discard === true}) || {ok:true};
 });
 function recordComponentChange(dir, result, action) {
   if (!result.ok || !result.historyManifest) return;
@@ -2435,17 +2497,99 @@ ipcMain.handle('library-apply', (_event, dir, token, draft) => exclusiveMutation
   }
   recordComponentChange(dir, result, 'component-update');
   return result;
-}));
+}, token && draft !== undefined ? dir : undefined));
 ipcMain.handle('library-rollback', (_event,dir,id,token) => exclusiveMutation(async()=>{
   const result=await reviews().run(dir,{kind:'component-rollback',id},()=>components().rollback(dir,id),token);
   if(result.ok&&!result.preview){try{await components().select(dir,result.selection);}catch(e){result.recordWarning=[result.recordWarning,uiText('组件已回滚，但版本选择未保存', 'Rolled back the component files, but could not save the version selection')+' · '+e.message].filter(Boolean).join('\n');}}
   recordComponentChange(dir, result, 'component-rollback');
   return result;
-}));
-ipcMain.handle('library-clean-cache', (_event, options) => exclusiveMutation(async () => {
+}, token ? dir : undefined));
+async function cleanComponentCache(options) {
   const library = components();
   await library.init();
-  return library.cleanCache({component:typeof options?.component === 'string' ? options.component : '',olderThanDays:Number(options?.olderThanDays) || 0});
+  return library.cleanCache({
+    component: typeof options?.component === 'string' ? options.component : '',
+    olderThanDays: Number(options?.olderThanDays) || 0,
+    extraGameDirectories: [...trackedDeploymentLocations([]).values()].filter(row => row.deployed).map(row => row.dir)
+  });
+}
+
+ipcMain.handle('library-clean-cache', (_event, options) => exclusiveMutation(() => cleanComponentCache(options)));
+const { DeploymentReset, deploymentLocations, deploymentCandidates } = require('./src/core/reset-deployments');
+function trackedDeploymentLocations(folders) {
+  const records = history().read(error => { throw error; }).rows;
+  return deploymentLocations(app.getPath('userData'), folders, [...records, ...history().pending.values()]);
+}
+function currentGameFolders() {
+  const state = loadState();
+  return knownFolders(state, [...lastGames, ...(state.hidden || []).map(dir => ({dir}))]);
+}
+function findResetDeployments() {
+  return deploymentCandidates(trackedDeploymentLocations(currentGameFolders()), overlayLibrary().installedRecords());
+}
+async function rememberGameBackups() {
+  // Legacy installations may have only a game-local manifest and a manual library entry.
+  const store = reviews();
+  for (const {dir} of currentGameFolders()) {
+    if (!gameMenu.hasBackup(dir)) continue;
+    const record = store.read(dir);
+    if (record.backupObservedAt && (!record.lastApplied || record.backupObservedAt > record.lastApplied.at)) continue;
+    await store.save(dir, {...record, backupObservedAt:new Date().toISOString()});
+  }
+}
+
+let deploymentReset;
+ipcMain.handle('preview-reset-deployments', event => exclusiveMutation(async () => {
+  const restore = target => async () => {
+    const overlays = overlayLibrary();
+    for (const record of target.overlays) {
+      // An offline game must retain its overlay receipt for retry.
+      if (!fs.existsSync(record.directory)) throw Error('找不到游戏目录或还原备份');
+      if (fs.realpathSync(record.directory) !== record.directory) throw Error('游戏目录已变化，请重新检查。');
+      if (fs.existsSync(record.file) && require('./src/overlays').readNative(record.file).sha256 !== record.sha256)
+        throw Error('叠加层文件已被修改：' + record.file);
+      if (!target.gameFiles) reviews().assertUnlockedWithin(record.directory);
+    }
+    if (!target.gameFiles) await guards.assertGameClosed(target.dir);
+    const result = target.gameFiles ? await restoreGameFiles(event, target.dir) : {ok:true};
+    if (result.ok && target.overlays.length) {
+      const remaining = new Set(overlays.installedRecords().map(row => row.id));
+      for (const record of target.overlays) if (remaining.has(record.id)) overlays.uninstall(record.id);
+    }
+    return result;
+  };
+  deploymentReset = new DeploymentReset(findResetDeployments,
+    target => reviews().plan(target.dir, {kind:'restore'}, restore(target)),
+    (target, signature) => reviews().confirmReviewed(target.dir, {kind:'restore'}, restore(target), signature));
+  return deploymentReset.preview();
+}));
+ipcMain.handle('reset-with-cache', (event, token) => exclusiveMutation(async () => {
+  let games = [];
+  if (token !== undefined) {
+    if (!deploymentReset) return {ok:false, message:'还原预览已失效，请重新检查。'};
+    const restored = await deploymentReset.apply(token, progress => {
+      if (!event.sender.isDestroyed?.()) event.sender.send('reset-progress', progress);
+    });
+    if (!restored.ok) return restored;
+    games = restored.games;
+  } else {
+    await rememberGameBackups();
+  }
+  // The cleaner needs the current game index to protect installed and rollback versions.
+  let result;
+  try { result = await cleanComponentCache(); }
+  catch (error) { return {ok:false, games, message:error.message}; }
+  if (!result.ok) return {...result, games};
+  if (result.warning) return {ok:false, games, message:uiText(
+    '部分组件缓存未能清理，已保留当前设置。请稍后重试。',
+    'Some component cache files could not be removed. Settings were kept. Please try again.'
+  )};
+  try {
+    resetApplicationSettings();
+  } catch (error) {
+    return {ok:false, games, message:uiText('缓存已清理，恢复设置失败。', 'Cache cleared, but settings could not be reset.') + ' ' + error.message};
+  }
+  return {ok:true, games, removedPackages:result.removedPackages, removedBytes:result.removedBytes};
 }));
 ipcMain.handle('library-import', (_event, component) => exclusiveMutation(async () => {
   const { DEFINITIONS } = require('./src/core/component-definitions');
@@ -2512,15 +2656,29 @@ async function prepareComponents(request, dependencies, source) {
     if (runtimeIds.length) {
       send({stage:'prepare', name:cache.pack(runtimeIds[0]).name});
       request.cache = cache;
-      const result = await cache.prepare(runtimeIds, downloadSourceOptions(source));
-      request.cache = null;
-      if (result.cancelled) return result;
-      if (unifiedComponents) unifiedComponents.initialized = false;
+      try {
+        const result = await cache.prepare(runtimeIds, downloadSourceOptions(source));
+        if (!result.ok) return result;
+      } finally {
+        // Earlier packs may have been published before a later one failed or was paused.
+        if (unifiedComponents) unifiedComponents.initialized = false;
+        request.cache = null;
+      }
     }
     const dir = app.getPath('userData');
     for (const dependency of selected) {
       signal.throwIfAborted();
       if (typeof dependency === 'string' && dependency.startsWith('runtime:')) continue;
+      const model = require('./src/core/neural-models').MODEL_DATABASE.find(entry => entry.downloadId && dependency === 'model:' + entry.downloadId);
+      if (model) {
+        // Component checks and game preparation have independent progress and cancellation owners.
+        const updater = createComponentUpdates(progress => send({...progress,name:model.name}));
+        request.cache = updater;
+        const result = await updater.download(model.downloadId, downloadSourceOptions(source));
+        request.cache = null;
+        if (!result.ok) return result;
+        continue;
+      }
       send({stage:'prepare', name:dependency});
       if (dependency === 'dgvoodoo') await ensureDgVoodoo(dir, signal);
       else if (dependency === 'lumenite') await ensureLumenite(dir, signal);

@@ -25,6 +25,14 @@ test('Encore debug IPC prepares exact dependencies, previews, applies changes an
   const operation=token=>handlers.get('enhanced-apply')(event,game,patch,token);
   const missing=await operation();assert.equal(missing.code,'errRuntimeComponents',JSON.stringify(missing));
   assert.deepEqual(Array.from(missing.dependencies).sort(),['runtime:encore','runtime:fg-modern','runtime:sl-modern']);
+  const selectedModel = require('../src/core/component-definitions').RANKFTW_NR_310916;
+  const withModel = await handlers.get('enhanced-apply')(event,game,{...patch,neuralMode:'latest_compatible',neuralModelId:'310.9.16'});
+  assert.equal(withModel.code,'errRuntimeComponents',JSON.stringify(withModel));
+  assert.deepEqual(Array.from(withModel.dependencies).sort(),['model:' + selectedModel.id,...missing.dependencies].sort());
+  assert.ok(withModel.downloads.some(file => file.size === selectedModel.size && file.name.includes('310.9.16')));
+  const unsupportedModel = await handlers.get('enhanced-apply')(event,game,{...patch,neuralMode:'latest_compatible',neuralModelId:'310.8.SF-v2-rankftw'});
+  assert.equal(unsupportedModel.code,'errEncore');
+  assert.equal(unsupportedModel.dependencies,undefined);
   assert.equal(fs.existsSync(path.join(game,'version.dll')),false);
   assert.equal((await handlers.get('component-prepare')(event,missing.dependencies)).ok,true);
   let preview=await operation();assert.ok(preview.preview,JSON.stringify(preview));assert.equal(fs.existsSync(path.join(game,'version.dll')),false);

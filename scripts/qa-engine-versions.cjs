@@ -7,7 +7,7 @@ const path=require('node:path'),assert=require('node:assert/strict'),fs=require(
   const p=await app.firstWindow();p.setDefaultTimeout(15000);
   const errors=[];p.on('pageerror',e=>errors.push(e.message));
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].show());
-  await p.evaluate(async()=>{window.qa.setEngineCatalog(true);await window.lab.componentPrepare();await window.lab.libraryDownload('smartergamers-qa');});
+  await p.evaluate(async()=>{window.qa.setEngineCatalog(true);window.qa.setGraphicsEvidence('D:\\QA\\Game',{sm86NativeKinds:['sr','fg','streamline']});await window.lab.componentPrepare();await window.lab.libraryDownload('smartergamers-qa');});
   const nav=p.getByRole('navigation');
   await nav.getByRole('button',{name:'游戏',exact:true}).click();
   const choose=async(label,option)=>{await p.getByRole('combobox',{name:label,exact:true}).click();await p.getByRole('option',{name:option}).click();};
@@ -18,7 +18,7 @@ const path=require('node:path'),assert=require('node:assert/strict'),fs=require(
   await expect(p.getByRole('heading',{name:'神经渲染高级参数',exact:true})).toBeVisible();
   const logging=p.getByRole('checkbox',{name:'插件诊断日志',exact:true});
   assert.equal(await logging.isDisabled(),true,'Installed MFG 1.7.0 has no adapted diagnostics flag');
-  await choose('鸣潮独立加载器版本','使用推荐版本 1.7.1');
+  await choose('鸣潮独立加载器版本','使用推荐版本 1.7.2');
   assert.equal(await logging.isEnabled(),true);
   await p.getByRole('spinbutton',{name:'结构强度',exact:true}).fill('1.15');
   await pickGame(/Workflow test/);await pickGame(/Wuthering Waves/);
@@ -39,7 +39,7 @@ const path=require('node:path'),assert=require('node:assert/strict'),fs=require(
   assert.equal(await p.getByRole('spinbutton',{name:'结构强度',exact:true}).inputValue(),'0.7');
   await p.getByRole('spinbutton',{name:'色调强度',exact:true}).fill('1.2');
   patch=await preview();assert.equal(patch.mfgAdvanced.tone,1.2);assert.equal(patch.mfgPackageId,undefined,'Appearance-only edit must retain installed engine');await cancel();
-  await choose('鸣潮独立加载器版本','使用推荐版本 1.7.1');
+  await choose('鸣潮独立加载器版本','使用推荐版本 1.7.2');
   await logging.check();
   await choose('鸣潮独立加载器版本',/^保留已安装版本 1\.7\.0/);
   assert.equal(await logging.isChecked(),false);
@@ -83,9 +83,14 @@ const path=require('node:path'),assert=require('node:assert/strict'),fs=require(
   assert.equal(patch.neuralModelId,undefined,'ANR previews do not apply a classic neural model selection');
   await expect(p.getByRole('region',{name:'神经渲染配置',exact:true}).getByRole('combobox',{name:'神经渲染模型',exact:true})).toHaveCount(0);
   await choose('渲染后端',/^Dlssg_for_sm86 0.4.2$/);
+  const runtimes=p.getByRole('group',{name:'更新游戏现有运行库'});
+  assert.equal(await runtimes.getByRole('checkbox').count(),4);
+  assert.equal(await runtimes.locator('input:checked').count(),0);
+  await expect(runtimes.getByRole('checkbox',{name:/DLSS 光线重建/})).toBeDisabled();
+  await runtimes.getByRole('checkbox',{name:'DLSS 超分辨率',exact:true}).check();
   assert.equal(await p.getByRole('combobox',{name:'倍率上限',exact:true}).getAttribute('data-value'),'4');
   await choose('倍率上限','6×');await choose('补帧引擎','XeSS');
-  patch=await preview();assert.equal(patch.route,'sm86');assert.equal(patch.graphics.engine,'XeSS');assert.equal(patch.graphics.multiplier,4);await cancel();
+  patch=await preview();assert.equal(patch.route,'sm86');assert.equal(patch.graphics.engine,'XeSS');assert.equal(patch.graphics.multiplier,4);assert.deepEqual(patch.graphics.nativeRuntimes,['sr']);await cancel();
   const backend=p.getByRole('combobox',{name:'渲染后端',exact:true});
   await backend.click();
   assert.equal(await p.getByRole('option',{name:'F7 性能监控'}).count(),0);

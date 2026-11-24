@@ -36,8 +36,7 @@ async function main() {
     }),
     [`dgVoodoo2-${DGVOODOO.version}.zip`, DGVOODOO],
     [`LumeniteFX-${LUMENITE.commit.slice(0, 8)}.zip`, LUMENITE],
-    // An existing author-matched OptiScaler host is an integration-test input.
-    // Production only recognizes the user's installed host by fingerprint.
+    // The old author-matched host exercises optional upgrade and restoration.
     ['XeMFG-OptiScaler-v1.7.1.dll', {
       url:'https://github.com/dashdogy/OptiScaler/releases/download/mfgunlocker-v1.7.1/OptiScaler.dll',
       sha256:'3545cb32e4d09854a5f06f9df47a0d29adb6b7bede7b2a0ed0ab64ba837c1721',

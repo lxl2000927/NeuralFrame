@@ -19,7 +19,7 @@ npm start
 
 ## 原生小组件与按需组件
 
-发布页的 `NeuralFrame-0.1.3-Source.zip` 另带 `dist/runtime-bootstrap/` 和 `dist/overlay/`，用于中文适配、预加载器、F8 桥接及许可证。GitHub 自动生成的 Source code 归档只含仓库文件。使用 Git 克隆时，也可以从本版已安装程序的 `resources/payload/` 和 `resources/overlay/` 复制到上述两个目录。
+配套源码包 `NeuralFrame-<版本>-Source.zip` 另带 `dist/runtime-bootstrap/` 和 `dist/overlay/`，用于中文适配、预加载器、F8 桥接及许可证。GitHub 自动生成的 Source code 归档只含仓库文件。使用 Git 克隆时，也可以从同版本程序的 `resources/payload/` 和 `resources/overlay/` 复制到上述两个目录。
 
 从源码重建 Home 单遍面板和 F7 监控时，先运行 `npm run overlay:prepare`，再运行 `powershell -ExecutionPolicy Bypass -File scripts/build-zh-cn-addon.ps1 -Stage` 编译 32 / 64 位插件并放入 bootstrap。打包前运行 `node scripts/verify-runtime-bootstrap.js` 校验文件。发行程序内置启动资源，大型运行库和插件按清单在使用时下载并校验 SHA-256。[组件来源与分发方式](COMPONENTS.md)
 
@@ -85,7 +85,7 @@ npm test
 
 产物写入 `dist/`。三个入口都先运行 `npm run build:prepare`，准备许可、构建桌面界面、核对原生启动文件的 SHA-256，并检查 F8 插件使用的应用配置目录。
 
-完整测试资源使用 Encore 2.5.0、ANR FG B20、鸣潮 MFG 1.7.1，以及位于 `enhanced/mfg-optiscaler-170/` 的 OptiScaler MFG 1.7.0。更新清单后，重新运行测试载荷准备脚本，可传入之前的缓存目录复用已校验的文件。Encore 的依赖、选版及配置保护见 [ENCORE.md](ENCORE.md)。
+完整测试资源使用 Encore 2.5.0、ANR FG B20、鸣潮 MFG 1.7.2，以及位于 `enhanced/mfg-optiscaler-170/` 的 OptiScaler MFG 1.7.0。更新清单后，重新运行测试载荷准备脚本，可传入之前的缓存目录复用已校验的文件。Encore 的依赖、选版及配置保护见 [ENCORE.md](ENCORE.md)。
 
 `node scripts/prepare-engine-licenses.js` 从仓库的 `assets/licenses/` 按固定 SHA 恢复 MFG 的 MIT 许可证到 bootstrap；`prestart` 与打包前检查会调用它。测试载荷准备前也应运行它。官方 1.7.1 压缩包未携带许可证，因此许可作为独立内置小组件准备，不假设它位于上游压缩包中。运行时清单构建脚本保留官方引擎来源，不重新打包这些引擎。
 

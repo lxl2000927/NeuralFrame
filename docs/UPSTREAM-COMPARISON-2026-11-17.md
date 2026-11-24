@@ -81,3 +81,43 @@ GitHub Releases API 限流时，手动检查可以读取上游公开发布页。
 作者原包 SHA-256 为 `33033037ceda1c705a33e1ce718aa04921f92441cb463ba55554d40566419ec3`，RTX-FG-Manager 4.3.39 配套包为 `0a4a32462a6f694323a7bc5a5a4a28f38f8bb161551de08bb2433c05e8f03fe9`。按参考项目索引校验默认入口的 10 个文件，均符合索引。两份发行包的配置、两份 NVIDIA 运行库及两份许可共 5 项相同，加载器、后端和三份计算内核的指纹各异。[作者发行包](https://github.com/pipotoufikxyz-lgtm/dlssg_for_sm86-MFG-version/releases/tag/sm86-10) · [4.3.39 配套文件索引](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.39/cloud/bundles/indexes/bundles-ca24fdfb2fac3099f61e.json)
 
 原包的 `docs/INSTALL.en.md` 说明 RTX 20/30 路径会更改游戏读取的显卡架构。RTX 40/50 可保留真实架构，但帧数参数还会优先于驱动限制，两个发行包的后端均含相同的诊断说明。手册第 149 行将 0 列为跟随运行时，随包配置器却只接受 1–5。现有证据不足以验证保留驱动限制的安装方式，因此本项目将 Pipo 标为资料项。RTX 50 在支持的游戏和驱动上原生支持 DLSS 4.5 最高 6× 多帧生成。[Pipo 版本说明与原包](https://github.com/pipotoufikxyz-lgtm/dlssg_for_sm86-MFG-version/releases/tag/sm86-10) · [NVIDIA 对 RTX 50 原生 6× 的说明](https://www.nvidia.com/en-us/geforce/news/dlss-4-5-dynamic-multi-frame-generation-6x-mode-released/)
+
+## 2026-11-23 RTXManager 4.3.42 与 NeuralFrame 开发版
+
+RTXManager 正式版为 **4.3.42**（`930109d`），本地参考库和远端 `main` 均为 `0b7c305`。与 11 月 20 日记录的 `b247ddf` 相隔 29 个提交。正式标签之后的两次提交更新了发布通道和下载统计。NeuralFrame 按 0.1.3 开发工作区核对，包含 `2f06737` 之后尚未发布的修改。[上游提交差异](https://github.com/pandaligx/RTX-FG-Manager/compare/b247ddf...0b7c305) · [上游中文更新日志](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/CHANGELOG.zh-CN.md)
+
+下列对照记录适配前的行为。本轮已接入的功能和验证范围见[适配结果](#2026-11-23-适配结果)。
+
+### 可复现的游戏识别差异
+
+| 条件 | NeuralFrame 实测 | RTXManager 4.3.42 |
+| --- | --- | --- |
+| 《迈尔斯》目录中，主程序带 DX12 标记，两个崩溃报告程序带 DX11 标记 | 在隔离目录运行正常游戏扫描，默认选中 `MilesMorales.exe`，但 `crs-handler.exe` 和 `crs-video.exe` 也出现在可选列表。XeMFG 插件自己的进程过滤已识别这两个名字，通用游戏扫描仍会列出它们。[游戏扫描](../src/core/scan.js) · [插件过滤](../src/core/xemfg-optiscaler.js) | 排除这两个程序。已有旧部署时保留原路径供还原，避免更正主程序后丢失原来的备份。[上游扫描器](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/scanner.rs) |
+| Steam 清单文件名为 `appmanifest_123.acf`，内容却写着 `appid=456` | 正常清单识别为 123。只更改清单内的数字后，游戏库登记为 456，后续可能据此关联错误的封面或商店条目。[Steam 游戏发现](../src/library.js) | 建立 Steam 身份索引时核对文件名和清单内 ID，跳过不一致的条目。图标按已确认的安装位置读取本地资源。[身份索引](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/game_identity.rs) · [图标选择](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/steam_artwork.rs) |
+
+### 组件版本、游戏入口与还原
+
+| 项目 | RTXManager | NeuralFrame 开发版 |
+| --- | --- | --- |
+| MFG-Unlocker 与 XeMFG | 1.7.2 为具备原生 DLSS 帧生成的 DX12 游戏提供固定倍率 XeMFG，可由游戏的帧生成开关控制。上游界面将这条路径限定为 RTX 20–50，另提供兼容模式。[参数与版本条件](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/rtxmfg.rs) | 组件库能发现并下载作者的 1.7.2，游戏可用的独立引擎仍推荐 1.7.1。已有的独立 XeMFG 支持固定 2–6×，尚未接入 1.7.2 的游戏开关。Radeon 仍按 API、可用超分输入、宿主和驱动条件选择 XeMFG、OptiFG 或 AFMF。[引擎指纹](../src/core/engine-packages.js) · [XeMFG 配置](../src/core/xemfg.js) · [Radeon 路线](GAME-ROUTES.md) |
+| 外部 OptiScaler 10 宿主 | 安装 MFG 插件时可为已有宿主更新配套主 DLL，保存原件，遇到后续第三方改动会保留备份。清理旧补丁时单凭已知文件指纹不能认领玩家的宿主。[宿主升级与还原](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/mfg_host.rs) · [清理逻辑](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/cleanup.rs) | 验证并复用已有宿主和 Intel 运行库，安装插件、记录 INI 变更，卸载时保留玩家后续修改。当前缺少随插件升级外部宿主主 DLL 并还原原件的流程。[插件部署](../src/core/xemfg-optiscaler.js) · [宿主还原用例](../test/xemfg-optiscaler.test.js) |
+| sm86 标准版、三角洲版、Steam《迈尔斯》 | 标准版仍为 0.4.2，三角洲版推进到 R3。Steam《迈尔斯》（AppID `1817190`）可同步该游戏的 NVIDIA 倍率设置，选择默认值或卸载可还原。DLSS 最高 6×，XeSS 最高 4×。[上游包清单](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/cloud/bundles/catalog.json) · [游戏配置归属](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/miles_profile.rs) | 标准版整包 SHA-256 与上游相同。三角洲路线固定 R1，能发现 R2 HF1 和 R3。对同样具备 DX12、DLSS-G 的两个测试目标，三角洲 EXE 有标准和专版两个选择，《迈尔斯》只有标准版。当前没有该游戏的驱动倍率同步与还原。[配套包](../src/core/runtime-catalog.json) · [游戏分流](../src/shared/install-routes.js) |
+| sm86 的原生运行库 | 安装标准版或三角洲版时，可分别勾选游戏已有的 SR、RR、FG 和 Streamline。四项默认关闭，上游按实际文件预览、备份和恢复。[原生组件安装](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/runtime_files.rs) | 已有按所选 EXE 识别组件、核对位数、选择 SR 和部分已适配 FG、预览及回滚。RR、Streamline 按路线管理。sm86 安装页缺少这四项独立选择，补丁私有目录里的 DLL 也须与游戏原件分别处理。[组件规则](../src/core/component-compatibility.js) · [sm86 安装](../src/core/optional-graphics.js) |
+| Encore、ANR 和 Pipo | Encore 2.5.0、ANR B20、Pipo sm86-10 DX12 均可部署。Pipo 支持六个 DLL 入口多选。[上游方案表](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/README.zh-CN.md) | Encore 2.5.0 已支持 MWSR，ANR 完整包与附加包均已到 B20。Pipo sm86-10 保留版本资料，尚无游戏部署入口。[Encore](ENCORE.md) · [组件与适用范围](GAME-ROUTES.md) |
+
+**文件指纹核对。** 作者发布的 1.7.2 ZIP 校验通过，内含 `MFGUnlocker.dll`（SHA-256 前 16 位 `a9b1c01727fa7276`）。RTXManager 清单中配套的 `version.dll` 为 `e0fd9fa55d08b2dc`。两者送入 NeuralFrame 现有引擎识别函数均返回「等待适配」。三角洲 R1 与 R3 的默认 `version.dll` 入口按上游索引各有 10 份文件，其中 9 份指纹一致，变化的是入口 DLL。此比较仅覆盖该入口的文件组合。[作者 1.7.2 发行包](https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.7.2) · [RTXManager 文件索引](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/cloud/bundles/indexes/bundles-331fa0797a23b5e1e2d2.json)
+
+### 软件更新与界面
+
+- **Windows 软件更新。** RTXManager 可校验、备份并替换自身程序，重新启动失败可回退。NeuralFrame 当前开发版已能下载并校验更新，安装版可打开安装程序，便携版定位下载文件。Linux AppImage 另有重启切换与回滚。[上游更新器](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/updater.rs) · [本地更新功能](FEATURES.md)
+- **设置与方案。** RTXManager 可读取并设置 Windows 硬件加速 GPU 调度，区分生效和待重启状态。NeuralFrame 在组件说明中提示这一运行条件。RTXManager 的玩家方案支持昵称、平台主页、视频与投票。NeuralFrame 提供按游戏保存、导入和导出的本地参数预设。[上游 GPU 调度](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/src/hags.rs) · [上游玩家方案](https://github.com/pandaligx/RTX-FG-Manager/releases/tag/v4.3.42) · [本地预设](../ui/src/features/PresetManager.tsx)
+- **NeuralFrame 已有的游戏内功能。** F7 监控、F8 参数面板、按 GPU 架构核对神经渲染模型，以及无原生 DLSS 游戏的 Feeder 路线，均有本项目自己的适用条件。《鸣潮》走独立加载路线，F7 目前只支持桌面页面预览。[叠加层与运行诊断](FEATURES.md) · [组件与游戏路线](GAME-ROUTES.md)
+
+本次在隔离目录复现了两项识别差异，另运行 39 项现有用例，覆盖引擎指纹、原生输入、Radeon 路线、外部宿主还原、运行库归属和 Steam 封面，全部通过。功能对照依据源码、组件清单和文件指纹。本次未在真实游戏中测量倍率、画质或帧率。
+
+### 2026-11-23 适配结果
+
+- Steam 游戏发现会交叉核对清单文件名和 AppID，扫描时排除两个 Nixxes 崩溃报告程序。历史安装仍可按原记录还原。
+- 独立 MFG 和 XeMFG 已接入 1.7.2。具有原生 Streamline 帧生成输入的 DX12 游戏在 RTX 20–50 上可选择游戏开关或交换链兼容模式。XeMFG 插件可以备份并更新已识别的 OptiScaler 10 宿主。[XeMFG 1.7.2 说明](https://github.com/dashdogy/MFG-Unlocker/blob/v1.7.2/docs/xemfg.md)
+- sm86 R3 支持三角洲和 Steam 版《迈尔斯》。三角洲的私有缓存按游戏管理。《迈尔斯》仅同步其 NVIDIA 游戏配置中的插入帧数，写入前记录原值，释放覆盖时保留玩家的后续修改。四组可选原生运行库按 RTXManager 的文件指纹固定。[上游运行库清单](https://github.com/pandaligx/RTX-FG-Manager/blob/v4.3.42/rust/assets/runtime-files.json)
+- 在隔离目录用原包验证了 R1 → R3、XeMFG 1.7.1 → 1.7.2、宿主升级和还原。《鸣潮》可以识别 RTXManager 配套的 1.7.2 文件并保留其归属。真实 NVIDIA 接口已做只读检查，驱动写入与恢复通过模拟设置验证。[部署回归](../test/rtxmanager-adaptation.test.js)

@@ -16,11 +16,12 @@ import { useJobLog } from "../useJobLog";
 import { SessionLog } from "./SessionLog";
 import { Artwork, Empty, Loading, Row, Select } from "../components";
 import { InstalledFiles } from "./InstalledFiles";
+import { GameComponentVersions } from "./GameComponentVersions";
 import { GameBrowser } from "./GameBrowser";
 import type { GameMenuHandler } from "../GameCard";
 import { GameSetup, resolveSetup, type SetupSelection } from "./GameSetup";
 import { anrGpuReason, anrNeuralReason, componentRoutes, supportsMfg, type ComponentRoute } from "../../../src/shared/install-routes.js";
-import type { GraphicsRouteSettings } from "../types";
+import type { GraphicsRouteSettings, NativeRuntimeKind } from "../types";
 import { ActionMenu, GraphicsActions } from "./GraphicsActions";
 import { DiagnosticsPanel } from "./GameReports";
 import { GraphicsPanels, Modes } from "./GraphicsPanels";
@@ -42,6 +43,8 @@ import {
   errorText,
   launcherLabel,
   frameRouteLabels,
+  gameRouteLabels,
+  profiles,
   mfgGpuReason,
   neuralGpuReason,
   readDraft,
@@ -157,6 +160,16 @@ function GameEditor({
   const encoreSelected = !selectedProtected && selectedSetup?.route === "encore";
   const graphicsRoute = !selectedProtected && componentRoutes.includes(selectedSetup?.route || "")
     ? selectedSetup!.route as ComponentRoute : null;
+  const route = selectedProtected ? "wuwa-proxy" : selectedSetup?.route;
+  const combination: string[] = [];
+  if (route && !(noNvidia && !graphicsRoute && !encoreSelected && !selectedProtected)) {
+    const profile = !graphicsRoute && !encoreSelected && !noNvidia && profiles.find(([id]) => id === draft?.hardwareProfile);
+    if (profile) combination.push(t(profile[1]));
+    combination.push(t(gameRouteLabels[route] || route));
+    const stack = !hostStack && !graphicsRoute && !encoreSelected && !selectedProtected &&
+      status?.neural?.runtimeStacks?.find(item => item.id === draft?.runtimeStack);
+    if (stack) combination.push(`DLSS SR ${stack.dlssVersion} / Streamline ${stack.streamlineVersion}`);
+  }
   const frameRoute = usesFramePanel(graphicsRoute) ? graphicsRoute : null;
   useEffect(()=>{
     if (!focusFrameEngine.current || !graphicsRoute || !status?.ok) return;
@@ -167,6 +180,11 @@ function GameEditor({
   const graphicsDraft = editorDraft.graphics?.[graphicsKey];
   const currentGraphics = status?.graphicsRoute?.route === graphicsRoute && sameExecutable(status?.graphicsRoute?.exePath,selectedSetup?.exe?.path) ? status?.graphicsRoute : undefined;
   const graphicsValues = {...currentGraphics,...graphicsDraft};
+  const nativeKinds = selectedSetup?.exe?.sm86NativeKinds || [];
+  const selectedKinds = graphicsValues.nativeRuntimes || [];
+  const milesR3 = graphicsRoute === "sm86-delta" && selectedSetup?.exe?.steamMiles;
+  const gameSwitch = graphicsRoute === "xemfg" && selectedSetup?.exe?.hasGameStreamlineFg &&
+    selectedSetup.target?.apiLabel === "DirectX 12" && /\bRTX\s*(?:20|30|40|50)\d\d/i.test(gpu?.name || "");
   const graphicsIssue = selectedSetup?.graphicsIssue || (graphicsRoute?.startsWith("anr") ? anrGpuReason(gpu?.name)
     : graphicsRoute?.startsWith("sm86") && noNvidia ? "Dlssg_for_sm86 需要 NVIDIA GeForce RTX 20–50 系列显卡。" : null);
   const anrNeuralIssue = graphicsRoute === 'anr' && status?.ok
@@ -226,6 +244,8 @@ function GameEditor({
         engine:graphicsDraft?.engine ?? saved?.engine ?? (!currentGraphics && graphicsRoute.startsWith("sm86") ? "DLSS" : undefined),
         sceneCut:graphicsDraft?.sceneCut ?? saved?.sceneCut ?? (!currentGraphics && graphicsRoute.startsWith("anr") ? true : undefined),
         neural:graphicsDraft?.neural ?? saved?.neural ?? (!currentGraphics && graphicsRoute==="anr" ? false : undefined),
+        xeMode:gameSwitch ? graphicsValues.xeMode : undefined,
+        nativeRuntimes:graphicsRoute.startsWith("sm86") ? graphicsValues.nativeRuntimes : undefined,
       };
     }
   } else if (draft) {
@@ -272,9 +292,13 @@ function GameEditor({
     const exe = selectedSetup?.exe;
     if (!graphicsRoute || !exe || !status?.ok || graphicsIssue || (anrNeuralIssue && graphicsValues.neural)) return;
     let graphics = graphicsDraft;
-    if (graphicsRoute === "xemfg-optiscaler" || graphicsRoute === "optifg") graphics = undefined;
-    if (graphicsRoute === "xemfg") graphics = graphicsDraft?.multiplier != null || !currentGraphics
-      ? {multiplier:graphicsDraft?.multiplier ?? 2} : undefined;
+    if (graphicsRoute === "optifg") graphics = undefined;
+    if (graphicsRoute === "xemfg-optiscaler") graphics = graphicsDraft?.upgradeHost && !exe.xeMfgHostCurrent ? {upgradeHost:true} : undefined;
+    if (graphicsRoute === "xemfg") {
+      graphics = {...(graphicsDraft?.multiplier != null || !currentGraphics ? {multiplier:graphicsDraft?.multiplier ?? 2} : {}),
+        ...(gameSwitch && graphicsDraft?.xeMode && {xeMode:graphicsDraft.xeMode})};
+      if (!Object.keys(graphics).length) graphics = undefined;
+    }
     if (await run(token => getBridge().enhancedApply(game.dir,{route:graphicsRoute,exePath:exe.path,
       apiOverride:exe.apiOverride || "auto",graphics},token))) {
       onEdit({setup:null,graphics:{...editorDraft.graphics,[graphicsKey]:undefined}});
@@ -362,7 +386,7 @@ function GameEditor({
   const engineNames:Record<string,string> = {
     nvidia:t("NVIDIA DLSS 帧生成"), anr:"ANR FG B20", "anr-addon":"ANR FG B20 · OptiScaler Add-on",
     ...frameRouteLabels,
-    sm86:"Dlssg_for_sm86 0.4.2", "sm86-delta":t("Dlssg_for_sm86 · 三角洲 DX12 / Vulkan"),
+    sm86:"Dlssg_for_sm86 0.4.2", "sm86-delta":t(selectedSetup?.exe?.steamMiles ? "Dlssg_for_sm86 R3 · 迈尔斯" : "Dlssg_for_sm86 R3 · 三角洲"),
   };
   const engineName = status?.launcherProtected ? t("鸣潮独立加载器") : t(engineNames[graphicsRoute || "nvidia"]);
   const nativeRoute = [selectedSetup?.route, sameExecutable(selectedSetup?.exe?.rel,details?.installedExe) && details?.installedRoute, selectedSetup?.recommended, ...(selectedSetup?.available || [])]
@@ -379,6 +403,7 @@ function GameEditor({
         const route = id === "nvidia" ? nativeRoute : id;
         if (!details || !route || !selectedSetup?.exe || route === selectedSetup.route) return;
         const initial = resolveSetup(details,null);
+        focusFrameEngine.current = usesFramePanel(route);
         setSetupSelection(route === initial.route && sameExecutable(selectedSetup.exe.path,initial.exe?.path)
           ? null : {exePath:selectedSetup.exe.path,route});
       }}/>
@@ -406,12 +431,23 @@ function GameEditor({
             onChange={value=>patchGraphics({engine:value as "DLSS"|"XeSS",...(value === 'XeSS' && (graphicsValues.multiplier || 4) > 4 ? {multiplier:4} : {})})}/></label>}
         <label className="setup-field"><span>{t("倍率上限")}</span>
           <Select label={t("倍率上限")} value={String(graphicsValues.multiplier || (graphicsRoute.startsWith('anr') ? 6 : 4))}
-            options={[2,3,4,...(graphicsRoute.startsWith('anr') || graphicsRoute.startsWith('sm86') && graphicsValues.engine !== 'XeSS' ? [5,6] : [])].map(n=>[String(n),n+"×"])}
+            options={[...(milesR3 ? [1] : []),2,3,4,...(graphicsRoute.startsWith('anr') || graphicsRoute.startsWith('sm86') && graphicsValues.engine !== 'XeSS' ? [5,6] : [])].map(n=>[String(n),n===1 ? t("跟随驱动默认") : n+"×"])}
             onChange={value=>patchGraphics({multiplier:Number(value)})}/></label>
         {graphicsRoute.startsWith('anr') && <label className="setup-field"><span>{t("切镜保护")}</span>
           <Select label={t("切镜保护")} value={String(graphicsValues.sceneCut ?? true)}
             options={[["true",t("开启")],["false",t("关闭")]]} onChange={value=>patchGraphics({sceneCut:value === "true"})}/></label>}
       </div>
+      {milesR3 && <p className="footnote">{t("倍率会同步到 NVIDIA 的《迈尔斯》游戏配置。选择驱动默认或还原部署可恢复原设置。")}</p>}
+      {graphicsRoute.startsWith("sm86") && <fieldset className="sm86-runtimes"><legend>{t("更新游戏现有运行库")}</legend>
+        {(["sr","rr","fg","streamline"] as NativeRuntimeKind[]).map(kind=>{
+          const selected=selectedKinds.includes(kind), available=nativeKinds.includes(kind);
+          const labels={sr:"DLSS 超分辨率",rr:"DLSS 光线重建",fg:"DLSS 帧生成",streamline:"Streamline 插件"};
+          return <label key={kind}><input type="checkbox" checked={selected} disabled={!available && !selected}
+            onChange={event=>patchGraphics({nativeRuntimes:event.target.checked ? [...selectedKinds,kind] : selectedKinds.filter(k=>k!==kind)})}/>
+            <span>{t(labels[kind])}</span>{!available && <small>{t("未检测到")}</small>}</label>;
+        })}
+        <p className="footnote">{t("仅更新当前程序已识别的文件。取消勾选并应用可单独还原这一组。")}</p>
+      </fieldset>}
     </>,
   } : undefined;
   return (
@@ -573,6 +609,16 @@ function GameEditor({
                   onSelect={id => { if (id !== draft.hardwareProfile) patchDraft({hardwareProfile:id, runtimeStack:defaultStack(id)}); }} />
               </section>}
               {frameRoute ? <FrameGenerationPanel installed={currentGraphics} route={frameRoute} engineChoice={engineChoice} optiFgInputs={selectedSetup?.target?.optiFgInputs}
+                nativeMode={gameSwitch ? graphicsValues.xeMode || "auto" : undefined}
+                controls={gameSwitch ? <label className="setup-field"><span>{t("XeMFG 接入方式")}</span>
+                  <Select label={t("XeMFG 接入方式")} value={graphicsValues.xeMode || "auto"}
+                    options={[["auto",t("自动 · 使用游戏内帧生成开关")],["compatibility",t("兼容模式 · 交换链")]]}
+                    onChange={value=>patchGraphics({xeMode:value as "auto"|"compatibility"})}/></label> :
+                  frameRoute === "xemfg-optiscaler" && selectedSetup?.exe?.xeMfgHostCurrent && !currentGraphics?.upgradeHost ?
+                  <p className="footnote">{t("当前宿主已是 1.7.2 配套版本。")}</p> :
+                  frameRoute === "xemfg-optiscaler" ? <label className="setup-field"><span><input type="checkbox" checked={!!graphicsValues.upgradeHost}
+                    disabled={currentGraphics?.upgradeHost} onChange={event=>patchGraphics({upgradeHost:event.target.checked})}/> {t("同步更新已识别的 OptiScaler 宿主")}</span>
+                    <small>{t("原宿主随部署备份，还原时恢复。")}</small></label> : undefined}
                 draftMultiplier={graphicsDraft?.multiplier} issue={graphicsIssue} blocked={graphicsBlocked} vulkan={selectedSetup?.target?.api === "vulkan"}
                 change={multiplier=>patchGraphics({multiplier})} apply={()=>void executeGraphics()}/> :
                 displayedStatus && <GraphicsPanels active={active} onRuntime={setRuntime} gameDir={game.dir} status={displayedStatus}
@@ -601,6 +647,14 @@ function GameEditor({
           )}
           {tab === "components" && (
             <GameComponents
+              combination={combination}
+              gpuSm={gpu?.architecture?.sm}
+              nvidiaPresent={gpu?.nvidiaPresent}
+              onConfigure={() => {
+                setTab("graphics");
+                document.getElementById(panelId + "-graphics")?.focus();
+              }}
+              onBrowse={onBrowseEngines}
               refreshToken={refreshToken + returnRevision}
               active={active}
               hasBackup={!!recovery?.canRestore}
@@ -704,6 +758,7 @@ function RuntimeSummary({ runtime }: { runtime: Runtime | null }) {
   </span>;
 }
 function GameComponents({
+  combination, gpuSm, nvidiaPresent, onConfigure, onBrowse,
   refreshToken,
   active,
   hasBackup,
@@ -717,6 +772,11 @@ function GameComponents({
   onChange,
 }: {
   active: boolean;
+  combination: string[];
+  gpuSm?: string | null;
+  nvidiaPresent?: boolean | null;
+  onConfigure: () => void;
+  onBrowse: () => void;
   refreshToken: number;
   hasBackup: boolean;
   onRefresh: () => void;
@@ -788,6 +848,19 @@ function GameComponents({
   }
   return (
     <>
+      <GameComponentVersions library={library} rows={inventory.rows} selection={selection} pending={pending}
+        combination={combination} gpuSm={gpuSm} nvidiaPresent={nvidiaPresent} busy={busy} onChange={onChange}
+        onConfigure={onConfigure} onBrowse={onBrowse}
+        onPreview={() => {
+          void run(token => getBridge().libraryApply(dir,token,selection)).then(ok => {
+            if (ok) { onChange({}); refresh(); }
+          });
+        }}
+        onRollback={library.rollback ? () => {
+          void run(token => getBridge().libraryRollback(dir,library.rollback!.id,token)).then(ok => {
+            if (ok) { onChange({}); refresh(); }
+          });
+        } : undefined}/>
       <div className="section-toolbar">
         <h2>{t("已安装组件与文件")}</h2>
         <ActionMenu><button disabled={busy} onClick={refreshAll}>{t("重新检测文件")}</button></ActionMenu>
@@ -820,69 +893,6 @@ function GameComponents({
       ) : (
         <Empty>{t("尚未安装受管理的组件。")}</Empty>
       )}
-      <details className="advanced">
-        <summary>
-          <ChevronRight size={16} />
-          {t("选择配套组件版本")}
-        </summary>
-        <p className="muted">{t("使用配套默认版本会清除该组件的版本选择。要恢复磁盘文件，请使用回滚或恢复原始文件。")}</p>
-        {Object.entries(library.definitions)
-          .filter(
-            ([id, d]) =>
-              !d.internal && library.packages.some((p) => p.component === id),
-          )
-          .map(([id, d]) => (
-            <Row key={id} label={t(d.name)}>
-              <Select
-                label={t(d.name)}
-                value={selection[id] || ""}
-                disabled={busy}
-                onChange={value => {
-                  const next = { ...pending };
-                  if (value === (saved[id] || "")) delete next[id]; else next[id] = value;
-                  onChange(next);
-                }}
-                options={[
-                  ["", t("使用配套默认版本")],
-                  ...library.packages
-                    .filter(
-                      (p) =>
-                        p.component === id &&
-                        p.present &&
-                        p.compatibility.ready,
-                    )
-                    .map((p) => [p.id, p.version]),
-                ]}
-              />
-            </Row>
-          ))}
-        <div className="inline-actions">
-          <button
-            disabled={busy || (!Object.keys(selection).length && !Object.keys(library.profile?.selected || {}).length)}
-            onClick={() => {
-              void run(token => getBridge().libraryApply(dir, token, selection)).then(ok => {
-                if (ok) { onChange({}); refresh(); }
-              });
-            }}
-          >
-            {t("预览版本变更")}
-          </button>
-          {library.rollback && (
-            <button
-              disabled={busy}
-              onClick={() => {
-                void run((token) =>
-                  getBridge().libraryRollback(dir, library.rollback!.id, token),
-                ).then((ok) => {
-                  if (ok) { onChange({}); refresh(); }
-                });
-              }}
-            >
-              {t("回滚上次组件更新")}
-            </button>
-          )}
-        </div>
-      </details>
       {restoreRow}
     </>
   );

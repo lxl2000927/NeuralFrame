@@ -7,10 +7,12 @@ const { safePath } = require('./file-journal');
 const pe = require('./pe');
 const { getIni } = require('./feeder-config');
 const { packs } = require('./runtime-catalog.json');
+const hostPack = packs.find(pack=>pack.id==='xemfg-opti-host');
+const pairedHost = hostPack.files.find(item=>item.path.endsWith('/OptiScaler.dll'));
 
-// The author's v1.7.1 setup uses the 20261111 nightly. Only the paired
-// dashdogy build implements XeFG output on Vulkan. Neither host is replaced.
+// Only the paired dashdogy builds implement XeFG output on Vulkan.
 const hosts = new Map([
+  [pairedHost.size,{sha256:pairedHost.sha256,vulkan:true}],
   [27644928, {sha256:'5a09bcd8733d6192a444d539727b6a06f65e5b5b8f0fe1b87c04f04c9791e8a6', vulkan:false}],
   [28182016, {sha256:'8ea15eecb3066fcb67485a57c951883b6fe4e8809df889a2a5e6d6b759974d0f', vulkan:false}], // nightly-20261118
   [27722752, {sha256:'3545cb32e4d09854a5f06f9df47a0d29adb6b7bede7b2a0ed0ab64ba837c1721', vulkan:true}],
@@ -114,7 +116,7 @@ function acceptsFrameGenInput(text, exePath) {
   return acceptsProcess(text,exePath) && getIni(text,'fakenvapi','ForceXeLL')?.toLowerCase() !== 'true';
 }
 
-function detectHost(exePath, cached = true) {
+function hostFile(exePath, cached = true) {
   const bin = path.dirname(exePath);
   try {
     const config = safePath(bin,'OptiScaler.ini');
@@ -137,7 +139,8 @@ function detectHost(exePath, cached = true) {
       if (found) return null;
       // Upstream's installer recommends winmm for Vulkan. Other proxy names
       // require a matching EXE import to identify a Vulkan loading path.
-      found = host.vulkan && (name === 'winmm.dll' || imports.has(name)) ? 'dx12-vulkan' : 'dx12';
+      found = {name, sha256:host.sha256, paired:host.sha256===pairedHost.sha256,
+        support:host.vulkan && (name === 'winmm.dll' || imports.has(name)) ? 'dx12-vulkan' : 'dx12'};
     }
     if (!found) return null;
     for (const item of intel) {
@@ -147,6 +150,14 @@ function detectHost(exePath, cached = true) {
     }
     return found;
   } catch { return null; }
+}
+function detectHost(exePath,cached=true) { return hostFile(exePath,cached)?.support || null; }
+
+function assertHostUnclaimed(gameDir, exePath, host) {
+  const receipt = safePath(path.dirname(host), '.rtx-fg-v3/mfg-optiscaler-host.json');
+  const owners = require('./sm86-native').externalOwners(gameDir, exePath, [{path:host}]);
+  if (fs.existsSync(receipt) || owners.has(path.normalize(host).toLowerCase()))
+    throw fail('RTXManager 正在管理此宿主，请先在其中还原。');
 }
 
 function assertNoOtherLoader(bin) {
@@ -192,7 +203,7 @@ async function deploy({gameDir,exePath,api,apiLabel,bitness,target,graphics = {}
   const antiCheatWarning = require('./compatibility').hasAntiCheat(gameDir,exePath) || !!target?.antiCheatWarning;
   const issue = require('../shared/install-routes').xemfgOptiReason({...target,api,apiLabel,bitness,xeMfgOptiHost:host,antiCheatWarning});
   if (issue) throw fail(issue);
-  if (Object.keys(graphics).length) throw fail('XeMFG 插件倍率由 OptiScaler 的游戏内菜单设置。');
+  if (Object.keys(graphics).some(key=>key!=='upgradeHost') || (graphics.upgradeHost!==undefined && typeof graphics.upgradeHost!=='boolean')) throw fail('XeMFG 插件倍率由 OptiScaler 的游戏内菜单设置。');
   assertNoOtherLoader(path.dirname(exePath));
   const config = local('OptiScaler.ini');
   const inputs = await upscalerFields(gameDir,exePath,api,target,configText(config));
@@ -206,7 +217,22 @@ async function deploy({gameDir,exePath,api,apiLabel,bitness,target,graphics = {}
   // in the game's menu remains the player's choice on reapply.
   const enabled = old ? [] : [['FrameGen','Enabled','true']];
   await edit(config, '', [...fields,...enabled,...inputs], true);
-  return {providerDir:path.relative(gameDir, local('OptiScaler/plugins')), providerVersion:engine.version};
+  let hostUpgrade=old?.hostUpgrade;
+  if (graphics.upgradeHost) {
+    const current=hostFile(exePath,false);
+    if (!current) throw fail('OptiScaler 宿主已变化，请重新预览。');
+    if (current.sha256!==pairedHost.sha256) {
+      const dest=local(current.name);
+      assertHostUnclaimed(gameDir,exePath,dest);
+      await copy(checkedSource(hostPack,pairedHost),dest,pairedHost.sha256,true);
+      if (!matches(dest,pairedHost,false)) throw fail('配套宿主指纹不匹配。');
+      hostUpgrade={rel:path.relative(gameDir,dest),original:current.sha256};
+      const noticeItem=hostPack.files.find(f=>f.path.endsWith('.txt'));
+      const destNotice=local('OptiScaler/plugins/MFG-Unlocker-Host-NOTICES.txt');
+      if (!matches(destNotice,noticeItem,false)) await copy(checkedSource(hostPack,noticeItem),destNotice,noticeItem.sha256);
+    }
+  }
+  return {providerDir:path.relative(gameDir, local('OptiScaler/plugins')), providerVersion:engine.version,hostUpgrade};
 }
 
 function inspect(gameDir,manifest) {
@@ -214,8 +240,10 @@ function inspect(gameDir,manifest) {
   const host = detectHost(exePath);
   const state = {route:'xemfg-optiscaler',exePath,filesPresent:false,providerVersion:undefined,enabled:null};
   try {
-    const present = matches(safePath(bin,plugin),engine.files[0],true);
-    if (present) state.providerVersion = engine.version;
+    const saved=require('./engine-packages').byVersion('mfg-universal',manifest.graphicsRoute?.providerVersion);
+    const present = matches(safePath(bin,plugin),saved || engine.files[0],true);
+    if (present) state.providerVersion = saved?.version || engine.version;
+    state.upgradeHost = !!manifest.graphicsRoute?.hostUpgrade;
     const text = configText(safePath(bin,'OptiScaler.ini'));
     state.filesPresent = !!host && (manifest.game.api !== 'vulkan' || host === 'dx12-vulkan') && present &&
       matches(safePath(bin,notice),license.files[0],true);
@@ -228,4 +256,4 @@ function inspect(gameDir,manifest) {
   return state;
 }
 
-module.exports = {detectHost, deploy, inspect, matches, defaultPath, configText, hostFilterKeys, acceptsProcess, acceptsFrameGenInput};
+module.exports = {hostFile, detectHost, assertHostUnclaimed, deploy, inspect, matches, defaultPath, configText, hostFilterKeys, acceptsProcess, acceptsFrameGenInput};

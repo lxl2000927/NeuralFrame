@@ -4,24 +4,45 @@ const path = require('path');
 const crypto = require('crypto');
 const preview = require('./preview-fs');
 const pe = require('./pe');
+const { digest } = require('./component-library');
 const journal = require('./file-journal');
 const { scanGame } = require('./scan');
 const { readManifest } = require('./backend-manager');
 const key = p => path.resolve(p).toLowerCase();
+const relKey = p => path.normalize(p).toLowerCase();
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const binary = file => /\.(dll|addon32|addon64|asi|exe)$/i.test(file);
 const known = name => /^(nvngx|_nvngx|sl\.|libxess|amd_fidelityfx|ffx_fsr|renodx|dlss5|ReShade|OptiScaler|RTXMFG|MFGUnlocker|dxgi\.dll$|d3d\d+\.dll$|opengl32\.dll$|dinput8\.dll$|winmm\.dll$)/i.test(name);
 const category = name => /nvngx_dlssnr/i.test(name) ? '神经模型' : /\.addon|\.asi/i.test(name) ? '插件' : /\.(ini|cfg|jsonc?)$/i.test(name) ? '配置' : /\.(fx|fxh|png|dds)$/i.test(name) ? '着色器 / 资源' : binary(name) ? '运行库 / 加载器' : '辅助文件';
 const err = (code, message) => Object.assign(new Error(message), { code });
-function diskInfo(file) {
-  if (!fs.existsSync(file)) return null;
-  const stat = fs.lstatSync(file);
+function regularFile(file) {
+  const stat = fs.lstatSync(file, {throwIfNoEntry:false});
+  if (!stat) return null;
   if (stat.isSymbolicLink() || !stat.isFile()) throw err('errUnsafeTarget', `目标不是普通文件：${file}`);
+  return stat;
+}
+function fileMetadata(file, size, sha256) {
+  const version = binary(file) ? pe.getFileVersion(file) : null;
+  return {size, sha256, version:version && version !== '0.0.0.0' ? version : null};
+}
+function diskInfo(file) {
+  const stat = regularFile(file);
+  if (!stat) return null;
   const fd = fs.openSync(file, 'r'), h = crypto.createHash('sha256'), buf = Buffer.allocUnsafe(1024 * 1024);
   try { let n; while ((n = fs.readSync(fd, buf, 0, buf.length, null))) h.update(buf.subarray(0, n)); }
   finally { fs.closeSync(fd); }
-  const version = binary(file) ? pe.getFileVersion(file) : null;
-  return { sha256: h.digest('hex'), size: stat.size, version: version && version !== '0.0.0.0' ? version : null };
+  return fileMetadata(file, stat.size, h.digest('hex'));
+}
+// Previews, confirmations and version locks run on Electron's main thread.
+// Yield during file reads, including the fresh digest taken after a write.
+async function readDiskInfo(file) {
+  const before = regularFile(file);
+  if (!before) return null;
+  const sha256 = await digest(file);
+  const after = regularFile(file);
+  if (!after || ['dev','ino','size','mtimeMs','ctimeMs'].some(field => before[field] !== after[field]))
+    throw err('errPreviewChanged', `校验期间文件已变化，请重新检查：${file}`);
+  return fileMetadata(file, after.size, sha256);
 }
 class ComponentReview {
   constructor(userData) { this.root = path.join(userData, 'component-management-v1'); this.pending = new Map(); }
@@ -34,7 +55,7 @@ class ComponentReview {
     return data;
   }
   async save(dir, record) { await journal.atomicJson(this.file(dir), record); }
-  async inventory(dir, inspectFile = diskInfo, recoveredManifest, includeTargets = true) {
+  async inventory(dir, inspectFile = readDiskInfo, recoveredManifest, includeTargets = true) {
     if (!path.isAbsolute(dir) || !fs.existsSync(dir)) throw err('errUnsafeTarget', '无效的游戏目录');
     const record = this.read(dir);
     const manifest = recoveredManifest === undefined ? readManifest(dir) : recoveredManifest;
@@ -63,27 +84,31 @@ class ComponentReview {
       const proxy = path.join(exeDir, 'version.dll');
       if (fs.existsSync(proxy)) add(path.relative(dir, proxy));
     }
+    const originals = new Map((manifest?.replaced || []).map(row => [relKey(row.rel), row]));
+    const added = new Set((manifest?.added || []).map(relKey));
+    const receipts = new Map(Object.entries(record.receipts).map(([rel, value]) => [relKey(rel), value]));
+    const locks = new Map(Object.entries(record.lock?.files || {}).map(([rel, value]) => [relKey(rel), value]));
     const rows = [];
     for (const file of files.values()) {
-      const rel = path.relative(dir, file), info = inspectFile(file), receipt = record.receipts[rel];
-      const relKey = path.normalize(rel).toLowerCase();
-      const original = (manifest?.replaced || []).find(r => r.rel.toLowerCase() === rel.toLowerCase());
+      const rel = path.relative(dir, file), id = relKey(rel);
+      const info = await inspectFile(file), receipt = receipts.get(id), lock = locks.get(id);
+      const original = originals.get(id);
       let backup = null;
       if (original) {
         const saved = require('./apply').originalPath(dir, manifest, rel);
         if (fs.existsSync(saved)) backup = { version: original.oldVersion || pe.getFileVersion(saved) || null };
       }
-      const featureMismatch = !!info && !pinned.has(relKey) && (scannedRoles.get(key(file)) ?? deploy.hasFeatureMismatch(file));
+      const featureMismatch = !!info && !pinned.has(id) && (scannedRoles.get(key(file)) ?? deploy.hasFeatureMismatch(file));
       rows.push({ rel, scope:'game', name: path.basename(file), category: category(file), ...info, present: !!info, featureMismatch,
-        routeSha256: pinned.get(relKey),
+        routeSha256: pinned.get(id),
         recordedVersion: original?.newVersion || undefined,
         selectionTarget: includeTargets && !!scan.chosen && (!installedExe || key(scan.chosen.path) === key(installedExe)) &&
-          candidates.has(key(file)) && !featureMismatch && !pinned.has(relKey) && !isProtected(file),
+          candidates.has(key(file)) && !featureMismatch && !pinned.has(id) && !isProtected(file),
         bitness: includeTargets && info && binary(file) ? pe.getBitness(file, {dllOnly:true}) : null,
-        source: receipt && receipt.sha256 === info?.sha256 ? receipt.source : original ? '游戏原有文件（曾由管理器替换）' : (manifest?.added || []).includes(rel) ? '管理器安装记录' : '现有文件，来源未记录',
+        source: receipt && receipt.sha256 === info?.sha256 ? receipt.source : original ? '游戏原有文件（曾由管理器替换）' : added.has(id) ? '管理器安装记录' : '现有文件，来源未记录',
         writtenAt: receipt && receipt.sha256 === info?.sha256 ? receipt.writtenAt : null,
         loaded: 'unknown', backup,
-        lockState: record.lock?.files[rel] ? (record.lock.files[rel].sha256 === info?.sha256 ? 'match' : 'drift') : null });
+        lockState: lock ? (lock.sha256 === info?.sha256 ? 'match' : 'drift') : null });
     }
     const sharedRoot = path.join(path.dirname(this.root), 'reshade-vulkan');
     const sharedNames = new Set(Object.keys(record.lock?.sharedFiles || {}).map(file=>{
@@ -94,7 +119,7 @@ class ComponentReview {
       sharedNames.add('ReShade64.dll'); sharedNames.add('ReShade32.dll');
     }
       for (const name of sharedNames) {
-        const file = journal.safePath(sharedRoot,name), info = inspectFile(file), pin = record.lock?.sharedFiles?.[file];
+        const file = journal.safePath(sharedRoot,name), info = await inspectFile(file), pin = record.lock?.sharedFiles?.[file];
         if (!info && !pin) continue;
         rows.push({rel:file,scope:'shared',name,category:'共享 Vulkan 图层',...info,present:!!info,loaded:'unknown',source:'管理器共享组件；可能供多个游戏使用',lockState:pin?(pin.sha256===info?.sha256?'match':'drift'):null});
       }
@@ -122,7 +147,7 @@ class ComponentReview {
       const parent = path.dirname(dir); if (parent === dir) break; dir = parent;
     }
   }
-  lockConflicts(dir, rows, request, inspectFile = diskInfo) {
+  async lockConflicts(dir, rows, request, inspectFile = readDiskInfo) {
     const lock = this.read(dir).lock;
     const conflicts = [];
     // A shared Vulkan DLL must also respect locks belonging to other games.
@@ -144,15 +169,16 @@ class ComponentReview {
       }
     }
     if (!lock || request.kind === 'restore') return conflicts;
-    for (const [file,pin] of Object.entries(lock.sharedFiles || {})) if(inspectFile(file)?.sha256!==pin.sha256) conflicts.push(`${file}：共享组件已偏离锁定版本`);
+    for (const [file,pin] of Object.entries(lock.sharedFiles || {})) if((await inspectFile(file))?.sha256!==pin.sha256) conflicts.push(`${file}：共享组件已偏离锁定版本`);
+    const gameRows = new Map(rows.filter(row => row.scope === 'game').map(row => [relKey(row.rel), row]));
     for (const [rel, expected] of Object.entries(lock.files)) {
-      const now = inspectFile(journal.safePath(dir, rel));
+      const now = await inspectFile(journal.safePath(dir, rel));
       if (now?.sha256 !== expected.sha256) conflicts.push(`${rel}：磁盘文件已偏离锁定版本`);
-      const planned = rows.find(row => row.scope === 'game' && row.rel.toLowerCase() === rel.toLowerCase());
+      const planned = gameRows.get(relKey(rel));
       if (planned && planned.after?.sha256 !== expected.sha256) conflicts.push(`${rel}：本次操作会更换或移除锁定版本`);
     }
-    const pins = new Set(Object.keys(lock.files).map(r => r.toLowerCase()));
-    for (const row of rows) if (binary(row.rel) && row.scope === 'game' && row.after && !pins.has(row.rel.toLowerCase())) conflicts.push(`${row.rel}：本次操作会增加锁定组合以外的组件`);
+    const pins = new Set(Object.keys(lock.files).map(relKey));
+    for (const [id, row] of gameRows) if (binary(row.rel) && row.after && !pins.has(id)) conflicts.push(`${row.rel}：本次操作会增加锁定组合以外的组件`);
     return conflicts;
   }
   async plan(dir, request, work) {
@@ -163,7 +189,7 @@ class ComponentReview {
     const fingerprints = new Map();
     const inspectFile = file => {
       const id = key(file);
-      if (!fingerprints.has(id)) fingerprints.set(id, diskInfo(file));
+      if (!fingerprints.has(id)) fingerprints.set(id, readDiskInfo(file));
       return fingerprints.get(id);
     };
     for (const [k, file] of state.touched) {
@@ -171,9 +197,9 @@ class ComponentReview {
       if (next?.directory || (!next && fs.existsSync(file) && fs.statSync(file).isDirectory())) continue;
       const rel = path.relative(dir, file), scope = rel && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel) ? 'game' : 'shared';
       if (scope === 'game' && (/^_DLSS5_Backup[\\/]/i.test(rel) || /^\.dlss5_write_test_/.test(path.basename(rel)))) { internal.push(rel); continue; }
-      const before = inspectFile(file);
+      const before = await inspectFile(file);
       if (!before && !next) continue;
-      const after = next ? next.buffer ? { sha256: hash(next.buffer), size: next.buffer.length, version: null } : inspectFile(next.source) : null;
+      const after = next ? next.buffer ? { sha256: hash(next.buffer), size: next.buffer.length, version: null } : await inspectFile(next.source) : null;
       const action = !before ? 'add' : !after ? 'remove' : before.sha256 === after.sha256 ? 'keep' : 'replace';
       rows.push({ rel: scope === 'game' ? rel : file, scope, category: category(file), action, before, after, source: next?.origin || (next?.buffer ? '管理器生成的配置' : next?.source) || null });
     }
@@ -205,8 +231,9 @@ class ComponentReview {
         row.scope === 'game' && row.action !== 'keep' && owned.has(path.normalize(row.rel).toLowerCase())))
         throw err('errGraphicsRoute', '此运行库由已安装路线管理，请在游戏页修改。');
     }
+    const plannedFiles = new Map(rows.map(row => [row.scope + ':' + relKey(row.rel), row]));
     for (const row of inventory.rows) {
-      const planned = rows.find(r => r.scope === row.scope && r.rel.toLowerCase() === row.rel.toLowerCase());
+      const planned = plannedFiles.get(row.scope + ':' + relKey(row.rel));
       if (planned) planned.backup = row.backup || (row.present && planned.action === 'replace' ? { version: row.version, create: true } : null);
       else if (row.present) {
         const info = { sha256: row.sha256, size: row.size, version: row.version };
@@ -214,7 +241,7 @@ class ComponentReview {
       }
     }
     rows.sort((a, b) => a.rel.localeCompare(b.rel));
-    const conflicts = this.lockConflicts(dir, rows, request, inspectFile);
+    const conflicts = await this.lockConflicts(dir, rows, request, inspectFile);
     // Classic Install already shows a native warning. The other deployment routes
     // share their existing confirmation dialog with the game-specific notice.
     let antiCheat;
@@ -243,13 +270,16 @@ class ComponentReview {
     if (token) {
       const prior = this.pending.get(token); this.pending.delete(token);
       if (!prior || prior.expires < now || prior.dir !== key(dir) || JSON.stringify(prior.request) !== JSON.stringify(request)) throw err('errPreviewExpired', '预览已失效或操作参数已改变，请重新预览。');
-      return require('./wuthering-waves').withRtxLock(dir, () => this.confirm(dir, request, work, prior.signature));
+      return this.confirmReviewed(dir, request, work, prior.signature);
     }
     const plan = await this.plan(dir, request, work);
     const id = crypto.randomUUID();
     if (this.pending.size > 8) this.pending.delete(this.pending.keys().next().value);
     this.pending.set(id, { dir: key(dir), request, signature: plan.signature, expires: now + 10 * 60 * 1000 });
     return { ok: true, preview: { ...plan, token: id, dir, kind: request.kind, expires: now + 10 * 60 * 1000 } };
+  }
+  confirmReviewed(dir, request, work, signature) {
+    return require('./wuthering-waves').withRtxLock(dir, () => this.confirm(dir, request, work, signature));
   }
   async confirm(dir, request, work, signature) {
     const plan = await this.plan(dir, request, work);
@@ -260,9 +290,12 @@ class ComponentReview {
     // Receipt failures never turn a completed game install into a false failure.
     try {
       const record = this.read(dir), at = new Date().toISOString();
+      const receiptKeys = new Map(Object.keys(record.receipts).map(rel => [relKey(rel), rel]));
       for (const row of plan.rows.filter(row => row.scope === 'game')) {
         if (row.action === 'keep') continue; // Observed/preserved is not a new write.
-        const actual = diskInfo(journal.safePath(dir, row.rel));
+        const actual = await readDiskInfo(journal.safePath(dir, row.rel));
+        const previous = receiptKeys.get(relKey(row.rel));
+        if (previous && previous !== row.rel) delete record.receipts[previous];
         if (actual && actual.sha256 === row.after?.sha256) record.receipts[row.rel] = { ...actual, source: row.source || '管理器', writtenAt: at };
         else delete record.receipts[row.rel];
       }

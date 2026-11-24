@@ -7,6 +7,28 @@ const backends = require('../src/core/backend-manager');
 const guards = require('../src/core/install-guards');
 const apply = require('../src/core/apply');
 
+test('an edit made while saving the revision snapshot cancels the update and remains on disk', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-revision-copy-race-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  const game = path.join(root,'game'), target = path.join(game,'nvngx_dlss.dll');
+  const source = path.join(root,'source.dll');
+  writePe(path.join(game,'Game.exe'),{text:'D3D12CreateDevice'});
+  writePe(target,{version:[2,0,0,0],text:'nvngx_dlss.pdb'});
+  writePe(source,{version:[3,0,0,0],text:'nvngx_dlss.pdb'});
+  const library = new ComponentLibrary(path.join(root,'profile'));
+  const pkg = await library.importPackage({component:'dlss-sr',files:{'nvngx_dlss.dll':source}});
+  t.mock.method(guards,'assertGameClosed',async()=>{});
+  const copyFile = fs.promises.copyFile;
+  t.mock.method(fs.promises,'copyFile', async (from,to,...options) => {
+    if (from === target && to.split(path.sep).includes('component-revisions'))
+      fs.writeFileSync(target,'external update');
+    return copyFile(from,to,...options);
+  });
+  await assert.rejects(library.apply(game,{'dlss-sr':pkg.id},{strict:true}), /已被其他操作更改/);
+  assert.equal(fs.readFileSync(target,'utf8'),'external update');
+  assert.equal(backends.readManifest(game), null);
+});
+
 for (const changed of ['target', 'snapshot', 'manifest']) {
   test(`component rollback preserves a ${changed} changed while checking whether the game is closed`, async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-rollback-drift-'));

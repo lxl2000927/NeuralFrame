@@ -12,7 +12,6 @@ import {
   X,
   Plus,
   RefreshCw,
-  ArrowLeft,
   ArrowRight,
   Puzzle,
   Info,
@@ -27,10 +26,10 @@ import { retryMissingArtwork } from "./useArtwork";
 import { GameCard, showGameMenu, type CardAction, type GameMenuHandler } from "./GameCard";
 import { HomeIntake, HomeActivity, HomeShelf, HomeDownloadSummary } from "./features/Home";
 import { errorText, groupByLauncher } from "./domain";
-import { useOperation } from "./useOperation";
-import { DownloadContext } from "./features/DownloadAction";
+import { TransferFeedback, useOperation } from "./useOperation";
 import {DownloadQueuePanel, QueueLauncher} from "./features/DownloadQueuePanel";
 import {BatchScan} from "./features/BatchScan";
+import type { SettingsCategory } from "./features/Utilities";
 import type { Draft, Game, UpdateInfo } from "./types";
 import type { Run } from "./features/Games";
 import mark from "../../assets/neuralframe/mark-ui.png";
@@ -58,7 +57,6 @@ const Addons = lazy(() =>
 const Settings = lazy(() =>
   import("./features/Utilities").then((m) => ({ default: m.Settings })),
 );
-const About = lazy(() => import("./features/About"));
 const History = lazy(() =>
   import("./features/History").then((m) => ({ default: m.History })),
 );
@@ -86,7 +84,6 @@ const noticeDuration = (tone: NoticeTone) => (tone === "error" ? 9000 : tone ===
 const pages: { id: string; label: string; title?: string; icon: typeof Home }[] = [
   ...nav,
   settingsPage,
-  { id: "about", label: "关于", title: "关于 NeuralFrame", icon: Info },
 ];
 export default function App() {
   useLanguage();
@@ -119,10 +116,13 @@ export default function App() {
     [notice, setNoticeState] = useState<Notice | null>(null),
     [noticeHeld, setNoticeHeld] = useState(false),
     [launchRelease, setLaunchRelease] = useState<UpdateInfo>(),
+    [runningVersion, setRunningVersion] = useState(__APP_VERSION__),
+    [settingsView, setSettingsView] = useState<{category: SettingsCategory; releaseOpen: boolean}>({category: "appearance", releaseOpen: false}),
     [cardBusy, setCardBusy] = useState(""),
     [fontScale,setFontScale] = useState(()=>Math.max(12,Math.min(18,Number(localStorage.getItem("neuralframe.fontScale"))||14))),
     [queueOpen,setQueueOpen] = useState(false),
     [batchOpen,setBatchOpen] = useState(false),
+    [settingsRevision, setSettingsRevision] = useState(0),
     [libraryRevision, setLibraryRevision] = useState(0),
     [groupGames, setGroupGames] = useState(false),
     [theme, setTheme] = useState(() =>
@@ -204,6 +204,7 @@ export default function App() {
   };
   const readPreferences = async () => {
     const boot = await getBridge().boot();
+    if (boot.version) setRunningVersion(boot.version);
     document.documentElement.dataset.safeGraphics = String(boot.safeGraphics === true);
     setLanguage(boot.lang || "zh");
     if (boot.theme === "dark" || boot.theme === "light") {
@@ -343,7 +344,7 @@ export default function App() {
   const currentPage = pages.find((item) => item.id === page);
   const PageIcon = currentPage?.icon || Home;
   const renderNavItem = ({ id, label, icon: Icon }: (typeof nav)[number]) => {
-    const current = page === id ? "page" : page === "about" && id === "settings" ? "location" : undefined;
+    const current = page === id ? "page" : undefined;
     return (
       <button key={id} className={current ? "nav-item active" : "nav-item"} title={t(label)}
         aria-current={current} onClick={() => navigate(id)}
@@ -361,16 +362,16 @@ export default function App() {
     );
   };
   return (
-    <DownloadContext.Provider value={operation.downloads}><div className="app-shell">
+    <TransferFeedback feedback={operation.feedback}><div className="app-shell">
       <header
         className="titlebar"
         onDoubleClick={() => windowAction("maximize")}
       >
         <img src={mark} alt="" />
         <strong>NeuralFrame</strong>
-        <span>{__APP_VERSION__}</span>
+        <span>{runningVersion}</span>
         {launchRelease?.newer && launchRelease.latest && <button
-          className="release-notice" onClick={() => navigate("about")}
+          className="release-notice" onClick={() => { navigate("settings"); setSettingsView({category: "updates", releaseOpen: true}); }}
           onDoubleClick={event => event.stopPropagation()}>
           {t("发现新版本 {0}", [launchRelease.latest])}
         </button>}
@@ -403,14 +404,8 @@ export default function App() {
       <main className="app-content" data-page={page}>
         <div className="appbar">
           <h1><span className="page-emblem" aria-hidden="true"><PageIcon size={18} /></span>{t(currentPage?.title || currentPage?.label)}</h1>
-          {(nav.some(item => item.id === page) || page === "settings" || page === "about") && (
+          {(page === "home" || page === "games") && (
             <div className="inline-actions">
-              {(page === "settings" || page === "about") && (
-                <button onClick={() => navigate(page === "about" ? "settings" : "about")}>
-                  {page === "about" ? <ArrowLeft size={16} /> : <Info size={16} />}
-                  {page === "about" ? t("返回设置") : t("关于 NeuralFrame")}
-                </button>
-              )}
               {page === "games" && (
                 <>
                   <button disabled={operation.busy || !games.length} onClick={()=>setBatchOpen(true)}>
@@ -451,6 +446,7 @@ export default function App() {
                       <Loading text={t("读取游戏库…")} skeleton="rows" />
                     ) : (
                       <Games
+                        key={settingsRevision}
                         onBrowseModels={() => navigate("library", "games")}
                         onBrowseEngines={() => navigate("library")}
                         games={games}
@@ -493,6 +489,7 @@ export default function App() {
                   )}
                   {id === "library" && (
                     <Library
+                      key={settingsRevision}
                       downloadVersion={operation.downloadVersion}
                       modelsOnly={!!modelLibraryOrigin}
                       onBack={() => navigate(modelLibraryOrigin)}
@@ -516,6 +513,11 @@ export default function App() {
                   )}{" "}
                   {id === "settings" && (
                     <Settings
+                      category={settingsView.category}
+                      onCategory={category => setSettingsView({category, releaseOpen: false})}
+                      update={{result:launchRelease, onResult:setLaunchRelease, version:runningVersion,
+                        open:page === "settings" && settingsView.releaseOpen,
+                        onOpen:open => setSettingsView(view => ({...view, releaseOpen: open && view.category === "updates"}))}}
                       active={page === "settings"}
                       refreshToken={refreshToken}
                       operationBusy={operation.busy}
@@ -529,6 +531,11 @@ export default function App() {
                         await load();
                       }}
                       onSettingsReset={async () => {
+                        for (const key of ["neuralframe.githubMirror", "neuralframe.downloadSourcePriority", "neuralframe.gameListWidth"]) {
+                          localStorage.removeItem(key);
+                        }
+                        setFontScale(14);
+                        setSettingsRevision(value => value + 1);
                         setDrafts({});
                         await readPreferences();
                         await load();
@@ -539,7 +546,6 @@ export default function App() {
                       ask={operation.ask}
                     />
                   )}
-                  {id === "about" && <About message={setNotice} launchRelease={launchRelease} />}
                 </Suspense>
               </section>
             ))}
@@ -574,6 +580,6 @@ export default function App() {
       {queueOpen && <DownloadQueuePanel onClose={()=>setQueueOpen(false)}/>}
       {batchOpen && <BatchScan games={games} onClose={()=>setBatchOpen(false)} message={setNotice}/>}
       {operation.dialog}
-    </div></DownloadContext.Provider>
+    </div></TransferFeedback>
   );
 }

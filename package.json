@@ -1,6 +1,6 @@
 {
   "name": "neuralframe",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "distribution": {
     "userDataDirectory": "dlss5-swapper-enhanced",
     "channel": "independent",

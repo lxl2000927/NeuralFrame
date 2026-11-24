@@ -13,7 +13,7 @@ const remote=(id,component,extra={})=>({id,component,tag:id,repo:'fixture/QA',na
 const snapshot={root:'QA',warnings:[],definitions:DEFINITIONS,
   packages:[local('unverified','mfg-renodx'),local('selectable','dlss-sr'),local('damaged','renodx-nr',{present:false}),
     local('internal','overlay'),local('wrong-sm','dlss-nr',{modelRequirements:{architectures:['120'],source:'fingerprint'}}),
-    local('unknown-sm','dlss-nr')],
+    local('unknown-sm','dlss-nr',{files:[{rel:'nvngx_dlssnr.dll',bitness:64}]})],
   runtimePacks:[{id:'route',component:'feeder',version:'QA paired',repository:'fixture/QA',downloaded:false,size:2048,
     compatibility:compatibility('feeder',{trustedAdapter:true})}],
   updates:{checkedAt:new Date().toISOString(),errors:[],candidates:[remote('verify','encore'),remote('route-version','feeder')]} };
@@ -21,7 +21,7 @@ const cases=[
   ['release:verify','verify','文件身份待确认','下载并校验'],
   ['local:unverified','unsupported','NeuralFrame 尚未接入',null],
   ['release:route-version','route-version','未提供单独替换','下载入库'],
-  ['runtime:route','route','随安装路线应用','下载入库'],
+  ['runtime:route','route','组合按需下载','下载入库'],
   ['local:wrong-sm','incompatible','显卡架构不匹配',null],
   ['local:unknown-sm','model-check','模型架构待确认',null],
   ['local:damaged','repair','文件异常 · 需修复',null],
@@ -32,7 +32,7 @@ const expectedFacts={
  verify:[/先校验身份/,/文件|指纹|确认/,/下载并校验.*程序是否支持/],
  unsupported:[/不能通过 NeuralFrame 应用/,/不代表原项目未验证或组件不兼容/,/选择程序已支持的版本/],
  'route-version':[/未提供.*单独替换/,/成组部署/,/查看配套版本.*不会更新路线/],
- route:[/游戏页安装路线统一应用/,/宿主.*运行库.*加载器/,/选择安装路线并预览/],
+ route:[/预览组合.*缺少的组件/,/宿主.*运行库.*加载器/,/画质与补帧.*配置组合并预览/],
  incompatible:[/不能在本机应用/,/CUDA.*不包含当前显卡/,/选择包含本机 CUDA 架构的模型/],
  'model-check':[/架构尚未确认/,/不能据此判定兼容或不兼容/,/实际 DLL 检查显卡架构.*保留原配置/],
  repair:[/需要先修复文件/,/文件缺失或大小异常/,/重新导入.*原始文件/],
@@ -88,6 +88,23 @@ const expectedFacts={
   assert.ok(overflow.content<=overflow.width+1,JSON.stringify(overflow));
   await p.evaluate(()=>document.documentElement.dataset.theme='light');
   if(output)await p.screenshot({path:path.join(output,'component-status-light-compact.png')});
+  const gpu={name:'AMD Radeon RX 7800 XT',architecture:{sm:null},nvidiaPresent:false};
+  await p.evaluate(gpu=>{
+    window.qa.setGraphicsCatalog({gpu,profiles:{},stacks:[],models:[]});
+    window.qa.setInventoryRows([{scope:'game',present:true,selectionTarget:true,bitness:64,name:'nvngx_dlssnr.dll',rel:'nvngx_dlssnr.dll'}]);
+  },gpu);
+  const nav=p.getByRole('navigation');
+  await nav.getByRole('button',{name:'游戏',exact:true}).click();
+  await p.getByRole('tab',{name:'组件与版本'}).click();
+  const custom=p.locator('.game-version-overrides');
+  await custom.locator('summary').click();
+  await expect(custom).toContainText('当前没有可单独替换的已入库版本');
+  await nav.getByRole('button',{name:'组件',exact:true}).click();
+  await catalog.getByRole('textbox',{name:'搜索组件'}).fill('unknown-sm');
+  const model=catalog.locator('[data-version-id="local:unknown-sm"] .component-status');
+  await expect(model).toHaveText('需要 NVIDIA 显卡');
+  await model.click();
+  await expect(p.locator('.component-drawer .component-verdict-facts')).toContainText('已检测到的显示适配器均非 NVIDIA');
   const audit=await p.evaluate(()=>window.qa.audit());
   assert.equal(audit.requests.length,0,'Browsing component conditions must not apply a game configuration');
   assert.equal(audit.libraryDownload,undefined,'Reviewing status must not trigger downloads');

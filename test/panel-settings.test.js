@@ -15,7 +15,7 @@ function load(root, overrides = {}) {
   host.on = () => host;
   const context = vm.createContext({ require: name => overrides[name] || (name === 'electron' ? electron : realRequire(name)), __dirname: path.dirname(main), process: host, Buffer, console });
   vm.runInContext(fs.readFileSync(main, 'utf8'), context, { filename: main });
-  return (name, ...args) => handlers.get(name)({}, ...args);
+  return (name, ...args) => handlers.get(name)({sender:{send() {}}}, ...args);
 }
 
 test('home library scans configure the persistent symbol cache before a detail page is opened', async t => {
@@ -134,6 +134,121 @@ test('settings saves are atomic, errors are reported and resetting cannot resurr
   assert.equal(JSON.parse(fs.readFileSync(stateFile)).theme, undefined);
   assert.equal(fs.readFileSync(path.join(root, 'history.json'), 'utf8'), 'history sentinel');
   assert.equal(fs.readFileSync(path.join(root, 'overlay-preferences.json'), 'utf8'), 'overlay sentinel');
+});
+
+test('combined reset keeps the game index until protected-cache cleanup succeeds and excludes competing writers', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-reset-cache-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  const state = path.join(root, 'library.json'), game = path.join(root, 'Game');
+  fs.writeFileSync(state, JSON.stringify({theme:'dark', manual:[game]}));
+  let finish, count = 0;
+  const call = load(root, {'./src/core/component-library':{ComponentLibrary:class {
+    constructor(_root, options) { this.options = options; }
+    async init() {}
+    async cleanCache() {
+      count++;
+      assert.ok(this.options.gameDirectories().includes(game));
+      if (count === 1) return new Promise(resolve => { finish = resolve; });
+      return {ok:true, removedPackages:2, removedBytes:32};
+    }
+  }}});
+  const first = call('reset-with-cache');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await call('reset-with-cache')).code, 'errJobBusy');
+  finish({ok:true, warning:'temporary file is busy'});
+  assert.equal((await first).ok, false);
+  assert.equal(JSON.parse(fs.readFileSync(state)).theme, 'dark');
+  assert.equal((await call('reset-with-cache')).removedBytes, 32);
+  assert.equal(fs.existsSync(state), false);
+});
+
+test('default combined reset clears real temporary downloads and preserves recovery of an unlisted legacy game', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-legacy-backup-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  const game = path.join(root, 'legacy'), profile = path.join(root, 'profile'), exe = path.join(game, 'Play.exe');
+  const partial = path.join(profile, 'component-library-v1', 'partial-downloads', 'archive.part');
+  fs.mkdirSync(path.dirname(partial), {recursive:true});
+  fs.writeFileSync(partial, 'temporary');
+  writePe(exe, {text:'D3D12CreateDevice'});
+  const core = require('../src/core/apply'), manifest = core.beginManifest(game, exe, 'dxgi');
+  manifest.added.push('owned.cfg');
+  fs.writeFileSync(path.join(game, 'owned.cfg'), 'installed');
+  await core.saveActiveManifest(game, manifest);
+  fs.writeFileSync(path.join(profile, 'library.json'), JSON.stringify({manual:[game]}));
+  const call = load(profile);
+  const reset = await call('reset-with-cache');
+  assert.equal(reset.ok, true, JSON.stringify(reset));
+  assert.ok(reset.removedBytes >= 9);
+  assert.equal(fs.existsSync(partial), false);
+  assert.equal(fs.existsSync(path.join(profile, 'library.json')), false);
+  assert.equal(fs.readFileSync(path.join(game, 'owned.cfg'), 'utf8'), 'installed');
+  const restarted = load(profile), preview = await restarted('preview-reset-deployments');
+  assert.equal(preview.games[0].dir, game);
+  assert.equal(preview.games[0].files, 1);
+  fs.renameSync(game, game + '-offline');
+  const offline = await restarted('preview-reset-deployments');
+  assert.equal(offline.games[0].dir, game);
+  assert.ok(offline.games[0].error);
+  assert.equal((await restarted('reset-with-cache', offline.token)).ok, false);
+});
+
+test('full reset previews and restores tracked games and standalone overlays; partial failure preserves retry data', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-reset-games-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  const profile = path.join(root, 'profile'), good = path.join(root, 'Game A'), changed = path.join(root, 'Game B');
+  const overlayGame = path.join(root, 'Overlay game'), userFile = path.join(good, 'user.ini');
+  fs.mkdirSync(profile);
+  for (const dir of [good, changed]) {
+    const exe = path.join(dir, 'Play.exe');
+    writePe(exe, {text:'D3D12CreateDevice'});
+    const core = require('../src/core/apply'), manifest = core.beginManifest(dir, exe, 'dxgi');
+    fs.writeFileSync(path.join(dir, 'managed.cfg'), 'patch');
+    manifest.added.push('managed.cfg');
+    await core.saveActiveManifest(dir, manifest);
+  }
+  fs.writeFileSync(userFile, 'user preferences');
+  const exe = path.join(overlayGame, 'Play.exe'), source = path.join(root, 'user.addon64');
+  writePe(exe, {text:'D3D12CreateDevice'});
+  writePe(source);
+  const overlays = require('../src/overlays').createOverlayLibrary(path.join(profile, 'overlay-library'), source);
+  const overlay = overlays.install(overlays.add(source).id, exe);
+  const state = path.join(profile, 'library.json');
+  fs.writeFileSync(state, JSON.stringify({manual:[good], hidden:[changed], theme:'dark'}));
+  let cleaned = 0;
+  const call = load(profile, {'./src/core/install-guards':{async assertGameClosed() {}},
+    './src/core/component-library':{ComponentLibrary:class {
+      async init() {}
+      async cleanCache() { cleaned++; return {ok:true, removedPackages:1, removedBytes:42}; }
+    }}});
+  const first = await call('preview-reset-deployments');
+  assert.equal(first.ok, true, first.message);
+  assert.equal(first.games.length, 3);
+  assert.ok(first.games.every(row => row.files === 1), JSON.stringify(first.games));
+  assert.ok(fs.existsSync(overlay.file));
+  assert.equal((await call('reset-with-cache', 'invalid')).ok, false);
+  assert.equal(cleaned, 0);
+  fs.writeFileSync(path.join(changed, 'managed.cfg'), 'changed after preview');
+  const partial = await call('reset-with-cache', first.token);
+  assert.equal(partial.ok, false, JSON.stringify(partial));
+  assert.equal(partial.games.filter(row => row.restored).length, 2, JSON.stringify(partial.games));
+  assert.ok(partial.games.find(row => row.dir === changed).error);
+  assert.equal(fs.existsSync(path.join(good, 'managed.cfg')), false);
+  assert.equal(fs.existsSync(overlay.file), false);
+  assert.equal(fs.readFileSync(path.join(changed, 'managed.cfg'), 'utf8'), 'changed after preview');
+  assert.equal(fs.existsSync(state), true);
+  assert.equal(cleaned, 0);
+  assert.equal((await call('reset-with-cache', first.token)).ok, false);
+  const next = await call('preview-reset-deployments');
+  assert.deepEqual(Array.from(next.games, row => row.dir), [changed]);
+  const completed = await call('reset-with-cache', next.token);
+  assert.equal(completed.ok, true, JSON.stringify(completed));
+  assert.equal(completed.removedBytes, 42);
+  assert.equal(cleaned, 1);
+  assert.equal(fs.existsSync(state), false);
+  assert.equal(fs.existsSync(source), true);
+  assert.equal(fs.readFileSync(userFile, 'utf8'), 'user preferences');
+  assert.ok(fs.existsSync(path.join(profile, 'history.jsonl')));
+  assert.equal((await call('preview-reset-deployments')).games.length, 0);
 });
 
 for (const reset of ['reset-library', 'reset']) {

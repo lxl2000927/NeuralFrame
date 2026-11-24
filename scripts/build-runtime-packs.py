@@ -18,7 +18,8 @@ repo = json.loads((source / 'package.json').read_text(encoding='utf-8'))['distri
 # Engine releases remain the authors' immutable original archives. Rebuilding
 # unrelated runtime packs must not downgrade them or replace their source URLs.
 current_catalog = json.loads((source / 'src/core/runtime-catalog.json').read_text(encoding='utf-8'))
-engine_ids = {'mfg-universal', 'mfg-optiscaler-170', 'encore', 'anr', 'anr-addon', 'sm86', 'sm86-delta', 'xemfg-intel'}
+engine_ids = {'mfg-universal', 'mfg-optiscaler-170', 'encore', 'anr', 'anr-addon', 'sm86', 'sm86-delta', 'xemfg-intel', 'xemfg-opti-host', 'rr-modern',
+              'sm86-native-sr', 'sm86-native-fg', 'sm86-native-streamline'}
 upstream_engines = [p for p in current_catalog['packs'] if p['id'] in engine_ids]
 if {p['id'] for p in upstream_engines} != engine_ids:
     raise ValueError('Missing verified original engine release records')
@@ -50,7 +51,7 @@ add('feeder','Feeder 加载链与着色器','feeder','1.17 + 1.19',
 add('reshade','ReShade 加载器','reshade','6.8.0',under('reshade-vulkan')+['ReShade_Setup_6.8.0_Addon.exe'])
 for key, component, file, license, version in [('mfg-renodx','mfg-renodx','renodx-mfgunlock.addon64','MFGAdaUnlock-RenoDx-LICENSE.txt','1.5.5')]:
     add(key,'MFG 解锁 '+version,component,version,['enhanced/mfg/'+file,'enhanced/mfg/licenses/'+license])
-add('mfg-license','MFG Unlocker 开源许可','mfg-universal','1.7.1',['enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt'],True)
+add('mfg-license','MFG Unlocker 开源许可','mfg-universal','1.7.2',['enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt'],True)
 add('localization','中文适配与预加载桥接','localization','zh1.12',
     ['enhanced/zh-cn/dlss5-zh-cn.addon32','enhanced/zh-cn/dlss5-zh-cn.addon64','enhanced/zh-cn/winmm.dll'],True)
 

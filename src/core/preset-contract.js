@@ -85,10 +85,15 @@ function settings(route,value, imported = false) {
     if (source.encore !== undefined) result.encore=fields('encore',source.encore,encoreFields);
     if (source.encorePackageId !== undefined) result.encorePackageId=checked('encorePackageId',source.encorePackageId,packageId);
   } else if (source.graphics !== undefined && !['optifg','xemfg-optiscaler'].includes(route)) {
-    const graphicsFields = {multiplier:number(2,6,true)};
+    const graphicsFields = {multiplier:number(route==='sm86-delta' ? 1 : 2,6,true)};
     if (route.startsWith('anr')) graphicsFields.sceneCut=bool;
     if (route==='anr') graphicsFields.neural=bool;
-    if (route.startsWith('sm86')) graphicsFields.engine=oneOf('DLSS','XeSS');
+    if (route==='xemfg') graphicsFields.xeMode=oneOf('auto','compatibility');
+    if (route.startsWith('sm86')) {
+      graphicsFields.engine=oneOf('DLSS','XeSS');
+      graphicsFields.nativeRuntimes=value=>Array.isArray(value) && new Set(value).size===value.length &&
+        value.every(oneOf('sr','rr','fg','streamline'));
+    }
     result.graphics=fields('graphics',source.graphics,graphicsFields);
     if (result.graphics.engine==='XeSS' && result.graphics.multiplier>4) fail('预设参数无效：graphics.multiplier');
   }

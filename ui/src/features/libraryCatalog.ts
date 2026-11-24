@@ -21,6 +21,7 @@ export function groupLibrary(data: Library, candidates: Updates["candidates"], m
   };
   const byPackage = new Map<string, LibraryVersion>();
   const byRuntime = new Map<string, LibraryVersion>();
+  const reshadePacks = new Map<string, LibraryVersion>();
   const visiblePackages = modelsOnly ? data.packages.filter(p => p.component === "dlss-nr") : data.packages;
   const packages = new Map(visiblePackages.map(p => [p.id, p]));
   for (const pack of data.runtimePacks) {
@@ -32,6 +33,7 @@ export function groupLibrary(data: Library, candidates: Updates["candidates"], m
     const row = { id: "runtime:" + pack.id, pack, packages: locals, releases: [], compatibility: pack.compatibility, modelRequirements: pack.modelRequirements };
     group(pack.component).versions.push(row);
     byRuntime.set(pack.id, row);
+    if (pack.component === "reshade") reshadePacks.set(pack.version, row);
     for (const local of locals) byPackage.set(local.id, row);
   }
   const byAsset = new Map<string, LibraryVersion>();
@@ -41,8 +43,12 @@ export function groupLibrary(data: Library, candidates: Updates["candidates"], m
     const matchingLocal = local?.component === release.component ? local : undefined;
     const assetKey = release.sha256 ? release.component + ":" + release.sha256 : release.id;
     const paired = release.pairedPackId ? byRuntime.get(release.pairedPackId) : undefined;
+    // An official ReShade tag documents the pack's upstream version. It carries no binary identity.
+    const documentedPack = release.component === "reshade" && release.provider === "reshade" && release.releaseOnly && release.version
+      ? reshadePacks.get(release.version)
+      : undefined;
     let row = (matchingLocal && byPackage.get(matchingLocal.id)) ||
-      (paired?.pack?.component === release.component ? paired : undefined) || byAsset.get(assetKey);
+      (paired?.pack?.component === release.component ? paired : undefined) || byAsset.get(assetKey) || documentedPack;
     if (!row) {
       row = { id: "release:" + release.id,
         packages: matchingLocal ? [matchingLocal] : [], releases: [],
@@ -67,8 +73,9 @@ function versionComponent(row: LibraryVersion): string {
   return row.pack?.component || row.packages[0]?.component || row.releases[0]?.component || "";
 }
 
-export function modelEligibility(row: LibraryVersion, gpuSm: string | null) {
+export function modelEligibility(row: LibraryVersion, gpuSm: string | null, nvidiaPresent?: boolean | null) {
   if (versionComponent(row) !== "dlss-nr") return "not-model";
+  if (nvidiaPresent === false) return "no-nvidia";
   if (!gpuSm || !row.modelRequirements?.architectures.length) return "unknown";
   const matches = row.modelRequirements.architectures.includes(gpuSm);
   if (row.modelRequirements.source === "catalog") return matches ? "catalog-match" : "catalog-incompatible";
@@ -83,7 +90,7 @@ export function localState(row: LibraryVersion): "cached" | "missing" | "damaged
   return "missing";
 }
 
-export function applicationState(row: LibraryVersion, gpuSm: string | null) {
+export function applicationState(row: LibraryVersion, gpuSm: string | null, nvidiaPresent?: boolean | null) {
   const kind = row.compatibility?.kind || (row.compatibility?.ready ? "selectable" : "pending");
   if (kind === "internal") return "internal";
   if (localState(row) === "damaged") return "repair";
@@ -91,15 +98,15 @@ export function applicationState(row: LibraryVersion, gpuSm: string | null) {
   if (kind === "pending") return assessment === "unsupported" || (!assessment && row.packages.length > 0) ? "unsupported" : "verify";
   if (kind === "route") return assessment === "route-version" || (!assessment && !row.pack && !engineInfo(row)?.compatible) ? "route-version" : "route";
   // A matching GPU never grants support to an unadapted plugin or engine.
-  const model = modelEligibility(row, gpuSm);
-  if (model === "incompatible" || model === "catalog-incompatible") return "incompatible";
+  const model = modelEligibility(row, gpuSm, nvidiaPresent);
+  if (model === "no-nvidia" || model === "incompatible" || model === "catalog-incompatible") return "incompatible";
   if (model === "unknown") return gpuSm ? "model-check" : "hardware";
   if (model === "catalog-match") return "verify";
   return "selectable";
 }
 
 export const applicationLabels: Record<string,string> = {
-  selectable:"程序已支持 · 游戏页预览", route:"随安装路线应用",
+  selectable:"程序已支持 · 游戏页预览", route:"组合按需下载",
   verify:"文件身份待确认", unsupported:"NeuralFrame 尚未接入",
   "route-version":"未提供单独替换", incompatible:"显卡架构不匹配",
   hardware:"未识别显卡架构", "model-check":"模型架构待确认",
@@ -111,15 +118,15 @@ function engineInfo(row:LibraryVersion) {
 }
 
 export function pairedXeMfgEngine(row: LibraryVersion) {
-  if (row.pack) return row.pack.id === "mfg-universal" && row.pack.version === "1.7.1";
+  if (row.pack) return row.pack.id === "mfg-universal";
   const engine = engineInfo(row);
-  return versionComponent(row) === "mfg-universal" && engine?.verified && engine.compatible && engine.version === "1.7.1";
+  return versionComponent(row) === "mfg-universal" && engine?.verified && engine.compatible && engine.recommended;
 }
 
 // Presentation policy only: ready/kind remain the main process's installation
 // gates. Never turn a download, matching label, or matching GPU into permission.
-export function applicationVerdict(row:LibraryVersion,gpuSm:string|null) {
-  const state = applicationState(row,gpuSm), local = localState(row), model = modelEligibility(row,gpuSm);
+export function applicationVerdict(row:LibraryVersion,gpuSm:string|null,nvidiaPresent?:boolean|null) {
+  const state = applicationState(row,gpuSm,nvidiaPresent), local = localState(row), model = modelEligibility(row,gpuSm,nvidiaPresent);
   const engine = engineInfo(row);
   let label = applicationLabels[state], availability = local === 'cached' ? "可进入游戏页预览；仍需检查游戏支持。" : "尚未下载；下载校验后可进入游戏页预览。";
   let reason = row.compatibility?.reason || "此组件允许选择，应用前还会校验文件与游戏支持。";
@@ -128,9 +135,10 @@ export function applicationVerdict(row:LibraryVersion,gpuSm:string|null) {
   let downloadLabel = "下载入库";
   if (state === 'route') {
     label = engine?.compatible ? engine.recommended ? "推荐版本 · 游戏页可选" : "程序已支持 · 游戏页可选" : label;
-    availability = local === 'cached' ? "可由游戏页安装路线统一应用，不能单独替换文件。" : "下载配套组件后，由游戏页安装路线统一应用。";
+    availability = local === 'cached' ? "已入库，使用此组件的组合会校验并复用缓存。" : "在游戏页选择需要的功能，预览组合时会提示下载缺少的组件。";
+    if (engine?.compatible && !engine.recommended && local !== 'cached') availability = "尚未下载；下载校验后可进入游戏页预览。";
     reason = engine?.compatible ? "程序已登记此引擎的部署方式与参数能力；具体游戏、文件和依赖仍需在应用前检查。" : "这是路线配套组件，需要连同宿主、运行库或加载器一起部署。";
-    next = engine?.compatible ? "下载或校验后，到游戏页的引擎版本中选择并预览。" : "到游戏页选择安装路线并预览，管理器会准备所需配套组件。";
+    next = engine?.compatible ? "下载或校验后，到游戏页的引擎版本中选择并预览。" : "在游戏的「画质与补帧」中配置组合并预览。";
     shortReason = engine?.compatible ? "通过引擎版本选项应用" : "宿主与依赖需成组部署";
     if (pairedXeMfgEngine(row)) {
       next = "在游戏页预览适用的 XeMFG 路线。鸣潮可在独立加载器的版本列表中选择此引擎。";
@@ -138,7 +146,7 @@ export function applicationVerdict(row:LibraryVersion,gpuSm:string|null) {
     } else if (row.pack?.id === "xemfg-intel") {
       next = "在游戏页查看可用的 XeMFG 路线并预览。管理器会检查目标程序、图形 API 和游戏输入。";
     }
-    nextShort = local === 'cached' ? "下一步：游戏页预览" : "下一步：准备配套 → 游戏页";
+    nextShort = engine?.compatible && !engine.recommended && local !== 'cached' ? "下一步：下载入库 → 游戏页" : "下一步：游戏页预览";
   } else if (state === 'verify') {
     availability = "尚不能确认这个文件是否可用，需要先校验身份。";
     reason = model === 'catalog-match' ? "目录标注的架构匹配本机，但尚未由实际文件指纹确认模型身份。" : row.compatibility?.reason || "目前只有发布包信息，不能只凭版本名称确认文件身份与适配情况。";
@@ -155,6 +163,12 @@ export function applicationVerdict(row:LibraryVersion,gpuSm:string|null) {
     reason = "该组件需要成组部署，程序尚未开放这个版本的单独替换入口。";
     next = "查看配套版本，或到游戏页选择安装路线；下载此版本只会入库，不会更新路线。";
     shortReason = "当前路线未开放单独选版"; nextShort = "下一步：查看配套版本";
+  } else if (state === 'incompatible' && model === 'no-nvidia') {
+    label = shortReason = "需要 NVIDIA 显卡";
+    availability = "不能在本机应用这个模型。";
+    reason = "此安装方式需要 NVIDIA 显卡运行 DLSS 神经渲染。已检测到的显示适配器均非 NVIDIA。";
+    next = nextShort = "可到游戏页查看当前游戏支持的图形功能。";
+    downloadLabel = "下载留存";
   } else if (state === 'incompatible') {
     label = model === 'catalog-incompatible' ? "目录标注：显卡架构不匹配" : label;
     availability = model === 'catalog-incompatible' ? "按目录记录不适合本机；下载不会改变显卡架构。" : "不能在本机应用这个模型。";
@@ -222,7 +236,9 @@ export function versionAcquisition(row: LibraryVersion) {
   const cached = row.pack ? row.pack.downloaded : !!candidate && cachedRelease(candidate);
   if (row.pack) return {candidate,cached,disabled:false,notice:""};
   if (!candidate) return {candidate,cached,disabled:true,notice:"没有在线下载记录；需要文件时请重新导入。"};
-  if (candidate.releaseOnly) return {candidate,cached,disabled:true,notice:"上游发布页记录了此版本，但没有附带组件包。"};
+  if (candidate.releaseOnly) return {candidate,cached,disabled:true,notice:candidate.provider === 'reshade'
+    ? "此版本来自 ReShade 官方源码标签。需要安装加载器时，请使用配套版本。"
+    : "上游发布页记录了此版本，但没有附带组件包。"};
   if (!candidate.downloadable) return {candidate,cached,disabled:true,notice:!candidate.sha256
     ? "发布源未提供 SHA-256 校验值，暂不能下载；请等待发布信息补全后检查更新。"
     : "发布源的下载信息不完整，暂不能下载；请重新检查更新。"};
@@ -262,7 +278,7 @@ export const componentCategories: Record<string, string> = {
 };
 export type CatalogFilters = { query: string; category: string; local: string; application: string; source: string };
 export const emptyFilters: CatalogFilters = {query: "", category: "all", local: "all", application: "all", source: "all"};
-export function filterLibrary(groups: ComponentGroup[], data: Library, filters: CatalogFilters, gpuSm: string | null): ComponentGroup[] {
+export function filterLibrary(groups: ComponentGroup[], data: Library, filters: CatalogFilters, gpuSm: string | null, nvidiaPresent?: boolean | null): ComponentGroup[] {
   const terms = filters.query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   return groups.flatMap(group => {
     const def = data.definitions[group.component];
@@ -270,7 +286,7 @@ export function filterLibrary(groups: ComponentGroup[], data: Library, filters: 
     if (filters.category !== "all" && filters.category !== category) return [];
     const versions = group.versions.filter(row => {
       if (filters.local !== "all" && filters.local !== localState(row)) return false;
-      if (filters.application !== "all" && filters.application !== applicationState(row, gpuSm)) return false;
+      if (filters.application !== "all" && filters.application !== applicationState(row, gpuSm, nvidiaPresent)) return false;
       if (!terms.length && filters.source === "all") return true;
       const sources = versionSources(row);
       if (filters.source !== "all" && !sources.includes(filters.source)) return false;

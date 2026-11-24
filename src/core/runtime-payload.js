@@ -15,10 +15,14 @@ const {componentCompatibility,modelRequirements}=require('./component-compatibil
 const error = message => Object.assign(new Error(message), {code:'errRuntimeComponents'});
 const nonempty = value => value !== undefined && value !== 'off';
 
-function requiredPacks({kind, config = {}, route, mfgRoute, target, scan = {}, customModel = false, reuseProxy = false} = {}) {
+function requiredPacks({kind, config = {}, route, mfgRoute, target, scan = {}, customModel = false, modelDownload, reuseProxy = false} = {}) {
   if (kind === 'restore' || route === 'optifg') return [];
   if (route === 'xemfg') return ['mfg-universal', 'mfg-license', 'xemfg-intel'];
-  if (route === 'xemfg-optiscaler') return ['mfg-universal', 'mfg-license'];
+  if (route === 'xemfg-optiscaler') return ['mfg-universal', 'mfg-license', ...(config.graphics?.upgradeHost ? ['xemfg-opti-host'] : [])];
+  if (route === 'sm86' || route === 'sm86-delta') {
+    const native = require('./sm86-native');
+    return [route,...native.validate(config.graphics?.nativeRuntimes ?? []).map(kind=>native.packIds[kind])];
+  }
   if (route === 'anr' && config.graphics?.neural)
     return ['anr','renodx-nr','nr-3108',config.runtimeStack === 'oct2026-310.9.16' ? 'sr-modern' : 'sr-baseline','localization','reshade'];
   if (route === 'hud') return ['localization', 'reshade'];
@@ -36,13 +40,13 @@ function requiredPacks({kind, config = {}, route, mfgRoute, target, scan = {}, c
       ids.add('sl-modern'); ids.add('fg-modern');
     }
     if (config.encore?.upscaling === 'dlss') ids.add('sr-modern');
-    if (nonempty(config.neuralMode) && !customModel) ids.add('nr-3108');
+    if (nonempty(config.neuralMode) && !customModel && !modelDownload) ids.add('nr-3108');
     return [...ids];
   }
   if (route === 'wuwa-proxy') {
     if (!reuseProxy && !config.mfgPackageId) ids.add('mfg-universal');
     if (!reuseProxy || config.mfgPackageId !== undefined) ids.add('mfg-license');
-    if (nonempty(config.neuralMode) && !customModel) ids.add('nr-3108');
+    if (nonempty(config.neuralMode) && !customModel && !modelDownload) ids.add('nr-3108');
     return [...ids];
   }
   const modern = config.runtimeStack === 'oct2026-310.9.16' || (!config.runtimeStack && config.hardwareProfile === 'rtx50_desktop');
@@ -52,7 +56,7 @@ function requiredPacks({kind, config = {}, route, mfgRoute, target, scan = {}, c
   const mfg = kind === 'enhanced' && nonempty(config.mfgMode) && (!mfgTarget || routes.supportsMfg(mfgTarget));
   if(nr || mfg) ids.add('localization');
   if (nr) {
-    if (!customModel) ids.add('nr-3108');
+    if (!customModel && !modelDownload) ids.add('nr-3108');
     if (route !== 'optiscaler') { ids.add('sr-'+stack); ids.add('sl-'+stack); ids.add('renodx-nr'); ids.add('reshade'); }
     if (route === 'feeder' || route === 'renodx') {
       ids.add('feeder'); ids.add('fg-'+stack);
@@ -111,6 +115,31 @@ class RuntimePayload {
   }
   async complete(base,p) { for(const f of p.files) if(!await this.valid(safe(base,f.path),f)) return false; return true; }
   list(packages = []) {
+    // Manifest paths were validated at construction. During this read-only
+    // snapshot, sibling files can share one check of their parent chain.
+    const root = path.resolve(this.payloadDir);
+    const parents = new Map();
+    const isDirectory = dir => {
+      if (!parents.has(dir)) {
+        const parent = path.dirname(dir);
+        const inView = dir === root || (parent !== dir && isDirectory(parent));
+        let available = false;
+        if (inView) {
+          try { available = !!fs.lstatSync(dir, {throwIfNoEntry:false})?.isDirectory(); }
+          catch { /* An inaccessible path is not available for reuse. */ }
+        }
+        parents.set(dir, available);
+      }
+      return parents.get(dir);
+    };
+    const present = file => {
+      const target = path.resolve(root, file.path);
+      if (!isDirectory(path.dirname(target))) return false;
+      try {
+        const stat = fs.lstatSync(target, {throwIfNoEntry:false});
+        return stat?.isFile() && stat.size === file.size;
+      } catch { return false; }
+    };
     return [...this.packs.values()].filter(p=>!p.bundled).map(p=>({
       id:p.id,name:p.name,component:p.component,version:p.version,size:p.size,repository:p.repository || this.catalog.repository,
         url:p.url,sha256:p.sha256,files:p.files,cacheRoot:this.payloadDir,upstreams:p.upstreams || [],
@@ -121,16 +150,19 @@ class RuntimePayload {
       // A route pack can contain several complete local packages (e.g. Feeder).
       packageIds:packages.filter(local=>local.component===p.component && local.files?.length &&
         local.files.every(f=>p.files.some(file=>path.basename(file.path).toLowerCase()===f.rel.toLowerCase() && file.sha256===f.sha256))).map(local=>local.id),
-      downloaded:p.files.every(f=>{try{const s=fs.lstatSync(safe(this.payloadDir,f.path));return s.isFile()&&!s.isSymbolicLink()&&s.size===f.size;}catch{return false;}})
+      downloaded:p.files.every(present)
     }));
   }
-  async require(ids) {
+  async require(ids, modelDownload) {
     const missing=[];
     for(const id of new Set(ids)) { const p=this.pack(id); if(!await this.complete(this.payloadDir,p)) missing.push(p); }
-    if(missing.length) throw Object.assign(error('首次使用需要准备配套组件；只写入管理器缓存，下载校验完成后再预览游戏文件变更。'),{
-      dependencies:missing.map(p=>'runtime:'+p.id),
-      downloads:missing.filter(p=>!p.bundled).map(p=>({name:p.name,size:p.size}))
-    });
+    const dependencies = missing.map(pack => 'runtime:' + pack.id);
+    const downloads = missing.filter(pack => !pack.bundled).map(pack => ({name:pack.name,size:pack.size}));
+    if (modelDownload) {
+      dependencies.push('model:' + modelDownload.downloadId);
+      downloads.push({name:modelDownload.name,size:modelDownload.downloadSize});
+    }
+    if (dependencies.length) throw Object.assign(error('首次使用需要准备配套组件；只写入管理器缓存，下载校验完成后再预览游戏文件变更。'),{dependencies,downloads});
   }
   cancel({discard=false}={}) { if(discard)this.discardOnAbort=true;this.controller?.abort(); return {ok:true}; }
   async localCandidates() {

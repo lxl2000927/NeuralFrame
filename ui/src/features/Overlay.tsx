@@ -437,6 +437,7 @@ export function Overlay({
                 <label>
                   {t("主题名称")}
                   <input
+                    className="text-field"
                     value={currentAppearance.custom.name}
                     maxLength={32}
                     disabled={busy}
@@ -453,8 +454,9 @@ export function Overlay({
                   />
                 </label>
                 <button
-                  className="icon-button"
+                  className="icon-button danger"
                   aria-label={t("删除自定义主题")}
+                  title={t("删除自定义主题")}
                   disabled={busy}
                   onClick={() =>
                     stageAppearance({ theme: "green", custom: null })
@@ -618,7 +620,7 @@ export function Overlay({
                         {t("安装到游戏…")}
                       </button>
                       <button
-                        className="icon-button"
+                        className="icon-button danger"
                         aria-label={t("从组件库移除 {0}", [entry.name])}
                         title={t("从组件库移除")}
                         disabled={busy}

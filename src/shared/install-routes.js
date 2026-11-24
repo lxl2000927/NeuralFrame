@@ -187,7 +187,8 @@
         if (target.hasAnrAddonHost) available.push('anr-addon');
       }
       if (dx12 && target.hasNativeDlssFg) available.push('sm86');
-      if (/(?:^|[\\/])Binaries[\\/]Win64[\\/]DeltaForceClient-Win64-Shipping\.exe$/i.test(target.path || target.rel || ''))
+      if ((dx12 && target.steamMiles && target.hasNativeDlssFg) ||
+          /(?:^|[\\/])Binaries[\\/]Win64[\\/]DeltaForceClient-Win64-Shipping\.exe$/i.test(target.path || target.rel || ''))
         available.push('sm86-delta');
     }
     return available;

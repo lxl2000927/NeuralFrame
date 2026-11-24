@@ -162,13 +162,13 @@ text is included in `payload/enhanced/mfg/licenses/MFGAdaUnlock-RenoDx-LICENSE.t
 
 ## MFG-Unlocker (RTXMFG Universal Unlocker)
 
-The independent-loader component recommends the original `MFGUnlocker.dll` 1.7.1 and permits the verified original 1.7.0. The classic DLSS-G OptiScaler ASI uses its 1.7.0 companion pack. The standalone and OptiScaler XeMFG routes use the original 1.7.1 DLL.
+The independent loader recommends the original `MFGUnlocker.dll` 1.7.2 and accepts the verified originals from 1.7.1 and 1.7.0. The classic DLSS-G OptiScaler ASI uses its 1.7.0 companion pack. The standalone and OptiScaler XeMFG routes use the original 1.7.2 DLL. The optional paired OptiScaler host is distributed with its upstream notices in the RTX-FG-Manager MFG 1.7.2 package.
 Upstream releases: https://github.com/dashdogy/MFG-Unlocker/releases
 
 The standalone XeMFG route downloads Intel XeSS SDK 3.0.2 from Intel and installs `libxess_fg.dll`, `libxell.dll`, `LICENSE.txt` and `third-party-programs.txt` together under `RTXMFG-XeSS`. The OptiScaler XeMFG plugin uses the compatible Intel libraries already installed with the host. [Intel XeSS SDK 3.0.2](https://github.com/intel/xess/releases/tag/v3.0.2)
 
 Licensed under the MIT License (Copyright (c) 2026 dashdogy). The full license
-text is tracked at `assets/licenses/MFG-Unlocker-LICENSE.txt` and prepared as the bundled `mfg-license` component at `enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt`. This is separate from the original 1.7.1 archive, which contains only the DLL.
+text is tracked at `assets/licenses/MFG-Unlocker-LICENSE.txt` and prepared as the bundled `mfg-license` component at `enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt`. This is separate from the original 1.7.2 archive, which contains only the DLL.
 
 ## ANR FG Beta B20
 
@@ -204,3 +204,29 @@ The Steam install-script parser, legacy API compatibility, dgVoodoo defaults
 and discovery fixes are also adapted from this MIT-licensed revision.
 The corresponding C source, export definition and build script are included in
 the source package. The project MIT license is included at the package root.
+
+## RTX-FG-Manager game profile integration
+
+The Miles Morales profile checks and recovery behavior were adapted from RTX-FG-Manager 4.3.42. The driver interface follows the public NVIDIA NVAPI DRS headers. [RTX-FG-Manager source](https://github.com/pandaligx/RTX-FG-Manager/tree/v4.3.42/rust/src/miles_profile) · [NVIDIA NVAPI](https://github.com/NVIDIA/nvapi)
+
+MIT License
+
+Copyright (c) 2026 RTX FG Manager contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

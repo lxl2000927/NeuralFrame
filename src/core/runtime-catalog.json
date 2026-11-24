@@ -1073,23 +1073,23 @@
     },
     {
       "id": "mfg-universal",
-      "name": "MFG 解锁 1.7.1",
+      "name": "MFG Unlocker 1.7.2",
       "component": "mfg-universal",
-      "version": "1.7.1",
+      "version": "1.7.2",
       "bundled": false,
       "files": [
         {
           "path": "enhanced/mfg/MFGUnlocker.dll",
           "archivePath": "MFGUnlocker.dll",
-          "size": 7389696,
-          "sha256": "5a389e6cad23b2b607e1dc224e9e86ee32d6ef46f0557b6c6f8137feadf0aa74"
+          "size": 15782400,
+          "sha256": "a9b1c01727fa72763bef8f604e44ec165ce1c98272de00719572b766a11cf28f"
         }
       ],
-      "contentId": "ae6b7645f55d359aa7a36518a27fae6f0ce16140ab6868c314d74f7b5947d860",
-      "archive": "MFGUnlocker-v1.7.1.zip",
-      "size": 3487244,
-      "sha256": "c85cb2a9e74f39be744fada4a1a75d72c606f73315114f334ad7755a3a13005d",
-      "url": "https://github.com/dashdogy/MFG-Unlocker/releases/download/v1.7.1/MFGUnlocker-v1.7.1.zip",
+      "contentId": "e972ccc910fcb24bc8925f6a1b65b743da78c9a6e022139172ada6d0313bc81e",
+      "archive": "MFGUnlocker-v1.7.2.zip",
+      "size": 5334929,
+      "sha256": "e002d624e3e7ba5cedab7211043c096fe8f555c30ff43500235a0686c7893f22",
+      "url": "https://github.com/dashdogy/MFG-Unlocker/releases/download/v1.7.2/MFGUnlocker-v1.7.2.zip",
       "repository": "dashdogy/MFG-Unlocker",
       "upstreams": [
         {
@@ -1169,7 +1169,7 @@
       "id": "mfg-license",
       "name": "MFG Unlocker 开源许可",
       "component": "mfg-universal",
-      "version": "1.7.1",
+      "version": "1.7.2",
       "bundled": true,
       "upstreams": [
         {
@@ -1726,77 +1726,77 @@
     },
     {
       "id": "sm86-delta",
-      "name": "Dlssg_for_sm86 0.4.2 · 三角洲 DX12 / Vulkan",
+      "name": "Dlssg_for_sm86 R3 · 三角洲 / 迈尔斯",
       "component": "sm86-delta",
-      "version": "0.4.2+rtxfg.1",
+      "version": "0.4.2+rtxfg.3",
       "bundled": false,
       "repository": "pandaligx/RTX-FG-Manager",
       "files": [
         {
           "path": "enhanced/sm86-delta/dlssg_sm86/backend/sm86_backend.dll",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-backend-sm86_backend-7d197846fdc1-r1/dlssg_sm86/backend/sm86_backend.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-backend-sm86_backend-7d197846fdc1-r3/dlssg_sm86/backend/sm86_backend.dll",
           "size": 2356416,
           "sha256": "4e445fb822e8af37212933fb9b1ace01eb82db0f64896359a7711b3fe5db7349"
         },
         {
           "path": "enhanced/sm86-delta/dlssg_sm86/kernels/fg_kernels.dll",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-kernels-fg_kernels-17a73896d03e-r1/dlssg_sm86/kernels/fg_kernels.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-kernels-fg_kernels-17a73896d03e-r3/dlssg_sm86/kernels/fg_kernels.dll",
           "size": 11987504,
           "sha256": "1ebd50b74ac8583299fd902208487e7f71b6bfb8d44ccee224cd2372a22c35a7"
         },
         {
           "path": "enhanced/sm86-delta/dlssg_sm86/runtime/nvngx_dlssg.dll",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-runtime-nvngx_dlssg-18c596ffc0da-r1/dlssg_sm86/runtime/nvngx_dlssg.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-runtime-nvngx_dlssg-18c596ffc0da-r3/dlssg_sm86/runtime/nvngx_dlssg.dll",
           "size": 7506544,
           "sha256": "cadee1aa6db3907babdc3285da2aebc4553d92b89c38ba3eae8abd8bba1bea72"
         },
         {
           "path": "enhanced/sm86-delta/dlssg_sm86/sr/nvngx_dlss.dll",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-sr-nvngx_dlss-79af3944d8b4-r1/dlssg_sm86/sr/nvngx_dlss.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-sr-nvngx_dlss-79af3944d8b4-r3/dlssg_sm86/sr/nvngx_dlss.dll",
           "size": 74187376,
           "sha256": "858ccff96360c3098db9264cd6f13d04a027e09b6ce7ad5bbc297570e824b4f2"
         },
         {
           "path": "enhanced/sm86-delta/dlssg_sm86/sr/sr_kernels.dll",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-sr-sr_kernels-48ad972f0c93-r1/dlssg_sm86/sr/sr_kernels.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-sr-sr_kernels-48ad972f0c93-r3/dlssg_sm86/sr/sr_kernels.dll",
           "size": 107514704,
           "sha256": "b0b82c6e55b12cee49ff44257ee7121c45dedd6b2f78f6bacdcec6f724a8886c"
         },
         {
           "path": "enhanced/sm86-delta/dlssg_sm86/xefg/xefg_kernels.dll",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-xefg-xefg_kernels-55ce3841ceda-r1/dlssg_sm86/xefg/xefg_kernels.dll",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-component-xefg-xefg_kernels-55ce3841ceda-r3/dlssg_sm86/xefg/xefg_kernels.dll",
           "size": 17447416,
           "sha256": "605f2bc5e7f3affe3136fd8b71555cfc1c189240ab3a35913bd7c5b5fecc162d"
         },
         {
           "path": "enhanced/sm86-delta/dlssg_sm86/LICENSE.md",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-notices-1057b99a4210-r1/dlssg_sm86/LICENSE.md",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-notices-1057b99a4210-r3/dlssg_sm86/LICENSE.md",
           "size": 1065,
           "sha256": "7537220f50c6430d953eda8bff01f0817014e604cb3607f3b62c786d070d8570"
         },
         {
           "path": "enhanced/sm86-delta/dlssg_sm86/THIRD_PARTY_NOTICES.txt",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-notices-1057b99a4210-r1/dlssg_sm86/THIRD_PARTY_NOTICES.txt",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-dlssg-0.4.2-notices-1057b99a4210-r3/dlssg_sm86/THIRD_PARTY_NOTICES.txt",
           "size": 59514,
           "sha256": "908f1bc3a6fe9a85b44e86bdc649e242b06e9ce85d81b88bb014191070d34c48"
         },
         {
           "path": "enhanced/sm86-delta/dlssg_sm86.ini",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-version-r1/dlssg_sm86.ini",
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-version-r3/dlssg_sm86.ini",
           "size": 10883,
           "sha256": "bf4b0844a4752aa339c234913a921ff80c5fb28657309eb3f8d4e0647bff4fc9"
         },
         {
           "path": "enhanced/sm86-delta/version.dll",
-          "archivePath": "rtxfg-0.4.2-dx12-vulkan-version-r1/version.dll",
-          "size": 5731896,
-          "sha256": "9c54ac17483e3aa2bf7d65bd934823d89141e5d7addc39565c599e733dbce561"
+          "archivePath": "rtxfg-0.4.2-dx12-vulkan-version-r3/version.dll",
+          "size": 5737640,
+          "sha256": "2e13a11d05f5b9e1979181226750e1b0927907644fc040a1902da3e81f306cd0"
         }
       ],
-      "archive": "rtxfg-0.4.2-dx12-vulkan-r1-complete-390d62f8cc88.zip",
-      "size": 103039945,
-      "sha256": "390d62f8cc881cc77c69e745fb5309da918d1a75f7a6e94492993d93dfcbb43c",
-      "url": "https://github.com/pandaligx/RTX-FG-Manager/releases/download/payloads/rtxfg-0.4.2-dx12-vulkan-r1-complete-390d62f8cc88.zip",
+      "archive": "rtxfg-0.4.2-dx12-vulkan-r3-complete-1663111a8681.zip",
+      "size": 103072631,
+      "sha256": "1663111a8681b1f143a0788d26e2658595efd66116433bd8d5bc11b61870dcbc",
+      "url": "https://github.com/pandaligx/RTX-FG-Manager/releases/download/payloads/rtxfg-0.4.2-dx12-vulkan-r3-complete-1663111a8681.zip",
       "upstreams": [
         {
           "name": "pandaligx/RTX-FG-Manager",
@@ -1804,7 +1804,7 @@
           "kind": "project"
         }
       ],
-      "contentId": "08b1a8f532a348a1819e25fcec89e38b7fca42047bfcb7081cc666f0cb0b3cf1"
+      "contentId": "2463f6b1a29c793712e38a62d0f0c8a629b9d353d73f3a0c37ae538826fc4168"
     },
     {
       "id": "xemfg-intel",
@@ -1851,6 +1851,241 @@
         }
       ],
       "contentId": "509bee9c4c361563ae703f1c449ea125dee09fdc8e26fdd80c5e1ca2d272a546"
+    },
+    {
+      "id": "xemfg-opti-host",
+      "name": "XeMFG 配套 OptiScaler 10 宿主",
+      "component": "optiscaler",
+      "version": "MFG 1.7.2",
+      "bundled": false,
+      "repository": "pandaligx/RTX-FG-Manager",
+      "archive": "mfg-unlocker-1.7.2-complete-522358ba8834.zip",
+      "url": "https://github.com/pandaligx/RTX-FG-Manager/releases/download/payloads/mfg-unlocker-1.7.2-complete-522358ba8834.zip",
+      "size": 12974973,
+      "sha256": "522358ba88344a0b65ce6e060ef822ad40f489776e5d86252ef3acbc566164c0",
+      "files": [
+        {
+          "path": "enhanced/xemfg-host/OptiScaler.dll",
+          "archivePath": "mfg-unlocker-1.7.2-universal/OptiScaler.dll",
+          "size": 28620960,
+          "sha256": "dd64e1b13642ab118a9edded86e1c7b4e72e8712d5644933eb13359a0e3bc196"
+        },
+        {
+          "path": "enhanced/xemfg-host/MFG-Unlocker-NOTICES.txt",
+          "archivePath": "mfg-unlocker-1.7.2-universal/MFG-Unlocker-NOTICES.txt",
+          "size": 37522,
+          "sha256": "dc33dc3739916129d79335d3a7434c783b4638e4e1a91254c4ad436b9db1326d"
+        }
+      ],
+      "upstreams": [
+        {
+          "name": "dashdogy/OptiScaler",
+          "url": "https://github.com/dashdogy/OptiScaler",
+          "kind": "project"
+        },
+        {
+          "name": "pandaligx/RTX-FG-Manager",
+          "url": "https://github.com/pandaligx/RTX-FG-Manager",
+          "kind": "project"
+        }
+      ],
+      "contentId": "1489d61a1ede8b9934ba1cc1010348f774a50a68b1388a822d944343982b6891"
+    },
+    {
+      "id": "rr-modern",
+      "name": "DLSS 光线重建 310.9.16",
+      "component": "dlss-rr",
+      "version": "310.9.16",
+      "bundled": false,
+      "repository": "pandaligx/RTX-FG-Manager",
+      "archive": "runtime-rr-310.9.16-7185dfba0135.zip",
+      "url": "https://github.com/pandaligx/RTX-FG-Manager/releases/download/payloads/runtime-rr-310.9.16-7185dfba0135.zip",
+      "size": 21672111,
+      "sha256": "7185dfba013590d508d5cef81fcdc8075a2309b18e8c20ddb11f3df1f48a750a",
+      "files": [
+        {
+          "path": "enhanced/rr-310.9.16/nvngx_dlssd.dll",
+          "archivePath": "nvngx_dlssd.dll",
+          "size": 48343664,
+          "sha256": "b49435ae346f227feafe7bbe937d88277ea0ee7323975ec06488f377fdb46cee"
+        },
+        {
+          "path": "enhanced/rr-310.9.16/NVIDIA-LICENSE.txt",
+          "archivePath": "NVIDIA-LICENSE.txt",
+          "size": 26620,
+          "sha256": "d4216e39ebef5f9b50a6712ebb37beeb5379862a67733a9999c651f21592aaf0"
+        }
+      ],
+      "upstreams": [
+        {
+          "name": "NVIDIA/DLSS",
+          "url": "https://github.com/NVIDIA/DLSS",
+          "kind": "project"
+        }
+      ],
+      "contentId": "8783eac8108d89347d43df9009728b1600e293c7e6ce33a5fbe88dad88c96d83"
+    },
+    {
+      "id": "sm86-native-sr",
+      "name": "DLSS 超分辨率 · sm86 配套",
+      "component": "dlss-sr",
+      "version": "310.9.16",
+      "bundled": false,
+      "repository": "pandaligx/RTX-FG-Manager",
+      "archive": "runtime-sr-310.9.16-a092daef889e.zip",
+      "url": "https://github.com/pandaligx/RTX-FG-Manager/releases/download/payloads/runtime-sr-310.9.16-a092daef889e.zip",
+      "size": 31152410,
+      "sha256": "a092daef889eea63aa9b76f58db69b68bb2ecbf47acdc76831a7f152d7f95644",
+      "files": [
+        {
+          "path": "enhanced/sm86-native-sr/nvngx_dlss.dll",
+          "archivePath": "nvngx_dlss.dll",
+          "size": 58956912,
+          "sha256": "d00b5b0ab29c3ca101b70c3a5ecb3a01b7ef33766a3383a28a18623083e6123e"
+        },
+        {
+          "path": "enhanced/sm86-native-sr/NVIDIA-LICENSE.txt",
+          "archivePath": "NVIDIA-LICENSE.txt",
+          "size": 26620,
+          "sha256": "d4216e39ebef5f9b50a6712ebb37beeb5379862a67733a9999c651f21592aaf0"
+        }
+      ],
+      "upstreams": [
+        {
+          "name": "NVIDIA/DLSS",
+          "url": "https://github.com/NVIDIA/DLSS",
+          "kind": "project"
+        }
+      ],
+      "contentId": "a14be39fbc653e2d96956a61ff61705b7076033ad77b827275d72a6ecf087df6"
+    },
+    {
+      "id": "sm86-native-fg",
+      "name": "DLSS 帧生成 · sm86 配套",
+      "component": "dlss-fg",
+      "version": "310.9.16",
+      "bundled": false,
+      "repository": "pandaligx/RTX-FG-Manager",
+      "archive": "runtime-fg-310.9.16-c5a205a6e9e7.zip",
+      "url": "https://github.com/pandaligx/RTX-FG-Manager/releases/download/payloads/runtime-fg-310.9.16-c5a205a6e9e7.zip",
+      "size": 3731953,
+      "sha256": "c5a205a6e9e7fd75732a894c8e3ec5ba9cbc10a6a23f2849f0c315aa51c27567",
+      "files": [
+        {
+          "path": "enhanced/sm86-native-fg/nvngx_dlssg.dll",
+          "archivePath": "nvngx_dlssg.dll",
+          "size": 7506544,
+          "sha256": "8d59d49b36410dd6b62fef2503a5871d347415bd85d943fa0848563a95dd50c7"
+        },
+        {
+          "path": "enhanced/sm86-native-fg/NVIDIA-LICENSE.txt",
+          "archivePath": "NVIDIA-LICENSE.txt",
+          "size": 26620,
+          "sha256": "d4216e39ebef5f9b50a6712ebb37beeb5379862a67733a9999c651f21592aaf0"
+        }
+      ],
+      "upstreams": [
+        {
+          "name": "NVIDIA/DLSS",
+          "url": "https://github.com/NVIDIA/DLSS",
+          "kind": "project"
+        }
+      ],
+      "contentId": "a960bb0123c3f08a96f6773eb9a69fe226ca876350e4e961cc78448f094d05ff"
+    },
+    {
+      "id": "sm86-native-streamline",
+      "name": "Streamline · sm86 配套",
+      "component": "streamline",
+      "version": "2.14.16",
+      "bundled": false,
+      "repository": "pandaligx/RTX-FG-Manager",
+      "archive": "streamline-plugins-2.14.16-94a6e2611b39.zip",
+      "url": "https://github.com/pandaligx/RTX-FG-Manager/releases/download/payloads/streamline-plugins-2.14.16-94a6e2611b39.zip",
+      "size": 2670478,
+      "sha256": "94a6e2611b39cc1247640288bb8c40f82249df302210e2269d159bb255eae9c6",
+      "files": [
+        {
+          "path": "enhanced/sm86-native-streamline/sl.common.dll",
+          "archivePath": "sl.common.dll",
+          "size": 843904,
+          "sha256": "38eea3b4209afc455636ea372b5933d65fcc13becec6c84d101dcfc4d8648f75"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.deepdvc.dll",
+          "archivePath": "sl.deepdvc.dll",
+          "size": 376448,
+          "sha256": "2d493dccfefdc0580deb85afc65e70ae36adf77c6dd3c745c60623d9b8ac54f9"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.directsr.dll",
+          "archivePath": "sl.directsr.dll",
+          "size": 369792,
+          "sha256": "e3bbaf3e5eb906a63b3f00413c2d1c4c585ab3a2ee1946fcfa9ee2d804001c8e"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.dlss.dll",
+          "archivePath": "sl.dlss.dll",
+          "size": 422016,
+          "sha256": "18871eea87c90345da97d8109faa81ea7d5840e8d99b51b55b0e46cfa177f84e"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.dlss_d.dll",
+          "archivePath": "sl.dlss_d.dll",
+          "size": 437376,
+          "sha256": "8dff36fd063094eb1f659e8d4dcd52c7423859a9c4a3df3796084c48412d60ac"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.dlss_g.dll",
+          "archivePath": "sl.dlss_g.dll",
+          "size": 637056,
+          "sha256": "3ed9538df724993bea8a050195a6a78b9c8c8a566d5b05ade477aab3c390e90f"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.nis.dll",
+          "archivePath": "sl.nis.dll",
+          "size": 1155712,
+          "sha256": "f9f3873c00e2737b22df1bf7605d4fdc7978dbf2955df4e152c5b52aada13b79"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.nvperf.dll",
+          "archivePath": "sl.nvperf.dll",
+          "size": 761472,
+          "sha256": "dc5a820b97943c4d697a9ddec59b0dcde86ecadc093b401cf55980f7f89be43b"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.pcl.dll",
+          "archivePath": "sl.pcl.dll",
+          "size": 360064,
+          "sha256": "5698c38e722318681f215c9fe68e45b9bedd51378acc699d8eee26e961e57770"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.reflex.dll",
+          "archivePath": "sl.reflex.dll",
+          "size": 388736,
+          "sha256": "443577e869352436ff7ec8f4d9c90418d3e95368436ce219261e0f4f07a38122"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/RTXFG-Streamline-LICENSE.txt",
+          "archivePath": "RTXFG-Streamline-LICENSE.txt",
+          "size": 1591,
+          "sha256": "7b6f23e7d6f3ad6292f9308d2b42cdc3d82ae4e9b2abb55f230279d83bedd43d"
+        },
+        {
+          "path": "enhanced/sm86-native-streamline/sl.interposer.dll",
+          "archivePath": "sl.interposer.dll",
+          "size": 652928,
+          "sha256": "b1d7395aebd7b9722841d64dcf7433680020b6a8e421f851c16d5ba0c2182edf"
+        }
+      ],
+      "upstreams": [
+        {
+          "name": "NVIDIA-RTX/Streamline",
+          "url": "https://github.com/NVIDIA-RTX/Streamline",
+          "kind": "project"
+        }
+      ],
+      "contentId": "1a580f91692539047016aee08f530aa22dfc18289829eb6068a7e4ca40fdd85a"
     }
   ]
 }

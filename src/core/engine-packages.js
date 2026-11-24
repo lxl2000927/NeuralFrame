@@ -10,8 +10,11 @@ const MFG_LICENSE = Object.freeze({name:'MFG-Unlocker-LICENSE.txt',size:1071,
   sha256:'433da96087fd9b91afd44c6350ca92da53167c9636a0a71e428f71036d8c372f'});
 const ENGINES = Object.freeze({
   'mfg-universal':Object.freeze({name:'MFGUnlocker.dll', marker:'MFGUnlocker', notice:MFG_LICENSE, noticePack:'mfg-license', versions:Object.freeze([
+    {version:'1.7.2', size:15782400, sha256:'a9b1c01727fa72763bef8f604e44ec165ce1c98272de00719572b766a11cf28f',
+      archiveSha256:'e002d624e3e7ba5cedab7211043c096fe8f555c30ff43500235a0686c7893f22', recommended:true,
+      capabilities:{neuralStrengths:true, neuralPresets:true, dx11NeuralRendering:true, diagnosticLogging:true, xeMfgStreamline:true}},
     {version:'1.7.1', size:7389696, sha256:'5a389e6cad23b2b607e1dc224e9e86ee32d6ef46f0557b6c6f8137feadf0aa74',
-      archiveSha256:'c85cb2a9e74f39be744fada4a1a75d72c606f73315114f334ad7755a3a13005d', recommended:true,
+      archiveSha256:'c85cb2a9e74f39be744fada4a1a75d72c606f73315114f334ad7755a3a13005d', recommended:false,
       capabilities:{neuralStrengths:true, neuralPresets:true, dx11NeuralRendering:true, diagnosticLogging:true}},
     {version:'1.7.0', size:14445568, sha256:'e6b6e6b70a6ed3af839c9647a32fc22660ae6b2d655062c5c072246c91fc10c7',
       archiveSha256:'5bd19d03288e1ece1d0bb2030ac072b36758045028da192044dcaad73fd901dd', recommended:false,
@@ -49,6 +52,9 @@ function identify(component, sha256) {
 }
 function recommended(component) {
   return info(component, ENGINES[component]?.versions.find(v=>v.recommended));
+}
+function byVersion(component, version) {
+  return ENGINES[component]?.versions.find(v=>v.version===version);
 }
 function describe(component, pkg = {}) {
   const engine = ENGINES[component];
@@ -123,4 +129,4 @@ async function resolve({component, packageId, userDataDir, payloadDir} = {}) {
   }
   return {...metadata, filePath, packageId:packageId || null, noticePath};
 }
-module.exports = {describe, identify, recommended, resolve, legacyEncoreNotice};
+module.exports = {describe, identify, recommended, byVersion, resolve, legacyEncoreNotice};

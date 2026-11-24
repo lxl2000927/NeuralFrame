@@ -182,6 +182,8 @@ async function install(config, log = () => {}) {
         const detach = () => require('./delta-cache').detach(config.gameDir,old);
         if (!journal.deferExternal(config.gameDir,'detach-delta',detach)) await detach();
       }
+      if (old.graphicsRoute?.milesProfile || require('./miles-profile').owns(config.gameDir,config.milesDriver?.base))
+        await require('./miles-profile').detach(config.gameDir,config.milesDriver);
     }
     if (!optional && !['optiscaler','encore'].includes(config.route)) compatibility.assertLoaderCompatible(config, changed ? null : old);
     const profile = changed || !old ? loadProfile(config) : {};
@@ -211,7 +213,7 @@ async function install(config, log = () => {}) {
     return manifest;
   });
 }
-async function restore(gameDir, log = () => {}, onRestored, { vulkanLayerTarget } = {}) {
+async function restore(gameDir, log = () => {}, onRestored, { vulkanLayerTarget, milesDriver } = {}) {
   const recovered = await journal.recover(gameDir);
   if (recovered) log({ code: 'backendRecovered', params: {} });
   const old = readManifest(gameDir);
@@ -220,7 +222,7 @@ async function restore(gameDir, log = () => {}, onRestored, { vulkanLayerTarget 
   if (!old && recovered) return true;
   try {
     await core.restore(gameDir, log, onRestored, {
-      vulkanLayerTarget,
+      vulkanLayerTarget, milesDriver,
       beforeFiles: old && (async () => {
         try { await saveProfile(gameDir, old); }
         catch (error) { log({ code: 'restoreProfileWarning', params: { error: error.message } }); }

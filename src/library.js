@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const standaloneGames = require('./library-standalone');
+const {manifestIdentity, isReporter} = require('./core/steam-identity');
 const pe = require('./core/pe');
 
 // Entries that are tooling rather than games.
@@ -139,11 +140,12 @@ function steam(options = {}) {
       for (const f of files) {
         let text;
         try { text = fs.readFileSync(path.join(appsDir, f), 'utf8'); } catch { continue; }
-        const appid = kv(text, 'appid');
-        const installdir = kv(text, 'installdir');
+        const identity = manifestIdentity(text, f);
+        if (!identity) continue;
+        const {appid, installdir} = identity;
         const name = kv(text, 'name') || installdir;
         const stateFlags = Number(kv(text, 'StateFlags') || 0);
-        if (!appid || !installdir || NOT_A_GAME.test(name)) continue;
+        if (NOT_A_GAME.test(name)) continue;
         const dir = path.join(appsDir, 'common', installdir);
         if (!fs.existsSync(dir)) continue;
         const language = appid === '292030' && (kv(text, 'language') || (platform === 'win32' && reg('HKCU\\Software\\Valve\\Steam', 'Language')));
@@ -295,7 +297,7 @@ const NOT_A_GAME_DIR = /^(steamapps|gamesave|gamesaves|workshop|downloading|shad
 function holdsGame(dir, depth = 3, acceptExe = () => true) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
-  if (entries.some((e) => e.isFile() && /\.exe$/i.test(e.name) && !NOT_A_GAME_EXE.test(e.name) && acceptExe(e.name, dir))) return true;
+  if (entries.some((e) => e.isFile() && /\.exe$/i.test(e.name) && !isReporter(e.name) && !NOT_A_GAME_EXE.test(e.name) && acceptExe(e.name, dir))) return true;
   if (depth <= 0) return false;
   return entries.some((e) => e.isDirectory() && !NOT_A_GAME_DIR.test(e.name) && holdsGame(path.join(dir, e.name), depth - 1, acceptExe));
 }
@@ -480,7 +482,7 @@ function isBrokenSteamOrphan(dir, systemDirs) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
   if (entries.some(e => e.isFile() && /\.manifest$/i.test(e.name))) return false;
-  const exes = entries.filter(e => e.isFile() && /\.exe$/i.test(e.name) && !NOT_A_GAME_EXE.test(e.name));
+  const exes = entries.filter(e => e.isFile() && /\.exe$/i.test(e.name) && !isReporter(e.name) && !NOT_A_GAME_EXE.test(e.name));
   if (!exes.length) return false;
   if (entries.some(e => e.isDirectory() && holdsGame(path.join(dir, e.name), 1))) return false;
   const winRoot = process.env.SystemRoot || 'C:\\Windows';
@@ -577,7 +579,7 @@ function standalone(options = {}) {
       if (!fs.lstatSync(dir).isDirectory() || fs.realpathSync(dir).toLowerCase() !== dir.toLowerCase()) continue;
       // DisplayIcon can belong to a shared store client even when other games
       // live nearby. When it is the only location, check the exact image.
-      if (useIcon && (!fs.lstatSync(icon).isFile() || NOT_A_GAME_EXE.test(path.basename(icon)) ||
+      if (useIcon && (!fs.lstatSync(icon).isFile() || isReporter(icon) || NOT_A_GAME_EXE.test(path.basename(icon)) ||
           !neteaseClient(path.basename(icon), dir))) continue;
     } catch { continue; }
     if (location && !holdsGame(dir, 3, neteaseClient)) continue;

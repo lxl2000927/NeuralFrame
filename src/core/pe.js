@@ -194,7 +194,7 @@ function findMarkers(file, markers) {
   try {
     fd = fs.openSync(file, 'r');
     const size = fs.fstatSync(fd).size;
-    const chunkSize = 4 * 1024 * 1024;
+    const chunkSize = Math.min(size, 4 * 1024 * 1024);
     const overlap = longest;
     const buf = Buffer.alloc(chunkSize + overlap);
     let pos = 0;
@@ -203,13 +203,17 @@ function findMarkers(file, markers) {
       const read = fs.readSync(fd, buf, carry, chunkSize, pos);
       if (read <= 0) break;
       const view = buf.subarray(0, carry + read);
-      const text = view.toString('latin1');
-      pattern.lastIndex = 0;
-      for (let match; (match = pattern.exec(text)); pattern.lastIndex = match.index + 1) {
-        for (const n of needles) {
-          if (!found.has(n.text) && text.startsWith(n.bytes, match.index)) found.add(n.text);
+      if (needles.length === 1) {
+        if (view.includes(needles[0].bytes, 0, 'latin1')) found.add(needles[0].text);
+      } else {
+        const text = view.toString('latin1');
+        pattern.lastIndex = 0;
+        for (let match; (match = pattern.exec(text)); pattern.lastIndex = match.index + 1) {
+          for (const n of needles) {
+            if (!found.has(n.text) && text.startsWith(n.bytes, match.index)) found.add(n.text);
+          }
+          if (found.size === needles.length) break;
         }
-        if (found.size === needles.length) break;
       }
       if (found.size === needles.length) break;
       carry = Math.min(overlap, view.length);

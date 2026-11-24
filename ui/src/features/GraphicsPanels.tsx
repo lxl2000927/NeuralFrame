@@ -152,7 +152,7 @@ export function GraphicsPanels({ status, exePath, draft, onChange, onApply, onBr
   const savedModeLabel = savedMode === "dynamic" ? t("动态 · 由运行库调节倍率") : savedMode === "follow" ? t("跟随游戏") : savedMode === "off" ? t("关闭") : savedMode?.startsWith("x") ? savedMode.slice(1) + "×" : t("未记录");
   const hostControlsFrames = status.graphicsRoute?.route === "optifg" || status.graphicsRoute?.route === "xemfg-optiscaler";
   const savedModeFact: [string, string] = hostControlsFrames ? ["补帧设置", t("OptiScaler 游戏内菜单")] : status.graphicsRoute
-    ? ["已保存倍率上限", status.graphicsRoute.multiplier ? status.graphicsRoute.multiplier + "×" : t("未记录")]
+    ? ["已保存倍率上限", status.graphicsRoute.driverDefault ? t("跟随驱动默认") : status.graphicsRoute.multiplier ? status.graphicsRoute.multiplier + "×" : t("未记录")]
     : ["已保存倍率", savedModeLabel];
   const dlssg = mfg?.dlssg;
   const targetVersion = protectedGame || alternative ? undefined : stacks.find(stack => stack.id === "oct2026-310.9.16")?.dlssgVersion;

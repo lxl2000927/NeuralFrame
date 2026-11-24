@@ -188,6 +188,13 @@ test('Encore preserves the installed version until explicitly selected, previews
   t.mock.method(engines,'resolve',async({packageId})=>{resolutions++;const selected=packageId?entries.find(e=>e.packageId===packageId):entries[1];assert.ok(selected);return {...selected};});
   await backends.install({...f.options,encorePackageId:entries[0].packageId});
   const proxy=path.join(f.gameDir,'version.dll'),json=path.join(f.gameDir,encore.CONFIG);
+  // Make identical filesystem metadata across the two equal-size engines deterministic.
+  const statFile = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', (file,...args) => {
+    const stat = statFile(file,...args);
+    if (file === proxy) Object.assign(stat,{mtimeMs:1,ctimeMs:1,ino:1});
+    return stat;
+  });
   fs.writeFileSync(json,fs.readFileSync(json,'utf8').replace('"configVersion": 4','// keep original menu\n  "configVersion": 4, "menu":{"language":"ja"}, "custom":{"private":9}'));
   await backends.install({...f.options,encoreSettings:{...config.read(fs.readFileSync(json,'utf8')),mfgMode:'x4'}});
   assert.equal(resolutions,1,'an ordinary configuration edit does not resolve a newer engine');

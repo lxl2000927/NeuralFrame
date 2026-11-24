@@ -66,6 +66,15 @@ const snapshot = {
           assessment: "unsupported",
         },
       },
+      ...Array.from({ length: 115 }, (_, i) => ({
+        id: "reshade-history-" + i,
+        component: "reshade",
+        provider: "reshade",
+        repo: "crosire/reshade",
+        tag: "QA-history-" + i,
+        releaseOnly: true,
+        downloadable: false,
+      })),
     ],
   },
 };
@@ -110,6 +119,33 @@ const snapshot = {
       ),
       "History controls share an aligned column",
     );
+    const reshade = catalog.locator('[data-component="reshade"]');
+    const history = reshade.locator("[data-version-id]");
+    const reshadeToggle = reshade.locator(".component-history-toggle");
+    await reshadeToggle.click();
+    const initialCount = await history.count();
+    assert.ok(initialCount > 1 && initialCount < 30, "Expanding a long history only mounts the initial batch");
+    const more = reshade.locator(".component-history-more button");
+    await more.evaluate(button => button.focus({preventScroll:true}));
+    await p.keyboard.press("Enter");
+    await expect(history.nth(initialCount).locator(".component-history-name")).toBeFocused();
+    // Searching must see versions that have never been rendered.
+    await reshadeToggle.click();
+    const search = catalog.getByRole("textbox", { name: "搜索组件" });
+    await search.fill("QA-history-114");
+    await expect(history).toHaveCount(1);
+    await expect(history).toContainText("QA-history-114");
+    await search.fill("");
+    await expect(reshadeToggle).toHaveAttribute("aria-expanded", "false");
+    await reshadeToggle.click();
+    while (await more.count()) {
+      const previous = await history.count();
+      await history.last().scrollIntoViewIfNeeded();
+      await expect.poll(() => history.count()).toBeGreaterThan(previous);
+    }
+    await expect(history).toHaveCount(117);
+    await reshadeToggle.click();
+    await expect(history).toHaveCount(1);
     await toggle.click();
     await expect(first.locator("[data-version-id]")).toHaveCount(3);
     const release = first.locator('[data-version-id="release:mfg-test"]');

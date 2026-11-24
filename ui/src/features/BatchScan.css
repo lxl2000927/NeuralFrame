@@ -27,7 +27,7 @@
 .batch-search{flex:0 1 300px;min-width:210px;height:var(--search-height,32px)}
 .batch-status-filter{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
 .batch-status-filter button{display:inline-flex;align-items:center;gap:5px;min-height:28px;padding:3px 9px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--muted);font-size:12px}
-.batch-status-filter button:hover{color:var(--text);border-color:var(--control-border)}
+.batch-status-filter button:hover:enabled{color:var(--text);border-color:var(--control-border)}
 .batch-status-filter button b{font-weight:600;font-variant-numeric:tabular-nums}
 .batch-status-filter button[aria-pressed="true"]{border-color:var(--accent);background:var(--selected);color:var(--accent-text);font-weight:600}
 .batch-status-filter button[data-status="verify"][aria-pressed="true"]{color:var(--warning-text);border-color:color-mix(in srgb,var(--warning-text) 55%,transparent);background:color-mix(in srgb,var(--warning-text) 14%,transparent)}
@@ -37,12 +37,13 @@
 .batch-export{position:relative;flex:none}
 .batch-export-trigger{display:inline-flex;align-items:center;gap:6px;min-height:32px;white-space:nowrap}
 .batch-export-trigger svg:first-child{flex:none}
-.batch-export-menu{position:absolute;inset-inline-end:0;inset-block-end:calc(100% + 8px);z-index:20;display:flex;flex-direction:column;gap:2px;min-width:250px;padding:5px;border:1px solid var(--panel-edge);border-radius:10px;background:var(--surface-raised,var(--surface));box-shadow:var(--floating-shade,0 12px 28px rgb(0 0 0 / 28%))}
-.batch-export-menu [role="menuitem"]{display:flex;align-items:flex-start;gap:9px;width:100%;padding:8px 9px;border:0;border-radius:7px;background:transparent;color:var(--text);text-align:start;font-size:13px}
+.batch-export-menu{position:absolute;inset-inline-start:0;inset-block-end:calc(100% + 8px);z-index:20;display:flex;flex-direction:column;gap:2px;width:min(250px, calc(100vw - 72px));padding:5px;border:1px solid var(--panel-edge);border-radius:10px;background:var(--surface-raised,var(--surface));box-shadow:var(--floating-shade,0 12px 28px rgb(0 0 0 / 28%))}
+.batch-export-menu [role="menuitem"]{display:flex;justify-content:flex-start;align-items:flex-start;gap:9px;width:100%;padding:8px 9px;border:0;border-radius:7px;background:transparent;color:var(--text);text-align:start;font-size:13px}
 .batch-export-menu [role="menuitem"] svg{flex:none;margin-block-start:2px;color:var(--muted)}
 .batch-export-menu [role="menuitem"] span{display:flex;flex-direction:column;gap:2px;min-width:0}
 .batch-export-menu [role="menuitem"] small{font-size:11px;color:var(--muted);font-weight:400}
-.batch-export-menu [role="menuitem"]:hover,.batch-export-menu [role="menuitem"]:focus-visible{background:var(--selected);outline:none}
+.batch-export-menu [role="menuitem"]:hover:enabled,.batch-export-menu [role="menuitem"]:focus-visible{background:var(--selected)}
+.batch-export-menu [role="menuitem"]:focus-visible{outline-offset:-2px}
 .batch-export-menu [role="menuitem"]:disabled{opacity:.55;cursor:default}
 .batch-table{display:block;flex:1;min-height:140px;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
 .batch-table:focus-visible{outline-offset:2px}

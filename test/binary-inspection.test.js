@@ -47,6 +47,7 @@ test('batched PE marker search preserves overlap, literal metacharacters and chu
   const markers = ['DirectDrawCreate', 'DirectDrawCreateEx', 'DrawCreate', 'A.*[B]', 'C+x?y$z|q', 'DirectDrawCreate', 'absent'];
   fs.writeFileSync(file, data);
   assert.deepEqual(findMarkers(file, markers), new Set(markers.filter(m => data.includes(Buffer.from(m, 'latin1')))));
+  assert.deepEqual(findMarkers(file, ['DirectDrawCreateEx']), new Set(['DirectDrawCreateEx']));
   assert.deepEqual(findMarkers(file, []), new Set());
   assert.deepEqual(findMarkers(path.join(dir, 'missing'), markers), new Set());
   fs.writeFileSync(file, 'changed');

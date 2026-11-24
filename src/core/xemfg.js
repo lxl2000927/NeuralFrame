@@ -90,7 +90,7 @@ function serialize(data) {
   return text;
 }
 
-function planControl(current, previous, multiplier, startingLoader) {
+function planControl(current, previous, multiplier, startingLoader, streamMode) {
   const data = { ...current?.data };
   const fields = { ...previous?.fields };
   function set(key, value) {
@@ -111,6 +111,7 @@ function planControl(current, previous, multiplier, startingLoader) {
     set('xemfgFrames', multiplier ?? 2);
     set('xemfgDynamic', 0);
   }
+  if (streamMode !== undefined) set('xemfgStreamline',streamMode === 'compatibility' ? 2 : undefined);
   const changed = !current || Object.keys(data).some(key => data[key] !== current.data[key]);
   const text = changed ? serialize(data) : null;
   return { text, record: { fields, created: previous?.created ?? !current,
@@ -127,6 +128,9 @@ async function install(options) {
     antiCheatWarning: target.antiCheatWarning || compatibility.hasAntiCheat(gameDir, exePath) });
   if (reason) throw fail(reason);
   if (graphics.multiplier !== undefined && !validFrames(graphics.multiplier)) throw fail('独立 XeMFG 固定倍率需要为 2–6 的整数。');
+  if (graphics.xeMode !== undefined && (!['auto','compatibility'].includes(graphics.xeMode) ||
+      apiLabel !== 'DirectX 12' || !target.hasGameStreamlineFg || !/\bRTX\s*(?:20|30|40|50)\d\d/i.test(options.gpuName || '')))
+    throw fail('游戏内帧生成开关需要 RTX 20–50 系列、DX12 和原生 Streamline 帧生成。');
   if (graphics.neural === true || (graphics.engine !== undefined && graphics.engine !== 'XeSS'))
     throw fail('独立 XeMFG 仅支持 XeSS 帧生成。');
   return journal.transaction(gameDir, async () => {
@@ -146,7 +150,9 @@ async function install(options) {
     for (const { pack, item, name } of releases) {
       const dest = local(name);
       if (matches(dest, item)) continue;
-      if (fs.existsSync(dest)) throw conflict(name);
+      const rel = path.relative(gameDir,dest);
+      if (fs.existsSync(dest) && !(name === PROXY && old?.files?.[rel] &&
+          require('./engine-packages').identify('mfg-universal',old.files[rel]).verified)) throw conflict(name);
       const src = journal.safePath(options.payloadDir, item.path);
       if (!matches(src, item)) {
         throw Object.assign(fail('请重新准备组件：' + pack.name), { dependencies: ['runtime:' + pack.id] });
@@ -156,7 +162,7 @@ async function install(options) {
     }
     const control = local(CONTROL);
     const rel = path.relative(gameDir, control);
-    const { text, record } = planControl(readControl(control), old?.control, graphics.multiplier, !fs.existsSync(local(PROXY)));
+    const { text, record } = planControl(readControl(control), old?.control, graphics.multiplier, !fs.existsSync(local(PROXY)), graphics.xeMode);
     manifest.route = 'xemfg';
     Object.assign(manifest.game, { bitness, apiLabel });
     manifest.graphicsRoute = { files, settings: [rel], control: record, version: engine.version, proxy: PROXY };
@@ -177,14 +183,15 @@ function inspect(gameDir, manifest) {
   const state = { route: 'xemfg', exePath, version: manifest.graphicsRoute?.version,
     engine: 'XeSS', neural: false, multiplier: null, dynamic: null, enabled: null, filesPresent: false };
   try {
-    const intact = releases.every(({ item, name }) => matches(local(name), item, true));
-    if (intact) state.providerVersion = engine.version;
+    const old = require('./engine-packages').byVersion('mfg-universal',state.version);
+    const intact = releases.every(({ item, name }) => matches(local(name), name===PROXY && old ? old : item, true));
+    if (intact) state.providerVersion = old?.version || engine.version;
     state.filesPresent = intact && fs.existsSync(local(CONTROL));
     const control = readControl(local(CONTROL));
     if (!control) throw fail('缺少 ' + CONTROL);
     validateControl(control.data);
     const data = control.data;
-    return { ...state, multiplier: data.xemfgFrames ?? (data.followGame ? 2 : Math.max(2, data.multiplier)),
+    return { ...state, xeMode:data.xemfgStreamline===2 ? 'compatibility' : 'auto', multiplier: data.xemfgFrames ?? (data.followGame ? 2 : Math.max(2, data.multiplier)),
       dynamic: data.xemfgDynamic === 1, enabled: data.xemfgStandalone === 1 };
   } catch (error) { return { ...state, error: error.message }; }
 }

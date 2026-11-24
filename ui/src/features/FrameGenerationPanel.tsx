@@ -23,9 +23,9 @@ export function FrameSettingsReadout({ installed }: { installed: GraphicsRouteSt
 
 const inputNames:Record<string,string> = {dlss:"DLSS",xess:"XeSS",ffx:"FidelityFX",fsr2:"FSR 2",fsr3:"FSR 3"};
 
-export function FrameGenerationPanel({ installed, route, engineChoice, optiFgInputs, draftMultiplier, blocked, issue, vulkan, change, apply }: {
+export function FrameGenerationPanel({ installed, route, engineChoice, controls, optiFgInputs, draftMultiplier, blocked, issue, vulkan, nativeMode, change, apply }: {
   installed?:GraphicsRouteStatus; engineChoice:ReactNode; draftMultiplier?:number; blocked:boolean;
-  optiFgInputs?:string[];
+  optiFgInputs?:string[]; controls?:ReactNode; nativeMode?:"auto"|"compatibility";
   issue?:string|null; vulkan:boolean; route:keyof typeof frameRouteLabels; change:(multiplier:number)=>void; apply:()=>void;
 }) {
   const multiplier = draftMultiplier ?? installed?.multiplier ?? 2;
@@ -62,11 +62,15 @@ export function FrameGenerationPanel({ installed, route, engineChoice, optiFgInp
       {installed && (installed.dynamic || installed.enabled === false) && draftMultiplier == null &&
         <button onClick={()=>change(multiplier)}>{t("切换为固定 {0}×", [multiplier])}</button>}
       {draftMultiplier != null && <p className="footnote">{t("应用后会启用 XeMFG，并使用所选固定倍率。")}</p>}
-      <p className="module-note">{t(vulkan
-        ? "Vulkan 下需在游戏中启用原生 DLSS 超分或光线重建。部分游戏在 AMD 显卡上不提供这些选项。"
-        : "在游戏中启用受支持的输入。AMD 显卡优先选择 XeSS 或 FSR 3.1 及更新版超分；有些游戏仅向 NVIDIA 显卡开放 DLSS。")}</p>
+      {nativeMode ? <p className="module-note">{t(nativeMode === "auto"
+        ? "在游戏设置中切换 DLSS 帧生成，可以启停所选固定倍率的 XeMFG。"
+        : "兼容模式通过交换链输出 XeMFG，可在游戏开关无法启用补帧时使用。")}</p> :
+        <p className="module-note">{t(vulkan
+          ? "Vulkan 下需在游戏中启用原生 DLSS 超分或光线重建。部分游戏在 AMD 显卡上不提供这些选项。"
+          : "在游戏中启用受支持的输入。AMD 显卡优先选择 XeSS 或 FSR 3.1 及更新版超分；有些游戏仅向 NVIDIA 显卡开放 DLSS。")}</p>}
       <p className="footnote">{t("关闭游戏自带的 FSR 或 XeFG 帧生成。重启后按 Backspace，在 XeMFG 菜单查看输入和运行状态。独立版需要游戏能加载 version.dll。")}</p>
       </>}
+      {controls}
     </div>
     <div className="module-actions"><button className="module-command" disabled={blocked} onClick={apply}>{t("预览帧生成设置")}</button></div>
   </section>;

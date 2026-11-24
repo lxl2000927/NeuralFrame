@@ -17,6 +17,7 @@ const base = {
 const cases = [
   ['DX12 XeSS/FSR input on Radeon', { hasXeMfgDx12Upscaler: true }, true],
   ['DX12 native DLSS-G alone', { hasNativeFg:true, hasNativeDlssFg:true, hasXeMfgDlssFgDx12:true }, true],
+  ['RTX native Streamline switch', {hasNativeFg:true,hasNativeDlssFg:true,hasGameStreamlineFg:true,hasXeMfgDlssFgDx12:true},true,false,{gpu:'NVIDIA GeForce RTX 3070',gameSwitch:true}],
   ['DX12 native DLSS SR', { hasNativeDlss:true, hasXeMfgDlssSrDx12:true }, true],
   ['DX12 native DLSS RR', {hasXeMfgDlssRrDx12:true},true],
   ['DX12 generic DLSS modules without suitable exports', {hasNativeDlss:true,hasNativeDlssFg:true}, false],
@@ -127,7 +128,7 @@ async function runCase(label, input, eligible, pluginEligible, machine = {}) {
     }, {dir:targetDir, input: {...base, ...input}, optiFg:machine.optiFg, catalog: {
       profiles: HARDWARE_PROFILES, models: MODEL_DATABASE, stacks: RUNTIME_STACKS, neuralMode: 'latest_compatible',
       os: machine.os || 'Windows_NT 10.0.26100 (x64)',
-      gpu: {name: machine.gpu || 'AMD Radeon RX 7800 XT', nvidiaPresent: false, architecture: {sm: null}},
+      gpu: {name: machine.gpu || 'AMD Radeon RX 7800 XT', nvidiaPresent: !!machine.gameSwitch, architecture: {sm: machine.gameSwitch?'sm_86':null}},
     }});
     await page.getByRole('navigation').getByRole('button', {name: '游戏', exact: true}).click();
     if (machine.multiExe) await page.locator('.game-list').getByRole('button',{name:/Unconfigured game/}).click();
@@ -170,11 +171,14 @@ async function runCase(label, input, eligible, pluginEligible, machine = {}) {
       await expect(plugin.getByText(/Upscaler 输入和 XeFG 输出/)).toBeVisible();
       await expect(plugin.getByRole('radio',{name:/XeMFG · OptiScaler 插件/})).toBeFocused();
       await expect(plugin.getByRole('combobox')).toHaveCount(0);
+      const upgrade=plugin.getByRole('checkbox',{name:/同步更新已识别的 OptiScaler 宿主/});
+      await expect(upgrade).not.toBeChecked();
+      await upgrade.check();
       await expect(page.getByRole('combobox', {name:/神经渲染模型|同时启用 DLSS 神经渲染/})).toHaveCount(0);
       await plugin.getByRole('button', {name:'预览帧生成设置'}).click();
       await page.getByRole('heading', {name:'应用前变更预览'}).waitFor();
       const patch = await page.evaluate(() => window.qa.audit().requests.at(-1).patch);
-      assert.deepEqual(patch,{route:'xemfg-optiscaler',exePath:dir + '\\game.exe',apiOverride:'auto'});
+      assert.deepEqual(patch,{route:'xemfg-optiscaler',exePath:dir + '\\game.exe',apiOverride:'auto',graphics:{upgradeHost:true}});
       await page.getByRole('button', {name:'确认应用',exact:true}).click();
       await expect(plugin.getByText('倍率设置').locator('+ dd')).toHaveText('OptiScaler 游戏内菜单');
       await page.getByRole('tab',{name:'运行诊断',exact:true}).click();
@@ -190,7 +194,8 @@ async function runCase(label, input, eligible, pluginEligible, machine = {}) {
       return;
     }
     await expect(engine).toBeVisible();
-    await setup.getByRole('button', {name: '查看 ' + routeName + ' 设置', exact: true}).click();
+    if (machine.gameSwitch) await engine.click();
+    else await setup.getByRole('button', {name: '查看 ' + routeName + ' 设置', exact: true}).click();
     await expect(backend).toHaveAttribute('data-value', 'xemfg');
     const panel = page.getByRole('region', {name: routeName, exact: true});
     await expect(panel.getByRole('radio',{name:/XeMFG 独立帧生成/})).toBeFocused();
@@ -199,6 +204,21 @@ async function runCase(label, input, eligible, pluginEligible, machine = {}) {
       await panel.screenshot({path:path.join(process.env.NEURALFRAME_QA_OUT,'xemfg-960.png')});
     const multiplier = panel.getByRole('combobox', {name: 'XeMFG 固定倍率', exact: true});
     await expect(multiplier).toHaveAttribute('data-value', '2');
+    const gameSwitch=panel.getByRole('combobox',{name:'XeMFG 接入方式',exact:true});
+    if (machine.gameSwitch) {
+      await expect(gameSwitch).toHaveAttribute('data-value','auto');
+      await expect(panel.getByText(/在游戏设置中切换 DLSS 帧生成/)).toBeVisible();
+      await expect(panel.getByText(/AMD 显卡优先选择 XeSS/)).toHaveCount(0);
+      await gameSwitch.click();
+      await page.getByRole('option',{name:'兼容模式 · 交换链'}).click();
+      await expect(panel.getByText(/兼容模式通过交换链输出 XeMFG/)).toBeVisible();
+      await panel.getByRole('button',{name:'预览帧生成设置'}).click();
+      await page.getByRole('heading',{name:'应用前变更预览'}).waitFor();
+      const patch=await page.evaluate(()=>window.qa.audit().requests.at(-1).patch);
+      assert.deepEqual(patch.graphics,{multiplier:2,xeMode:'compatibility'});
+      return;
+    }
+    await expect(gameSwitch).toHaveCount(0);
     await expect(panel.getByText(input.api === 'vulkan' ? /Vulkan 下需在游戏中启用原生 DLSS 超分/ : /AMD 显卡优先选择 XeSS/)).toBeVisible();
     await expect(page.getByRole('combobox', {name: /同时启用 DLSS 神经渲染|神经渲染模型|补帧引擎/})).toHaveCount(0);
     if (label !== cases[0][0]) return;
